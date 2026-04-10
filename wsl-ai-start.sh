@@ -6,6 +6,22 @@
 
 set -euo pipefail
 
+# --- Auto-Modus (aus .bashrc) ---
+AUTO_MODE=false
+if [ "${1:-}" = "--auto" ]; then
+    AUTO_MODE=true
+    shift
+
+    echo ""
+    echo -e "\033[0;36magentbox starten? [J/n]\033[0m (automatisch in 5s)"
+    if read -r -t 5 answer; then
+        case "$answer" in
+            n|N|nein|Nein) echo "OK — normales Terminal."; exit 0 ;;
+        esac
+    fi
+    echo ""
+fi
+
 # --- Konfiguration ---
 AI_PROJECTS_ROOT="${AI_PROJECTS_ROOT:-}"
 if [ -z "$AI_PROJECTS_ROOT" ]; then
