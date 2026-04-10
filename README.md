@@ -49,6 +49,15 @@ Auswahl [1]: 1
 
 Der Agent arbeitet in einer wegwerfbaren Sandbox. Nach der Session wird die Distro geloescht — alle temporaeren Dateien, Caches und Artefakte sind weg. Code und CLAUDE.md bleiben im Projektordner (waren nur gemountet).
 
+### Wo liegt der Code?
+
+Alle Projekte liegen in `OneDrive\AI_Projects_Source\` — auf dem Windows-Dateisystem, nicht in WSL. Die Sandbox mountet nur den jeweiligen Projektordner per Bind-Mount in die wegwerfbare Distro. Der Agent schreibt also direkt in deinen OneDrive-Ordner. Dadurch:
+
+- **Automatische Synchronisation**: OneDrive sichert deinen Code automatisch in die Cloud
+- **Kein Kopieren noetig**: Aenderungen landen sofort im Projektordner auf Windows
+- **Sandbox weg, Code bleibt**: Nach Session-Ende wird nur die Distro geloescht, nicht deine Dateien
+- **Zugriff von ueberall**: Dein Code ist ueber OneDrive auf allen Geraeten verfuegbar
+
 ## Sicherheitsmodell
 
 ### Dateisystem-Isolation
