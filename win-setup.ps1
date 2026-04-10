@@ -256,7 +256,8 @@ if ($existingTask) {
 
 $action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once"
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once" `
+    -WorkingDirectory $scriptDir
 
 $trigger = New-ScheduledTaskTrigger -AtLogon
 

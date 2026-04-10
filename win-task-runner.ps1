@@ -11,7 +11,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 # --- Konfiguration ---
-$baseDir = Join-Path $env:OneDrive "AI_Projects_Source"
+# Pfad robust bestimmen: 1. Umgebungsvariable, 2. relativ zum Skriptort
+if ($env:OneDrive) {
+    $baseDir = Join-Path $env:OneDrive "AI_Projects_Source"
+} elseif ($PSScriptRoot -and $PSScriptRoot -match '(.+)[\\/]_control$') {
+    # Skript liegt in _control → Elternordner ist baseDir
+    $baseDir = $Matches[1]
+} else {
+    Write-Host "FEHLER: OneDrive-Pfad nicht ermittelbar." -ForegroundColor Red
+    Write-Host "Setze die Umgebungsvariable OneDrive oder starte aus dem _control-Ordner." -ForegroundColor Yellow
+    exit 1
+}
 $controlDir = Join-Path $baseDir "_control"
 $historyDir = Join-Path $controlDir "history"
 $eventSource = "AIProjects"
