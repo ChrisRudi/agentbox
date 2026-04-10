@@ -1,8 +1,26 @@
-# agentbox
+<p align="center">
+  <h1 align="center">agentbox</h1>
+  <p align="center">
+    <strong>AI-Coding-Agenten haben vollen Zugriff auf dein Dateisystem.<br>agentbox aendert das.</strong>
+  </p>
+  <p align="center">
+    <a href="#installation">Installation</a> · <a href="#taegliche-nutzung">Nutzung</a> · <a href="#sicherheitsmodell">Sicherheit</a> · <a href="#vergleich">Vergleich</a>
+  </p>
+</p>
 
-Sandboxed AI Agent Runner fuer Windows + WSL2.
+---
 
-Startet AI-Coding-Agenten (Claude Code, OpenAI Codex, Gemini CLI) in wegwerfbaren WSL2-Distributionen mit echter Dateisystem- und Netzwerkisolation. Kein Docker, kein Kubernetes.
+**agentbox** startet AI-Coding-Agenten (Claude Code, OpenAI Codex, Gemini CLI) in **wegwerfbaren WSL2-Distributionen** mit echter Dateisystem- und Netzwerkisolation.
+
+Ein Befehl. Kein Docker. Kein Kubernetes. Nur Windows + WSL2.
+
+## Warum?
+
+AI-Coding-Agenten sind maechtig — aber sie laufen mit vollen Rechten auf deinem System. Sie koennen:
+
+- Jede Datei lesen und aendern (SSH-Keys, Browser-Profile, andere Projekte)
+- Beliebige Prozesse starten und Netzwerkverbindungen oeffnen
+- Build-Artefakte, Caches und temporaere Dateien hinterlassen, die WSL aufblaehenagentbox gibt dir die Produktivitaet von AI-Agenten **ohne das Risiko**.
 
 ## Installation
 
@@ -14,15 +32,18 @@ irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
 
 Das wars. WSL-Terminal oeffnen — agentbox startet automatisch.
 
-## Was passiert bei der Installation?
+<details>
+<summary>Was passiert bei der Installation?</summary>
 
 1. Repository wird nach `OneDrive\AI_Projects_Source\_control` geklont
 2. WSL2-Template wird gebaut (Ubuntu-Minimal + Node.js + Python3 + AI-CLIs)
 3. Windows Event-Source und Scheduled Task werden angelegt
 4. WSL `.bashrc` wird konfiguriert (Auto-Start)
 5. Desktop-Shortcut `agentbox.lnk` wird erstellt
+6. `.wslconfig` mit Ressourcen-Limits gesetzt (4 GB RAM, 2 CPUs)
 
 Dauer: ca. 3-5 Minuten, einmalig.
+</details>
 
 ## Taegliche Nutzung
 
@@ -47,59 +68,82 @@ Auswahl [1]: 1
 === Starte Claude Code fuer MeinProjekt ===
 ```
 
-Der Agent arbeitet in einer wegwerfbaren Sandbox. Nach der Session wird die Distro geloescht — alle temporaeren Dateien, Caches und Artefakte sind weg. Code und CLAUDE.md bleiben im Projektordner (waren nur gemountet).
+**Agent arbeitet → Session endet → Sandbox wird geloescht → Code bleibt.**
 
 ### Wo liegt der Code?
 
-Alle Projekte liegen in `OneDrive\AI_Projects_Source\` — auf dem Windows-Dateisystem, nicht in WSL. Die Sandbox mountet nur den jeweiligen Projektordner per Bind-Mount in die wegwerfbare Distro. Der Agent schreibt also direkt in deinen OneDrive-Ordner. Dadurch:
+Alle Projekte liegen in `OneDrive\AI_Projects_Source\` — auf deinem Windows-Dateisystem. Die Sandbox mountet nur den Projektordner per Bind-Mount. Der Agent schreibt direkt in deinen OneDrive-Ordner:
 
-- **Automatische Synchronisation**: OneDrive sichert deinen Code automatisch in die Cloud
-- **Kein Kopieren noetig**: Aenderungen landen sofort im Projektordner auf Windows
-- **Sandbox weg, Code bleibt**: Nach Session-Ende wird nur die Distro geloescht, nicht deine Dateien
-- **Zugriff von ueberall**: Dein Code ist ueber OneDrive auf allen Geraeten verfuegbar
-- **Paket-Cache bleibt**: npm- und pip-Caches werden in `_control/cache/` persistent gemountet — Pakete muessen nicht bei jeder Session neu heruntergeladen werden
-- **WSL bleibt schlank**: Beim normalen Coding in WSL sammeln sich node_modules, pip-Caches, Build-Artefakte und temporaere Dateien an — die VHDX-Datei waechst und waechst, schrumpft aber nie von allein. agentbox vermeidet das komplett: Jede Session ist eine frische Wegwerf-Distro, danach wird alles geloescht. Deine Host-WSL bleibt sauber.
+| Vorteil | Beschreibung |
+|---------|-------------|
+| **OneDrive-Sync** | Code wird automatisch in die Cloud gesichert |
+| **Kein Kopieren** | Aenderungen landen sofort auf Windows |
+| **Sandbox weg, Code bleibt** | Nur die Distro wird geloescht, nicht deine Dateien |
+| **Paket-Cache bleibt** | npm/pip-Caches sind persistent — kein Re-Download |
+| **WSL bleibt schlank** | Keine wachsende VHDX durch Caches und Artefakte |
 
 ## Sicherheitsmodell
 
 ### Dateisystem-Isolation
 
-Der Agent sieht nur:
+Der Agent sieht **nur**:
 
-| Pfad | Zugriff | Inhalt |
-|------|---------|--------|
-| `/workspace/src/` | read-write | Projekt-Quellcode |
-| `/workspace/assets/` | read-only | Statische Dateien |
-| `/workspace/_tasks/` | read-write | Task-Trigger fuer Build/Deploy |
-| `/workspace/CLAUDE.md` | read-write | Session-Kontinuitaet |
-| `/workspace/project.json` | read-only | Projektkonfiguration |
+```
+/workspace/
+  src/           (read-write)   Dein Code
+  assets/        (read-only)    Statische Dateien
+  _tasks/        (read-write)   Task-Trigger
+  CLAUDE.md      (read-write)   Session-Kontext
+  project.json   (read-only)    Konfiguration
+```
 
 Der Agent sieht **nicht**: `/mnt/c/`, OneDrive, `~/.ssh/`, andere Projekte, `_control/`.
 
-Mounts sind gehardened: `nosymfollow` (keine Symlinks nach aussen), `nodev` (keine Device-Nodes), Hardlink-Schutz via `sysctl`.
+Mounts: `nosymfollow` + `nodev` + Hardlink-Schutz (`sysctl`).
 
 ### Netzwerk-Isolation
 
-Per `iptables` sind nur diese Endpoints erlaubt:
+Per `iptables` — nur das Noetige:
 
-- `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com` (AI-APIs)
-- Paketquellen **automatisch nach Projekttyp**: Node → `npmjs.org`, Python → `pypi.org`, HTML/PowerShell → keine
-- DNS (Port 53)
-- **Alles andere wird blockiert.**
+| Erlaubt | Blockiert |
+|---------|-----------|
+| AI-APIs (Anthropic, OpenAI, Google) | Alles andere |
+| Paketquellen (automatisch nach Projekttyp) | Beliebige Outbound-Verbindungen |
+| DNS (Port 53) | Zugriff auf lokale Dienste |
+
+Projekttyp `node` → nur `npmjs.org`. Projekttyp `python` → nur `pypi.org`. HTML/PowerShell → keine Paketquellen.
 
 ### Ressourcen-Limits
 
-Der Installer setzt `.wslconfig` mit Defaults (4 GB RAM, 2 CPUs, 1 GB Swap), damit ein ausser Kontrolle geratener Agent den Host nicht lahmlegen kann. Bestehende `.wslconfig` werden nicht ueberschrieben.
-
-Zusaetzlich laeuft ein **RAM-Watchdog** im Hintergrund: Steigt der Speicherverbrauch der Sandbox ueber 90%, erscheint eine Windows-Warnung — so kannst du reagieren bevor der Host einfriert.
+- `.wslconfig`: 4 GB RAM, 2 CPUs, 1 GB Swap (anpassbar)
+- **RAM-Watchdog**: Warnt per Windows-Dialog wenn Sandbox > 90% RAM nutzt
+- Schutz vor Endlosschleifen die den Host lahmlegen
 
 ### Build/Deploy-Kontrolle
 
-Der Agent kann nicht selbst builden oder deployen. Er schreibt eine Task-Datei, ein separater Windows-Runner fuehrt die Aktion kontrolliert aus:
+Der Agent kann **nichts selbst ausfuehren**. Er schreibt eine Task-Datei, ein Windows-Runner prueft:
 
-- Build-Kommandos muessen exakt in einer Whitelist stehen (`npm run build`, `make`, etc.)
-- Deploy-Targets sind auf `local` und `github` beschraenkt
-- Kein freies Kommando, kein Wildcard, kein Prefix-Match
+- Build-Kommando in Whitelist? (`npm run build`, `make`, etc.) → Ausfuehren
+- Deploy-Target in Whitelist? (`local`, `github`) → Ausfuehren
+- Alles andere → **Abgelehnt. Kein Wildcard, kein Prefix-Match.**
+
+## Vergleich
+
+|                          | Docker Dev Container | GitHub Codespaces | **agentbox** |
+|--------------------------|:-------------------:|:-----------------:|:------------:|
+| Braucht Docker           | Ja                  | Nein (Cloud)      | **Nein**     |
+| One-Liner Install        | Nein                | Nein              | **Ja**       |
+| Agent-Isolation          | Manuell             | Teilweise         | **Automatisch** |
+| Netzwerk-Beschraenkung   | Manuell             | Nein              | **Automatisch** |
+| Build/Deploy-Whitelist   | Nein                | Nein              | **Ja**       |
+| Session wegwerfbar       | Manuell             | Nein              | **Automatisch** |
+| Funktioniert offline     | Ja                  | Nein              | **Ja**       |
+| Kosten                   | Gratis              | Ab $0/Monat       | **Gratis**   |
+| Setup-Zeit               | 10-30 Min           | 5 Min             | **3-5 Min**  |
+
+## Session-Kontinuitaet
+
+Agenten lesen `CLAUDE.md` zu Beginn und aktualisieren sie am Ende jeder Session. Kein Kontext geht verloren. Vor jeder Session wird automatisch ein Backup (`CLAUDE.md.bak`) erstellt.
 
 ## Dateistruktur
 
@@ -126,37 +170,39 @@ OneDrive\AI_Projects_Source\
 |   +-- _tasks\
 ```
 
-Sieben Dateien, zwei Ordner. Das ist alles.
-
-## Session-Kontinuitaet
-
-Agenten lesen `CLAUDE.md` zu Beginn und aktualisieren sie am Ende jeder Session. So geht kein Kontext verloren, auch wenn die Sandbox weggeworfen wird. Vor jeder Session wird automatisch ein Backup (`CLAUDE.md.bak`) erstellt.
+Sieben Skripte, zwei Ordner. Das ist alles.
 
 ## Voraussetzungen
 
 - Windows 11 + WSL2
 - Git
-- Admin-Rechte (nur fuer die Ersteinrichtung)
-- Kein Docker, kein Kubernetes, keine Cloud
+- Admin-Rechte (nur einmalig)
+- **Kein Docker. Kein Kubernetes. Keine Cloud.**
 
-## Was agentbox IST
+## Ehrlichkeit
 
-- Ein Befehl zum Installieren
-- Echte Dateisystem-Isolation (wegwerfbare WSL2-Distro)
-- Agent schreibt Code direkt in deinen OneDrive-Ordner (Bind-Mount, kein Kopieren)
-- Build/Deploy nur ueber Whitelist-Task — der Agent kann nichts selbst ausfuehren
-- Netzwerk-Beschraenkung auf API-Endpoints
-- Automatische Projekt-Erkennung und CLI-Verwaltung
-- Zero-Cleanup: Session-Ende = alles weg
+### Was agentbox NICHT schuetzt
 
-## Was agentbox NICHT IST
-
-- Kein Container-Runtime (kein Docker-Ersatz)
-- Kein Schutz gegen WSL2-Kernel-Exploits (Microsoft-Verantwortung)
-- Kein Schutz gegen boesartigen Code im Projektordner selbst (Agent hat dort r/w)
+- WSL2-Kernel-Exploits (Microsoft-Verantwortung)
+- Boesartiger Code im Projektordner (Agent hat dort r/w — das ist beabsichtigt)
+- DNS-Tunneling (theoretisch moeglich, praktisch irrelevant)
 - Kein Multi-User-System (ein Entwickler, ein Rechner)
-- DNS-Tunneling ist theoretisch moeglich (praktisch irrelevant)
+
+Wir dokumentieren das, weil Sicherheitsversprechen nur zaehlen, wenn man ehrlich sagt wo die Grenzen sind.
+
+## Fuer Schulen (HTL/MINT)
+
+agentbox ist ideal fuer den Informatik-Unterricht:
+
+- Schueler koennen AI-Agenten produktiv nutzen, ohne den Schulrechner zu gefaehrden
+- Ein Befehl installiert alles — kein IT-Admin noetig
+- Jede Session startet sauber — keine Altlasten von Mitschuelern
+- Code liegt in OneDrive — Zugriff von zu Hause
+
+## Mitmachen
+
+Siehe [CONTRIBUTING.md](CONTRIBUTING.md) fuer Details.
 
 ## Lizenz
 
-MIT
+[MIT](LICENSE)

@@ -1,0 +1,29 @@
+# agentbox — .gitignore
+
+# Sandbox-Template (zu gross fuer Git, wird lokal gebaut)
+sandbox/
+template.tar.gz
+
+# Paket-Cache (lokal persistent, nicht im Repo)
+cache/
+
+# History (lokale Task-Logs)
+history/
+
+# Windows-Artefakte
+*.lnk
+Thumbs.db
+desktop.ini
+
+# WSL
+*.vhdx
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
