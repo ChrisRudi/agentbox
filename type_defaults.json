@@ -1,0 +1,35 @@
+{
+  "detection": {
+    "node":       ["package.json"],
+    "python":     ["*.py"],
+    "powershell": ["*.ps1"],
+    "html":       ["*.html"]
+  },
+  "defaults": {
+    "html": {
+      "build": null,
+      "deploy": { "target": "", "url": "" },
+      "agent": { "working_dir": "src", "entry_point": "index.html" }
+    },
+    "python": {
+      "build": { "command": "pip install -r requirements.txt", "output_dir": "build_out" },
+      "deploy": { "target": "", "url": "" },
+      "agent": { "working_dir": "src", "entry_point": "main.py" }
+    },
+    "powershell": {
+      "build": null,
+      "deploy": { "target": "", "url": "" },
+      "agent": { "working_dir": "src", "entry_point": "main.ps1" }
+    },
+    "node": {
+      "build": { "command": "npm run build", "output_dir": "build_out" },
+      "deploy": { "target": "", "url": "" },
+      "agent": { "working_dir": "src", "entry_point": "index.js" }
+    },
+    "generic": {
+      "build": null,
+      "deploy": { "target": "", "url": "" },
+      "agent": { "working_dir": ".", "entry_point": "" }
+    }
+  }
+}
