@@ -153,13 +153,36 @@ fi
     Write-Host "[OK] .bashrc-Eintrag bereits vorhanden" -ForegroundColor Green
 }
 
-# --- 8. Erfolgsmeldung ---
+# --- 8. Desktop-Shortcut erstellen ---
+Write-Host ""
+Write-Host "Erstelle Desktop-Shortcut..." -ForegroundColor Cyan
+
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+$shortcutPath = Join-Path $desktopPath "agentbox.lnk"
+
+try {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = "wsl.exe"
+    $shortcut.Arguments = "-e bash -li -c agentbox"
+    $shortcut.WorkingDirectory = "%USERPROFILE%"
+    $shortcut.Description = "agentbox — Sandboxed AI Agent Runner"
+    $shortcut.IconLocation = "wsl.exe,0"
+    $shortcut.Save()
+    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
+    Write-Host "[OK] Desktop-Shortcut erstellt: $shortcutPath" -ForegroundColor Green
+} catch {
+    Write-Host "WARNUNG: Desktop-Shortcut konnte nicht erstellt werden." -ForegroundColor Yellow
+    Write-Host $_.Exception.Message -ForegroundColor Yellow
+}
+
+# --- 9. Erfolgsmeldung ---
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Naechster Schritt:" -ForegroundColor Cyan
-Write-Host "  1. Neues WSL-Terminal oeffnen" -ForegroundColor White
-Write-Host "  2. 'agentbox' eingeben" -ForegroundColor White
+Write-Host "Starten:" -ForegroundColor Cyan
+Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
+Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
 Write-Host ""
