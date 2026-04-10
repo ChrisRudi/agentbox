@@ -9,15 +9,20 @@ set -euo pipefail
 # --- Parameter ---
 WIN_PROJECT_PATH="${1:-}"
 AGENT_CMD="${2:-claude}"
+WIN_CACHE_PATH="${3:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     echo "FEHLER: Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD>"
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD]"
     exit 1
 fi
 
-# Windows-Pfad in Linux-Pfad konvertieren
+# Windows-Pfade in Linux-Pfade konvertieren
 PROJECT_PATH=$(wslpath -u "$WIN_PROJECT_PATH" 2>/dev/null || echo "$WIN_PROJECT_PATH")
+CACHE_PATH=""
+if [ -n "$WIN_CACHE_PATH" ]; then
+    CACHE_PATH=$(wslpath -u "$WIN_CACHE_PATH" 2>/dev/null || echo "$WIN_CACHE_PATH")
+fi
 
 echo "=== agentbox Sandbox-Init ==="
 echo "Projekt: $PROJECT_PATH"
@@ -94,6 +99,31 @@ if [ -f "$PROJECT_PATH/project.json" ]; then
     mount --bind "$PROJECT_PATH/project.json" "$WORKSPACE/project.json"
     mount -o remount,ro "$WORKSPACE/project.json"
     echo "[OK] Mount: project.json (read-only)"
+fi
+
+# --- 4b. Paket-Cache mounten (persistiert ueber Sessions) ---
+if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
+    # npm-Cache
+    if [ -d "$CACHE_PATH/npm" ]; then
+        NPM_CACHE="/home/$SANDBOX_USER/.npm"
+        mkdir -p "$NPM_CACHE"
+        mount --bind "$CACHE_PATH/npm" "$NPM_CACHE"
+        mount -o remount,nosymfollow,nodev "$NPM_CACHE"
+        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$NPM_CACHE" 2>/dev/null || true
+        echo "[OK] Mount: npm-Cache (persistent)"
+    fi
+
+    # pip-Cache
+    if [ -d "$CACHE_PATH/pip" ]; then
+        PIP_CACHE="/home/$SANDBOX_USER/.cache/pip"
+        mkdir -p "$PIP_CACHE"
+        mount --bind "$CACHE_PATH/pip" "$PIP_CACHE"
+        mount -o remount,nosymfollow,nodev "$PIP_CACHE"
+        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$PIP_CACHE" 2>/dev/null || true
+        echo "[OK] Mount: pip-Cache (persistent)"
+    fi
+else
+    echo "[INFO] Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
 fi
 
 # --- 5. iptables-Regeln anwenden ---

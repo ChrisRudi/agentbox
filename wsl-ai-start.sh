@@ -188,6 +188,10 @@ if [ ! -d "$TASKS_DIR" ]; then
     mkdir -p "$TASKS_DIR"
 fi
 
+# --- 7b. Paket-Cache anlegen (persistiert ueber Sessions) ---
+CACHE_DIR="$CONTROL_DIR/cache"
+mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/pip"
+
 # --- 8. Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
 log_ok "Alte Status-Dateien bereinigt"
@@ -273,7 +277,8 @@ echo ""
 echo -e "${GREEN}=== Starte $AGENT_NAME fuer $PROJECT_NAME ===${NC}"
 echo ""
 
-wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh "$WIN_PROJECT_DIR" "$AGENT_CMD"
+WIN_CACHE_DIR=$(wslpath -w "$CACHE_DIR" 2>/dev/null || echo "$CACHE_DIR")
+wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh "$WIN_PROJECT_DIR" "$AGENT_CMD" "$WIN_CACHE_DIR"
 EXIT_CODE=$?
 
 # --- 14. Sandbox entfernen ---
