@@ -189,20 +189,3 @@ Sieben Skripte, zwei Ordner. Das ist alles.
 - Kein Multi-User-System (ein Entwickler, ein Rechner)
 
 Wir dokumentieren das, weil Sicherheitsversprechen nur zaehlen, wenn man ehrlich sagt wo die Grenzen sind.
-
-## Fuer Schulen (HTL/MINT)
-
-agentbox ist ideal fuer den Informatik-Unterricht:
-
-- Schueler koennen AI-Agenten produktiv nutzen, ohne den Schulrechner zu gefaehrden
-- Ein Befehl installiert alles — kein IT-Admin noetig
-- Jede Session startet sauber — keine Altlasten von Mitschuelern
-- Code liegt in OneDrive — Zugriff von zu Hause
-
-## Mitmachen
-
-Siehe [CONTRIBUTING.md](CONTRIBUTING.md) fuer Details.
-
-## Lizenz
-
-[MIT](LICENSE)
