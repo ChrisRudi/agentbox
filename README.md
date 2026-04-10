@@ -82,9 +82,13 @@ Mounts sind gehardened: `nosymfollow` (keine Symlinks nach aussen), `nodev` (kei
 Per `iptables` sind nur diese Endpoints erlaubt:
 
 - `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com` (AI-APIs)
-- `registry.npmjs.org`, `pypi.org` (CLI-Updates)
+- Paketquellen **automatisch nach Projekttyp**: Node → `npmjs.org`, Python → `pypi.org`, HTML/PowerShell → keine
 - DNS (Port 53)
 - **Alles andere wird blockiert.**
+
+### Ressourcen-Limits
+
+Der Installer setzt `.wslconfig` mit Defaults (4 GB RAM, 2 CPUs, 1 GB Swap), damit ein ausser Kontrolle geratener Agent den Host nicht lahmlegen kann. Bestehende `.wslconfig` werden nicht ueberschrieben.
 
 ### Build/Deploy-Kontrolle
 

@@ -100,41 +100,71 @@ fi
 echo ""
 echo "Wende Firewall-Regeln an..."
 
-FIREWALL_SCRIPT="/etc/agentbox/firewall.sh"
-if [ -f "$FIREWALL_SCRIPT" ]; then
-    bash "$FIREWALL_SCRIPT" 2>/dev/null || {
-        echo "[WARN] Firewall-Regeln konnten nicht vollstaendig angewendet werden."
-        echo "       (iptables braucht root in der Sandbox — wird beim Start ausgefuehrt)"
-    }
-else
-    # Fallback: Inline-Regeln
-    echo "[WARN] firewall.sh nicht gefunden — setze Basis-Regeln inline"
+# Projekttyp aus project.json lesen fuer dynamische Paketquellen
+PROJECT_TYPE="generic"
+if [ -f "$WORKSPACE/project.json" ] && command -v python3 &> /dev/null; then
+    PROJECT_TYPE=$(python3 -c "
+import json
+try:
+    with open('/workspace/project.json') as f:
+        print(json.load(f).get('type', 'generic'))
+except:
+    print('generic')
+" 2>/dev/null || echo "generic")
+elif [ -f "$WORKSPACE/project.json" ]; then
+    # Fallback ohne Python: grep
+    PROJECT_TYPE=$(grep -o '"type"[[:space:]]*:[[:space:]]*"[^"]*"' "$WORKSPACE/project.json" \
+        | head -1 | sed 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo "generic")
+fi
 
-    iptables -F OUTPUT 2>/dev/null || true
+echo "[INFO] Projekttyp: $PROJECT_TYPE"
 
-    # Loopback
-    iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+# Paketquellen basierend auf Projekttyp bestimmen
+PACKAGE_DOMAINS=""
+case "$PROJECT_TYPE" in
+    node)
+        PACKAGE_DOMAINS="registry.npmjs.org"
+        echo "[INFO] Paketquelle: npmjs.org (Node.js)"
+        ;;
+    python)
+        PACKAGE_DOMAINS="pypi.org files.pythonhosted.org"
+        echo "[INFO] Paketquelle: pypi.org (Python)"
+        ;;
+    *)
+        # generic, html, powershell — keine Paketquellen noetig
+        echo "[INFO] Keine Paketquellen fuer Typ '$PROJECT_TYPE'"
+        ;;
+esac
 
-    # DNS
-    iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
-    iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+# Basis-Regeln setzen (immer)
+iptables -F OUTPUT 2>/dev/null || true
+iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 
-    # Bestehende Verbindungen
-    iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+# AI-API-Endpoints (immer erlaubt)
+for domain in api.anthropic.com api.openai.com generativelanguage.googleapis.com; do
+    for ip in $(dig +short "$domain" 2>/dev/null); do
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT 2>/dev/null || true
+        fi
+    done
+done
 
-    # AI-APIs + Package-Registries (ueber DNS aufgeloest)
-    for domain in api.anthropic.com api.openai.com generativelanguage.googleapis.com \
-                  registry.npmjs.org pypi.org files.pythonhosted.org; do
+# Paketquellen nur wenn fuer Projekttyp relevant
+if [ -n "$PACKAGE_DOMAINS" ]; then
+    for domain in $PACKAGE_DOMAINS; do
         for ip in $(dig +short "$domain" 2>/dev/null); do
             if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT 2>/dev/null || true
             fi
         done
     done
-
-    # Alles andere blockieren
-    iptables -A OUTPUT -j DROP 2>/dev/null || true
 fi
+
+# Alles andere blockieren
+iptables -A OUTPUT -j DROP 2>/dev/null || true
 
 echo "[OK] Firewall-Regeln angewendet"
 

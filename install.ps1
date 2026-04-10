@@ -154,7 +154,39 @@ fi
     Write-Host "[OK] .bashrc-Eintrag bereits vorhanden" -ForegroundColor Green
 }
 
-# --- 8. Desktop-Shortcut erstellen ---
+# --- 8. WSL Ressourcen-Limits (.wslconfig) ---
+Write-Host ""
+Write-Host "Pruefe WSL Ressourcen-Limits..." -ForegroundColor Cyan
+
+$wslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
+$wslConfigMarker = "# agentbox"
+
+if (-not (Test-Path $wslConfigPath)) {
+    # .wslconfig existiert nicht — mit sinnvollen Defaults erstellen
+    $wslConfigContent = @"
+$wslConfigMarker — Ressourcen-Limits fuer Sandbox-Distros
+[wsl2]
+memory=4GB
+processors=2
+swap=1GB
+"@
+    $wslConfigContent | Out-File -FilePath $wslConfigPath -Encoding ascii -NoNewline
+    Write-Host "[OK] .wslconfig erstellt (4 GB RAM, 2 CPUs, 1 GB Swap)" -ForegroundColor Green
+    Write-Host "     Anpassbar unter: $wslConfigPath" -ForegroundColor Gray
+} else {
+    # .wslconfig existiert — pruefen ob bereits konfiguriert
+    $existingConfig = Get-Content -Path $wslConfigPath -Raw -ErrorAction SilentlyContinue
+    if ($existingConfig -match [regex]::Escape($wslConfigMarker)) {
+        Write-Host "[OK] .wslconfig bereits durch agentbox konfiguriert" -ForegroundColor Green
+    } else {
+        Write-Host "[INFO] .wslconfig existiert bereits mit eigenen Einstellungen." -ForegroundColor Yellow
+        Write-Host "       Empfehlung: memory=4GB und processors=2 setzen," -ForegroundColor Yellow
+        Write-Host "       damit ein Agent den Host nicht lahmlegen kann." -ForegroundColor Yellow
+        Write-Host "       Datei: $wslConfigPath" -ForegroundColor Gray
+    }
+}
+
+# --- 9. Desktop-Shortcut erstellen ---
 Write-Host ""
 Write-Host "Erstelle Desktop-Shortcut..." -ForegroundColor Cyan
 
