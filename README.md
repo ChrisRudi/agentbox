@@ -20,10 +20,13 @@ Das wars. Neues WSL-Terminal oeffnen und `agentbox` eingeben.
 2. WSL2-Template wird gebaut (Ubuntu-Minimal + Node.js + Python3 + AI-CLIs)
 3. Windows Event-Source und Scheduled Task werden angelegt
 4. WSL `.bashrc` wird konfiguriert
+5. Desktop-Shortcut `agentbox.lnk` wird erstellt
 
 Dauer: ca. 3-5 Minuten, einmalig.
 
 ## Taegliche Nutzung
+
+Doppelklick auf den **agentbox**-Shortcut am Desktop — oder WSL-Terminal oeffnen:
 
 ```
 $ agentbox
