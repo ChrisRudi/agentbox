@@ -137,7 +137,8 @@ $bashrcMarker
 export AI_PROJECTS_ROOT="$wslBasePath"
 if [ -f "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh" ]; then
     alias agentbox='bash "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh"'
-    echo "agentbox verfuegbar. Starte mit: agentbox"
+    # Auto-Start: fragt 5s ob agentbox starten soll, Enter/Timeout = Ja, n = normales Terminal
+    bash "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh" --auto
 fi
 "@
 
