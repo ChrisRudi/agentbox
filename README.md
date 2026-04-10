@@ -57,6 +57,7 @@ Alle Projekte liegen in `OneDrive\AI_Projects_Source\` — auf dem Windows-Datei
 - **Kein Kopieren noetig**: Aenderungen landen sofort im Projektordner auf Windows
 - **Sandbox weg, Code bleibt**: Nach Session-Ende wird nur die Distro geloescht, nicht deine Dateien
 - **Zugriff von ueberall**: Dein Code ist ueber OneDrive auf allen Geraeten verfuegbar
+- **WSL bleibt schlank**: Beim normalen Coding in WSL sammeln sich node_modules, pip-Caches, Build-Artefakte und temporaere Dateien an — die VHDX-Datei waechst und waechst, schrumpft aber nie von allein. agentbox vermeidet das komplett: Jede Session ist eine frische Wegwerf-Distro, danach wird alles geloescht. Deine Host-WSL bleibt sauber.
 
 ## Sicherheitsmodell
 
