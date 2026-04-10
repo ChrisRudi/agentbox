@@ -9,7 +9,7 @@ Startet AI-Coding-Agenten (Claude Code, OpenAI Codex, Gemini CLI) in wegwerfbare
 Ein Befehl in einer Admin-PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/chrisrudi/agentbox/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
 ```
 
 Das wars. Neues WSL-Terminal oeffnen und `agentbox` eingeben.
