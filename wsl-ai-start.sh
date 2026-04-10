@@ -272,7 +272,50 @@ log_info "Kopiere Sandbox-Init-Skript..."
 wsl.exe -d "$DISTRO_NAME" -- bash -c "cat > /sandbox-init.sh" < "$SANDBOX_INIT"
 wsl.exe -d "$DISTRO_NAME" -- chmod +x /sandbox-init.sh
 
-# --- 13. Sandbox starten ---
+# --- 13. RAM-Watchdog im Hintergrund starten ---
+WATCHDOG_PID=""
+(
+    RAM_WARN_THRESHOLD=90
+    WARN_SENT=false
+    while true; do
+        sleep 30
+
+        # RAM-Auslastung der Sandbox pruefen
+        MEM_INFO=$(wsl.exe -d "$DISTRO_NAME" -- bash -c \
+            "free -m 2>/dev/null | awk '/^Mem:/{printf \"%d %d\", \$3, \$2}'" 2>/dev/null || echo "")
+
+        if [ -z "$MEM_INFO" ]; then
+            # Sandbox nicht mehr erreichbar — Watchdog beenden
+            break
+        fi
+
+        MEM_USED=$(echo "$MEM_INFO" | awk '{print $1}')
+        MEM_TOTAL=$(echo "$MEM_INFO" | awk '{print $2}')
+
+        if [ "$MEM_TOTAL" -gt 0 ] 2>/dev/null; then
+            MEM_PERCENT=$(( MEM_USED * 100 / MEM_TOTAL ))
+
+            if [ "$MEM_PERCENT" -ge "$RAM_WARN_THRESHOLD" ] && [ "$WARN_SENT" = false ]; then
+                # Windows-Warnung anzeigen
+                powershell.exe -NoProfile -Command "[void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); \
+                    [System.Windows.Forms.MessageBox]::Show( \
+                    'agentbox Sandbox \"$PROJECT_NAME\" nutzt ${MEM_PERCENT}% RAM (${MEM_USED}/${MEM_TOTAL} MB). \
+Agent eventuell in einer Endlosschleife?', \
+                    'agentbox — RAM-Warnung', \
+                    'OK', 'Warning')" 2>/dev/null &
+                WARN_SENT=true
+            fi
+
+            # Reset wenn RAM wieder unter Schwelle
+            if [ "$MEM_PERCENT" -lt "$RAM_WARN_THRESHOLD" ]; then
+                WARN_SENT=false
+            fi
+        fi
+    done
+) &
+WATCHDOG_PID=$!
+
+# --- 14. Sandbox starten ---
 echo ""
 echo -e "${GREEN}=== Starte $AGENT_NAME fuer $PROJECT_NAME ===${NC}"
 echo ""
@@ -281,7 +324,13 @@ WIN_CACHE_DIR=$(wslpath -w "$CACHE_DIR" 2>/dev/null || echo "$CACHE_DIR")
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh "$WIN_PROJECT_DIR" "$AGENT_CMD" "$WIN_CACHE_DIR"
 EXIT_CODE=$?
 
-# --- 14. Sandbox entfernen ---
+# --- 15. Watchdog beenden ---
+if [ -n "$WATCHDOG_PID" ]; then
+    kill "$WATCHDOG_PID" 2>/dev/null || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+fi
+
+# --- 16. Sandbox entfernen ---
 echo ""
 log_info "Entferne Sandbox-Distro..."
 wsl.exe --unregister "$DISTRO_NAME" 2>/dev/null || true

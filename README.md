@@ -91,6 +91,8 @@ Per `iptables` sind nur diese Endpoints erlaubt:
 
 Der Installer setzt `.wslconfig` mit Defaults (4 GB RAM, 2 CPUs, 1 GB Swap), damit ein ausser Kontrolle geratener Agent den Host nicht lahmlegen kann. Bestehende `.wslconfig` werden nicht ueberschrieben.
 
+Zusaetzlich laeuft ein **RAM-Watchdog** im Hintergrund: Steigt der Speicherverbrauch der Sandbox ueber 90%, erscheint eine Windows-Warnung — so kannst du reagieren bevor der Host einfriert.
+
 ### Build/Deploy-Kontrolle
 
 Der Agent kann nicht selbst builden oder deployen. Er schreibt eine Task-Datei, ein separater Windows-Runner fuehrt die Aktion kontrolliert aus:
