@@ -12,24 +12,24 @@ Ein Befehl in einer Admin-PowerShell:
 irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
 ```
 
-Das wars. Neues WSL-Terminal oeffnen und `agentbox` eingeben.
+Das wars. WSL-Terminal oeffnen — agentbox startet automatisch.
 
 ## Was passiert bei der Installation?
 
 1. Repository wird nach `OneDrive\AI_Projects_Source\_control` geklont
 2. WSL2-Template wird gebaut (Ubuntu-Minimal + Node.js + Python3 + AI-CLIs)
 3. Windows Event-Source und Scheduled Task werden angelegt
-4. WSL `.bashrc` wird konfiguriert
+4. WSL `.bashrc` wird konfiguriert (Auto-Start)
 5. Desktop-Shortcut `agentbox.lnk` wird erstellt
 
 Dauer: ca. 3-5 Minuten, einmalig.
 
 ## Taegliche Nutzung
 
-Doppelklick auf den **agentbox**-Shortcut am Desktop — oder WSL-Terminal oeffnen:
+WSL-Terminal oeffnen (oder Doppelklick auf den Desktop-Shortcut):
 
 ```
-$ agentbox
+agentbox starten? [J/n] (automatisch in 5s)
 
 === agentbox ===
 
