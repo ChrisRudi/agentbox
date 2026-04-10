@@ -133,7 +133,8 @@ Agenten lesen `CLAUDE.md` zu Beginn und aktualisieren sie am Ende jeder Session.
 
 - Ein Befehl zum Installieren
 - Echte Dateisystem-Isolation (wegwerfbare WSL2-Distro)
-- Kontrollierte Build/Deploy-Ausfuehrung (Agent kann nicht selbst)
+- Agent schreibt Code direkt in deinen OneDrive-Ordner (Bind-Mount, kein Kopieren)
+- Build/Deploy nur ueber Whitelist-Task — der Agent kann nichts selbst ausfuehren
 - Netzwerk-Beschraenkung auf API-Endpoints
 - Automatische Projekt-Erkennung und CLI-Verwaltung
 - Zero-Cleanup: Session-Ende = alles weg
