@@ -43,7 +43,7 @@ Write-Host ""
 Write-Host "Lade Ubuntu-Minimal herunter..." -ForegroundColor Cyan
 
 $ubuntuUrl = if ($config -and $config.ubuntu_image_url) { $config.ubuntu_image_url } else {
-    "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-noble-minimal-cloudimg-amd64-root.tar.xz"
+    "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz"
 }
 $downloadPath = Join-Path $tempBase "ubuntu-minimal.tar.xz"
 
