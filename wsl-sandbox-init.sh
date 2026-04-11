@@ -139,11 +139,21 @@ fi
 # wsl.conf greift erst nach Distro-Neustart, daher hier manuell
 echo ""
 echo "Isoliere Sandbox von Windows-Dateisystem..."
-for _mnt in /mnt/[a-z]; do
-    if mountpoint -q "$_mnt" 2>/dev/null; then
-        umount -l "$_mnt" 2>/dev/null && echo "[OK] Unmount: $_mnt" || echo "[WARN] Konnte $_mnt nicht unmounten"
-    fi
+# Alle /mnt Unterverzeichnisse unmounten (WSL DrvFs Automounts)
+for _mnt in /mnt/*/; do
+    umount -f "$_mnt" 2>/dev/null || umount -l "$_mnt" 2>/dev/null || true
+    rmdir "$_mnt" 2>/dev/null || true
 done
+# /mnt selbst auch sperren
+umount -f /mnt 2>/dev/null || umount -l /mnt 2>/dev/null || true
+# Sicherstellen dass nichts mehr erreichbar ist
+if [ -d "/mnt/c" ] && ls /mnt/c/ >/dev/null 2>&1; then
+    echo "[WARN] /mnt/c noch erreichbar — versuche erneut"
+    umount -f /mnt/c 2>/dev/null || true
+    mount -t tmpfs tmpfs /mnt -o size=1k,mode=000 2>/dev/null || true
+else
+    echo "[OK] Windows-Laufwerke isoliert"
+fi
 
 # --- 5. iptables-Regeln anwenden ---
 echo ""
