@@ -80,6 +80,74 @@ Beispiel in `config.json`:
 "base_path_override": "D:\\GoogleDrive\\AI_Projects"
 ```
 
+## Schnellstart: Projekte einrichten
+
+### Neues Projekt
+
+Erstelle einen Ordner im Projektverzeichnis — agentbox erkennt den Typ beim ersten Start automatisch:
+
+```
+AI_Projects_Source\
++-- MeineNeueApp\
+    +-- src\
+        +-- index.js      ← agentbox erkennt "node"
+```
+
+Eine `project.json` wird automatisch generiert. Du kannst sie auch manuell erstellen:
+
+```json
+{
+  "name": "MeineNeueApp",
+  "type": "node",
+  "version": "1.0.0",
+  "build": { "command": "npm run build", "output_dir": "build_out" },
+  "deploy": { "target": "", "url": "" },
+  "agent": { "working_dir": "src", "entry_point": "index.js" }
+}
+```
+
+### Bestehendes Projekt einbinden
+
+Verschiebe oder kopiere deinen Projektordner nach `AI_Projects_Source\`:
+
+```powershell
+# PowerShell — bestehendes Projekt kopieren
+Copy-Item -Recurse "D:\Dev\mein-projekt" "$env:OneDrive\AI_Projects_Source\mein-projekt"
+```
+
+agentbox erwartet diese Struktur (nur `src/` ist Pflicht):
+
+```
+mein-projekt\
++-- src\              ← dein Code (read-write in der Sandbox)
++-- assets\           ← statische Dateien (read-only in der Sandbox, optional)
+```
+
+Falls dein Projekt keinen `src/`-Ordner hat, wird stattdessen der Projekt-Root als `src/` gemountet.
+
+### project.json Referenz
+
+| Feld | Pflicht | Beschreibung |
+|------|---------|-------------|
+| `name` | Ja | Projektname (entspricht dem Ordnernamen) |
+| `type` | Ja | `node`, `python`, `html`, `powershell` oder `generic` |
+| `version` | Nein | Semantische Version (Standard: `1.0.0`) |
+| `build.command` | Nein | Muss in der Build-Whitelist stehen (siehe `config.json`) |
+| `build.output_dir` | Nein | Build-Ausgabeverzeichnis (Standard: `build_out`) |
+| `deploy.target` | Nein | `local` oder `github` (muss in der Deploy-Whitelist stehen) |
+| `agent.working_dir` | Nein | Arbeitsverzeichnis im Projekt (Standard: `src`) |
+| `agent.entry_point` | Nein | Hauptdatei (informativ, fuer den Agenten) |
+
+Automatisch erkannte Typen und ihre Defaults:
+
+| Gefundene Dateien | Erkannter Typ | Standard-Build-Befehl |
+|-------------------|--------------|----------------------|
+| `package.json` | `node` | `npm run build` |
+| `*.py` | `python` | `pip install -r requirements.txt` |
+| `*.ps1` | `powershell` | — |
+| `*.html` | `html` | — |
+| (nichts davon) | `generic` | — |
+
 ## Taegliche Nutzung
 
 WSL-Terminal oeffnen (oder Doppelklick auf den Desktop-Shortcut):

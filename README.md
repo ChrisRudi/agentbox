@@ -82,6 +82,74 @@ Example in `config.json`:
 "base_path_override": "D:\\GoogleDrive\\AI_Projects"
 ```
 
+## Quick Start: Adding Projects
+
+### New project
+
+Create a folder in your projects directory — agentbox auto-detects the type on first start:
+
+```
+AI_Projects_Source\
++-- MyNewApp\
+    +-- src\
+        +-- index.js      ← agentbox detects "node"
+```
+
+A `project.json` is generated automatically. You can also create it manually:
+
+```json
+{
+  "name": "MyNewApp",
+  "type": "node",
+  "version": "1.0.0",
+  "build": { "command": "npm run build", "output_dir": "build_out" },
+  "deploy": { "target": "", "url": "" },
+  "agent": { "working_dir": "src", "entry_point": "index.js" }
+}
+```
+
+### Existing project
+
+Move or copy your project folder into `AI_Projects_Source\`:
+
+```powershell
+# PowerShell — copy existing project
+Copy-Item -Recurse "D:\Dev\my-existing-app" "$env:OneDrive\AI_Projects_Source\my-existing-app"
+```
+
+agentbox expects this structure (only `src/` is required):
+
+```
+my-existing-app\
++-- src\              ← your code (read-write in sandbox)
++-- assets\           ← static files (read-only in sandbox, optional)
+```
+
+If your project has no `src/` folder, the project root is mounted as `src/` instead.
+
+### project.json reference
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Project name (matches folder name) |
+| `type` | Yes | `node`, `python`, `html`, `powershell`, or `generic` |
+| `version` | No | Semantic version (default: `1.0.0`) |
+| `build.command` | No | Must be on the build whitelist (see `config.json`) |
+| `build.output_dir` | No | Build output directory (default: `build_out`) |
+| `deploy.target` | No | `local` or `github` (must be on deploy whitelist) |
+| `agent.working_dir` | No | Working directory inside project (default: `src`) |
+| `agent.entry_point` | No | Main file (informational, for the agent) |
+
+Auto-detected types and their defaults:
+
+| Files found | Detected type | Default build command |
+|-------------|--------------|----------------------|
+| `package.json` | `node` | `npm run build` |
+| `*.py` | `python` | `pip install -r requirements.txt` |
+| `*.ps1` | `powershell` | — |
+| `*.html` | `html` | — |
+| (none of the above) | `generic` | — |
+
 ## Daily Usage
 
 Open a WSL terminal (or double-click the desktop shortcut):
