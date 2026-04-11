@@ -141,33 +141,33 @@ foreach ($aid in $agentIds) {
 $agentInstallBlock = $agentInstallLines -join "`n"
 $nodejsUrl = if ($config -and $config.nodejs_setup_url) { $config.nodejs_setup_url } else { "https://deb.nodesource.com/setup_20.x" }
 
-$installScript = @'
-#!/bin/bash
-set -e
-
-export DEBIAN_FRONTEND=noninteractive
-
-echo "[1/5] System-Update..."
-apt-get update -qq
-apt-get install -y -qq bash curl wget git iptables > /dev/null 2>&1
-
-echo "[2/5] Node.js installieren..."
-curl -fsSL __NODEJS_URL__ | bash - > /dev/null 2>&1
-apt-get install -y -qq nodejs > /dev/null 2>&1
-
-echo "[3/5] Python3 installieren..."
-apt-get install -y -qq python3 python3-pip python3-venv > /dev/null 2>&1
-
-echo "[4/5] AI CLI-Tools installieren..."
-__AGENT_INSTALL_BLOCK__
-
-echo "[5/5] Aufraumen..."
-apt-get clean
-rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-echo "Pakete fertig installiert."
-'@
-$installScript = $installScript.Replace('__NODEJS_URL__', $nodejsUrl).Replace('__AGENT_INSTALL_BLOCK__', $agentInstallBlock)
+$installScriptLines = @(
+    '#!/bin/bash',
+    'set -e',
+    '',
+    'export DEBIAN_FRONTEND=noninteractive',
+    '',
+    'echo "[1/5] System-Update..."',
+    'apt-get update -qq',
+    'apt-get install -y -qq bash curl wget git iptables > /dev/null 2>&1',
+    '',
+    'echo "[2/5] Node.js installieren..."',
+    ('curl -fsSL ' + $nodejsUrl + ' | bash - > /dev/null 2>&1'),
+    'apt-get install -y -qq nodejs > /dev/null 2>&1',
+    '',
+    'echo "[3/5] Python3 installieren..."',
+    'apt-get install -y -qq python3 python3-pip python3-venv > /dev/null 2>&1',
+    '',
+    'echo "[4/5] AI CLI-Tools installieren..."',
+    $agentInstallBlock,
+    '',
+    'echo "[5/5] Aufraumen..."',
+    'apt-get clean',
+    'rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*',
+    '',
+    'echo "Pakete fertig installiert."'
+)
+$installScript = $installScriptLines -join "`n"
 
 & wsl.exe -d $distroName -- bash -c $installScript 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) {
@@ -189,59 +189,57 @@ if ($config -and $config.firewall_registries_node)   { $fwRegistries += $config.
 if ($config -and $config.firewall_registries_python)  { $fwRegistries += $config.firewall_registries_python }
 $fwPkgDomains = if ($fwRegistries.Count -gt 0) { $fwRegistries -join " " } else { "registry.npmjs.org pypi.org files.pythonhosted.org" }
 
-$firewallScript = @'
-#!/bin/bash
-# firewall.sh — agentbox Netzwerk-Isolation
-# Erlaubt nur AI-API-Endpoints und Package-Registries
+$fwDomainBlock = @(
+    '    for ip in $(dig +short "$domain" 2>/dev/null); do',
+    '        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then',
+    '            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT',
+    '        fi',
+    '    done'
+) -join "`n"
 
-set -e
+$firewallLines = @(
+    '#!/bin/bash',
+    '# firewall.sh — agentbox Netzwerk-Isolation',
+    'set -e',
+    '',
+    '# Bestehende Regeln leeren',
+    'iptables -F OUTPUT 2>/dev/null || true',
+    '',
+    '# Loopback erlauben',
+    'iptables -A OUTPUT -o lo -j ACCEPT',
+    '',
+    '# DNS erlauben (Port 53, UDP + TCP)',
+    'iptables -A OUTPUT -p udp --dport 53 -j ACCEPT',
+    'iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT',
+    '',
+    '# Bereits hergestellte Verbindungen erlauben',
+    'iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT',
+    '',
+    '# AI-API-Endpoints erlauben (HTTPS, Port 443)',
+    ('for domain in ' + $fwAiApis + '; do'),
+    $fwDomainBlock,
+    'done',
+    '',
+    '# Package-Registries erlauben (fuer CLI-Updates)',
+    ('for domain in ' + $fwPkgDomains + '; do'),
+    $fwDomainBlock,
+    'done',
+    '',
+    '# Alles andere blockieren',
+    'iptables -A OUTPUT -j DROP',
+    '',
+    'echo "Firewall-Regeln angewendet."'
+)
+$firewallScript = $firewallLines -join "`n"
 
-# Bestehende Regeln leeren
-iptables -F OUTPUT 2>/dev/null || true
-
-# Loopback erlauben
-iptables -A OUTPUT -o lo -j ACCEPT
-
-# DNS erlauben (Port 53, UDP + TCP)
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-
-# Bereits hergestellte Verbindungen erlauben
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-# AI-API-Endpoints erlauben (HTTPS, Port 443)
-for domain in __FW_AI_APIS__; do
-    for ip in $(dig +short "$domain" 2>/dev/null); do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
-        fi
-    done
-done
-
-# Package-Registries erlauben (fuer CLI-Updates)
-for domain in __FW_PKG_DOMAINS__; do
-    for ip in $(dig +short "$domain" 2>/dev/null); do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
-        fi
-    done
-done
-
-# Alles andere blockieren
-iptables -A OUTPUT -j DROP
-
-echo "Firewall-Regeln angewendet."
-'@
-$firewallScript = $firewallScript.Replace('__FW_AI_APIS__', $fwAiApis).Replace('__FW_PKG_DOMAINS__', $fwPkgDomains)
-
-$setupFirewall = @'
-mkdir -p /etc/agentbox
-cat > /etc/agentbox/firewall.sh << 'FWEOF'
-__FIREWALL_SCRIPT__
-FWEOF
-chmod +x /etc/agentbox/firewall.sh
-'@
-$setupFirewall = $setupFirewall.Replace('__FIREWALL_SCRIPT__', $firewallScript)
+$setupFirewallLines = @(
+    'mkdir -p /etc/agentbox',
+    ('cat > /etc/agentbox/firewall.sh << ' + "'" + 'FWEOF' + "'"),
+    $firewallScript,
+    'FWEOF',
+    'chmod +x /etc/agentbox/firewall.sh'
+)
+$setupFirewall = $setupFirewallLines -join "`n"
 
 & wsl.exe -d $distroName -- bash -c $setupFirewall 2>&1 | Out-Host
 Write-Host "[OK] Firewall-Regeln hinterlegt" -ForegroundColor Green
@@ -249,14 +247,15 @@ Write-Host "[OK] Firewall-Regeln hinterlegt" -ForegroundColor Green
 # --- 6. Sysctl-Hardening ---
 Write-Host "Setze Sysctl-Hardening..." -ForegroundColor Cyan
 
-$sysctlScript = @'
-cat >> /etc/sysctl.conf << 'EOF'
-# agentbox — Hardlink- und Symlink-Schutz
-fs.protected_hardlinks = 1
-fs.protected_symlinks = 1
-EOF
-sysctl -p > /dev/null 2>&1 || true
-'@
+$sysctlLines = @(
+    ('cat >> /etc/sysctl.conf << ' + "'" + 'EOF' + "'"),
+    '# agentbox — Hardlink- und Symlink-Schutz',
+    'fs.protected_hardlinks = 1',
+    'fs.protected_symlinks = 1',
+    'EOF',
+    'sysctl -p > /dev/null 2>&1 || true'
+)
+$sysctlScript = $sysctlLines -join "`n"
 
 & wsl.exe -d $distroName -- bash -c $sysctlScript 2>&1 | Out-Host
 Write-Host "[OK] Sysctl-Hardening gesetzt" -ForegroundColor Green
