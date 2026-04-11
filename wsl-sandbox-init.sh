@@ -135,6 +135,16 @@ else
     echo "[INFO] Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
 fi
 
+# --- 4c. Windows-Laufwerke unmounten (Sandbox-Isolation) ---
+# wsl.conf greift erst nach Distro-Neustart, daher hier manuell
+echo ""
+echo "Isoliere Sandbox von Windows-Dateisystem..."
+for _mnt in /mnt/[a-z]; do
+    if mountpoint -q "$_mnt" 2>/dev/null; then
+        umount -l "$_mnt" 2>/dev/null && echo "[OK] Unmount: $_mnt" || echo "[WARN] Konnte $_mnt nicht unmounten"
+    fi
+done
+
 # --- 5. iptables-Regeln anwenden ---
 echo ""
 echo "Wende Firewall-Regeln an..."
