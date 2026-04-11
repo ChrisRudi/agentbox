@@ -271,6 +271,61 @@ Siehe [`config.json`](../config.json) fuer die vollstaendige Liste mit allen Def
 
 Agenten lesen `CLAUDE.md` zu Beginn und aktualisieren sie am Ende jeder Session. Kein Kontext geht verloren. Vor jeder Session wird automatisch ein Backup (`CLAUDE.md.bak`) erstellt.
 
+## Replay-Modus: Agenten-Vergleich
+
+Fuehre die gleiche Aufgabe mit verschiedenen Agenten aus und vergleiche die Ergebnisse — deterministisch.
+
+### So funktioniert es
+
+Jede Session erstellt automatisch einen **Snapshot** (Code + CLAUDE.md vor Agent-Start) und einen **Diff** (alle Aenderungen des Agenten). Das ermoeglicht:
+
+```bash
+# 1. Aufgabe mit Claude Code ausfuehren
+agentbox
+#    → Session-ID: 20260411_143000_claude_MeinProjekt
+
+# 2. Gleichen Ausgangszustand mit anderem Agent wiederholen
+agentbox --replay 20260411_143000_claude_MeinProjekt
+#    → Anderen Agent waehlen (z.B. Codex oder Aider)
+#    → Session-ID: 20260411_150000_codex_MeinProjekt
+
+# 3. Vergleichen was jeder Agent gemacht hat
+agentbox --compare 20260411_143000_claude_MeinProjekt 20260411_150000_codex_MeinProjekt
+```
+
+### Befehle
+
+| Befehl | Beschreibung |
+|--------|-------------|
+| `agentbox --list-sessions` | Alle aufgezeichneten Sessions auflisten |
+| `agentbox --replay <session-id>` | Snapshot wiederherstellen, mit anderem Agent ausfuehren |
+| `agentbox --compare <id1> <id2>` | Zwei Sessions nebeneinander vergleichen |
+
+### Was verglichen wird
+
+- **Code-Aenderungen**: Vollstaendiger Unified-Diff aller geaenderten Dateien
+- **CLAUDE.md-Aenderungen**: Wie jeder Agent seine Arbeit dokumentiert hat
+- **Session-Metadaten**: Agent-Name, Zeitstempel, Projekt
+
+Nuetzlich um zu evaluieren, welcher Agent bestimmte Aufgaben besser loest, oder um zu verifizieren, dass ein Refactoring bei verschiedenen Agenten aequivalente Ergebnisse liefert.
+
+## Firewall-Diagnose
+
+Nach jeder Session zeigt agentbox **blockierte Netzwerkverbindungen** mit Domainnamen und konkreten Vorschlaegen:
+
+```
+=== Blockierte Verbindungen ===
+
+  [BLOCKED] cdn.example.com (203.0.113.42)
+  [BLOCKED] assets.npmjs.org (198.51.100.7)
+
+Fehlende Domains in config.json ergaenzen:
+  Fuer Node.js:  "firewall_registries_node"
+  Fuer Python:   "firewall_registries_python"
+```
+
+Kein Raetselraten mehr wenn `npm install` oder `pip install` wegen fehlender CDN-Domains fehlschlaegt.
+
 ## Dateistruktur
 
 ```
@@ -288,6 +343,7 @@ AI_Projects_Source\                (oder eigener Pfad)
 |   |   +-- config.sh              # Bash-Config-Helper
 |   +-- sandbox\
 |   |   +-- template.tar.gz        # Template-Distro
+|   +-- sessions\                   # Replay-Snapshots + Diffs
 |   +-- cache\
 |       +-- npm\                    # Persistenter npm-Cache
 |       +-- pip\                    # Persistenter pip-Cache

@@ -205,7 +205,8 @@ if [ -n "$PACKAGE_DOMAINS" ]; then
     done
 fi
 
-# Alles andere blockieren
+# Alles andere loggen und blockieren
+iptables -A OUTPUT -j LOG --log-prefix "agentbox-blocked: " --log-level 4 2>/dev/null || true
 iptables -A OUTPUT -j DROP 2>/dev/null || true
 
 echo "[OK] Firewall-Regeln angewendet"
@@ -256,6 +257,44 @@ fi
 
 EXIT_CODE=$?
 
+# --- 10. Blockierte Verbindungen analysieren ---
 echo ""
 echo "Agent beendet (Exit-Code: $EXIT_CODE)"
+
+# Blockierte IPs aus Kernel-Log extrahieren und als Domains aufloesen
+BLOCKED_IPS=$(dmesg 2>/dev/null | grep "agentbox-blocked:" | grep -oP 'DST=\K[0-9.]+' | sort -u)
+
+if [ -n "$BLOCKED_IPS" ]; then
+    echo ""
+    echo "=== Blockierte Verbindungen ==="
+    echo ""
+
+    BLOCKED_DOMAINS=""
+    for ip in $BLOCKED_IPS; do
+        # Reverse-DNS-Lookup
+        domain=$(dig +short -x "$ip" 2>/dev/null | head -1 | sed 's/\.$//')
+        if [ -n "$domain" ]; then
+            echo "  [BLOCKED] $domain ($ip)"
+            BLOCKED_DOMAINS="$BLOCKED_DOMAINS $domain"
+        else
+            echo "  [BLOCKED] $ip (kein Reverse-DNS)"
+        fi
+    done
+
+    # Vorschlaege fuer config.json
+    if [ -n "$BLOCKED_DOMAINS" ]; then
+        echo ""
+        echo "Falls Pakete nicht installiert werden konnten, ergaenze"
+        echo "die fehlenden Domains in config.json:"
+        echo ""
+        echo "  Fuer Node.js:  \"firewall_registries_node\""
+        echo "  Fuer Python:   \"firewall_registries_python\""
+        echo "  Fuer AI-APIs:  \"firewall_ai_apis\""
+        echo ""
+        echo "  Blockierte Domains:$BLOCKED_DOMAINS"
+        echo ""
+        echo "Danach: win-setup.ps1 erneut ausfuehren (Template-Rebuild)."
+    fi
+fi
+
 exit $EXIT_CODE

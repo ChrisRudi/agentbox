@@ -273,6 +273,61 @@ See [`config.json`](config.json) for the full list with all defaults.
 
 Agents read `CLAUDE.md` at the start and update it at the end of each session. No context is lost. A backup (`CLAUDE.md.bak`) is automatically created before each session.
 
+## Replay Mode: Cross-Agent Comparison
+
+Run the same task with different agents and compare the results — deterministically.
+
+### How it works
+
+Every session automatically creates a **snapshot** (code + CLAUDE.md before the agent starts) and a **diff** (all changes the agent made). This enables:
+
+```bash
+# 1. Run a task with Claude Code
+agentbox
+#    → Session-ID: 20260411_143000_claude_MyProject
+
+# 2. Replay the same starting point with a different agent
+agentbox --replay 20260411_143000_claude_MyProject
+#    → Choose a different agent (e.g., Codex or Aider)
+#    → Session-ID: 20260411_150000_codex_MyProject
+
+# 3. Compare what each agent did
+agentbox --compare 20260411_143000_claude_MyProject 20260411_150000_codex_MyProject
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `agentbox --list-sessions` | List all recorded sessions |
+| `agentbox --replay <session-id>` | Restore snapshot, run with another agent |
+| `agentbox --compare <id1> <id2>` | Side-by-side diff of two sessions |
+
+### What gets compared
+
+- **Code changes**: Full unified diff of all files modified by each agent
+- **CLAUDE.md changes**: How each agent documented their work
+- **Session metadata**: Agent name, timestamp, project
+
+This is useful for evaluating which agent handles specific tasks best, or for verifying that a refactoring produces equivalent results across agents.
+
+## Firewall Diagnostics
+
+After each session, agentbox shows **blocked network connections** with domain names and actionable suggestions:
+
+```
+=== Blocked Connections ===
+
+  [BLOCKED] cdn.example.com (203.0.113.42)
+  [BLOCKED] assets.npmjs.org (198.51.100.7)
+
+Add missing domains to config.json:
+  For Node.js:  "firewall_registries_node"
+  For Python:   "firewall_registries_python"
+```
+
+This eliminates guesswork when `npm install` or `pip install` fails due to CDN domains not being whitelisted.
+
 ## File Structure
 
 ```
@@ -290,6 +345,7 @@ AI_Projects_Source\               (or your custom path)
 |   |   +-- config.sh             # Bash config helper
 |   +-- sandbox\
 |   |   +-- template.tar.gz       # Template distro
+|   +-- sessions\                  # Replay snapshots + diffs
 |   +-- cache\
 |       +-- npm\                   # Persistent npm cache
 |       +-- pip\                   # Persistent pip cache

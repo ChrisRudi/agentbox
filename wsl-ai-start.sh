@@ -6,11 +6,111 @@
 
 set -euo pipefail
 
-# --- Auto-Modus (aus .bashrc) ---
+# --- Modus-Erkennung ---
 AUTO_MODE=false
-if [ "${1:-}" = "--auto" ]; then
-    AUTO_MODE=true
-    shift
+REPLAY_SESSION=""
+COMPARE_MODE=false
+COMPARE_SESSIONS=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --auto)
+            AUTO_MODE=true
+            shift
+            ;;
+        --replay)
+            REPLAY_SESSION="${2:-}"
+            if [ -z "$REPLAY_SESSION" ]; then
+                echo "FEHLER: --replay braucht eine Session-ID."
+                echo "Verfuegbare Sessions: agentbox --list-sessions"
+                exit 1
+            fi
+            shift 2
+            ;;
+        --list-sessions)
+            _sessions_dir="${AI_PROJECTS_ROOT:-}/_control/sessions"
+            if [ -d "$_sessions_dir" ]; then
+                echo "=== agentbox Sessions ==="
+                for s in "$_sessions_dir"/*/; do
+                    [ -d "$s" ] || continue
+                    _sid=$(basename "$s")
+                    _meta="$s/meta.json"
+                    if [ -f "$_meta" ] && command -v python3 &> /dev/null; then
+                        _info=$(python3 -c "
+import json
+with open('$_meta') as f:
+    d = json.load(f)
+print(f\"  {d.get('id','?'):20s}  {d.get('agent','?'):15s}  {d.get('project','?'):15s}  {d.get('timestamp','?')}\")
+" 2>/dev/null || echo "  $_sid")
+                        echo "$_info"
+                    else
+                        echo "  $_sid"
+                    fi
+                done
+            else
+                echo "Keine Sessions vorhanden."
+            fi
+            exit 0
+            ;;
+        --compare)
+            COMPARE_MODE=true
+            COMPARE_SESSIONS=("${2:-}" "${3:-}")
+            if [ -z "${COMPARE_SESSIONS[0]}" ] || [ -z "${COMPARE_SESSIONS[1]}" ]; then
+                echo "FEHLER: --compare braucht zwei Session-IDs."
+                echo "Verwendung: agentbox --compare <session1> <session2>"
+                exit 1
+            fi
+            shift 3
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# --- Compare-Modus: Zwei Sessions vergleichen ---
+if [ "$COMPARE_MODE" = true ]; then
+    _sessions_dir="${AI_PROJECTS_ROOT:-$(echo $HOME)}/_control/sessions"
+    _s1="$_sessions_dir/${COMPARE_SESSIONS[0]}"
+    _s2="$_sessions_dir/${COMPARE_SESSIONS[1]}"
+
+    if [ ! -d "$_s1" ] || [ ! -d "$_s2" ]; then
+        echo "FEHLER: Session nicht gefunden."
+        [ ! -d "$_s1" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[0]}"
+        [ ! -d "$_s2" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[1]}"
+        exit 1
+    fi
+
+    # Meta-Infos lesen
+    for _sd in "$_s1" "$_s2"; do
+        _meta="$_sd/meta.json"
+        if [ -f "$_meta" ] && command -v python3 &> /dev/null; then
+            python3 -c "
+import json
+with open('$_meta') as f:
+    d = json.load(f)
+print(f\"Session: {d.get('id','')}  Agent: {d.get('agent','')}  Projekt: {d.get('project','')}  Zeit: {d.get('timestamp','')}\")
+" 2>/dev/null
+        fi
+    done
+
+    echo ""
+    echo "=== Diff-Vergleich ==="
+    echo ""
+
+    if [ -f "$_s1/changes.diff" ] && [ -f "$_s2/changes.diff" ]; then
+        diff --color=auto -u \
+            --label "${COMPARE_SESSIONS[0]}" "$_s1/changes.diff" \
+            --label "${COMPARE_SESSIONS[1]}" "$_s2/changes.diff" \
+            || true
+    else
+        echo "Keine Diffs vorhanden — wurde die Session mit Snapshot gestartet?"
+    fi
+    exit 0
+fi
+
+# --- Auto-Modus (aus .bashrc) ---
+if [ "$AUTO_MODE" = true ]; then
 
     # Auto-Start-Timeout aus Config (Fallback: 5s)
     _auto_timeout=5
@@ -442,7 +542,72 @@ if [ "$existing" -gt 0 ]; then
     exit 1
 fi
 
-# --- 12. Sandbox-Distro importieren ---
+# --- 12. Session-Snapshot erstellen (fuer Replay-Modus) ---
+SESSIONS_DIR="$CONTROL_DIR/sessions"
+SESSION_ID="$(date +%Y%m%d_%H%M%S)_${AGENT_CMD}_${PROJECT_NAME}"
+SESSION_DIR="$SESSIONS_DIR/$SESSION_ID"
+
+# Replay-Modus: Snapshot wiederherstellen statt neuen erstellen
+if [ -n "$REPLAY_SESSION" ]; then
+    REPLAY_DIR="$SESSIONS_DIR/$REPLAY_SESSION"
+    if [ ! -d "$REPLAY_DIR" ]; then
+        log_error "Replay-Session nicht gefunden: $REPLAY_SESSION"
+        echo "Verfuegbare Sessions: agentbox --list-sessions"
+        exit 1
+    fi
+    if [ ! -f "$REPLAY_DIR/snapshot.tar.gz" ]; then
+        log_error "Kein Snapshot in Session: $REPLAY_SESSION"
+        exit 1
+    fi
+
+    echo ""
+    log_info "Replay-Modus: Stelle Snapshot wieder her..."
+
+    # Projekt-src/ zuruecksetzen auf Snapshot-Stand
+    if [ -d "$PROJECT_DIR/src" ]; then
+        rm -rf "$PROJECT_DIR/src"
+    fi
+    tar -xzf "$REPLAY_DIR/snapshot.tar.gz" -C "$PROJECT_DIR" 2>/dev/null
+
+    # CLAUDE.md aus Snapshot wiederherstellen
+    if [ -f "$REPLAY_DIR/CLAUDE.md" ]; then
+        cp "$REPLAY_DIR/CLAUDE.md" "$PROJECT_DIR/CLAUDE.md"
+    fi
+
+    log_ok "Snapshot von '$REPLAY_SESSION' wiederhergestellt"
+    log_info "Replay mit Agent: $AGENT_NAME"
+fi
+
+# Snapshot erstellen (src/ + CLAUDE.md)
+mkdir -p "$SESSION_DIR"
+if [ -d "$PROJECT_DIR/src" ]; then
+    tar -czf "$SESSION_DIR/snapshot.tar.gz" -C "$PROJECT_DIR" src 2>/dev/null || true
+elif [ -d "$PROJECT_DIR" ]; then
+    # Kein src/ Ordner — Projektroot sichern (ohne _tasks, assets, cache)
+    tar -czf "$SESSION_DIR/snapshot.tar.gz" -C "$PROJECT_DIR" \
+        --exclude='_tasks' --exclude='assets' --exclude='.git' . 2>/dev/null || true
+fi
+
+# CLAUDE.md sichern
+if [ -f "$PROJECT_DIR/CLAUDE.md" ]; then
+    cp "$PROJECT_DIR/CLAUDE.md" "$SESSION_DIR/CLAUDE.md"
+fi
+
+# Session-Metadaten speichern
+cat > "$SESSION_DIR/meta.json" << METAEOF
+{
+  "id": "$SESSION_ID",
+  "project": "$PROJECT_NAME",
+  "agent": "$AGENT_NAME",
+  "agent_cmd": "$AGENT_CMD",
+  "timestamp": "$(date -Iseconds)",
+  "replay_of": "${REPLAY_SESSION:-}"
+}
+METAEOF
+
+log_ok "Session-Snapshot erstellt: $SESSION_ID"
+
+# --- 13. Sandbox-Distro importieren ---
 echo ""
 log_info "Importiere Sandbox-Distro..."
 
@@ -458,12 +623,12 @@ if [ $? -ne 0 ]; then
 fi
 log_ok "Sandbox-Distro importiert: $DISTRO_NAME"
 
-# --- 13. Sandbox-Init-Skript kopieren ---
+# --- 14. Sandbox-Init-Skript kopieren ---
 log_info "Kopiere Sandbox-Init-Skript..."
 wsl.exe -d "$DISTRO_NAME" -- bash -c "cat > /sandbox-init.sh" < "$SANDBOX_INIT"
 wsl.exe -d "$DISTRO_NAME" -- chmod +x /sandbox-init.sh
 
-# --- 14. RAM-Watchdog im Hintergrund starten ---
+# --- 15. RAM-Watchdog im Hintergrund starten ---
 WATCHDOG_PID=""
 (
     RAM_WARN_THRESHOLD=$(cfg_get "resources_ram_warn_percent" "90")
@@ -514,7 +679,7 @@ Agent eventuell in einer Endlosschleife?', \
 ) &
 WATCHDOG_PID=$!
 
-# --- 15. Sandbox starten ---
+# --- 16. Sandbox starten ---
 echo ""
 echo -e "${GREEN}=== Starte $AGENT_NAME fuer $PROJECT_NAME ===${NC}"
 echo ""
@@ -537,13 +702,38 @@ wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON"
 EXIT_CODE=$?
 
-# --- 16. Watchdog beenden ---
+# --- 17. Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
     wait "$WATCHDOG_PID" 2>/dev/null || true
 fi
 
-# --- 17. Sandbox entfernen ---
+# --- 18. Session-Diff erfassen ---
+if [ -d "$SESSION_DIR" ] && [ -f "$SESSION_DIR/snapshot.tar.gz" ]; then
+    _diff_tmp="/tmp/agentbox_diff_$$"
+    mkdir -p "$_diff_tmp"
+    tar -xzf "$SESSION_DIR/snapshot.tar.gz" -C "$_diff_tmp" 2>/dev/null || true
+
+    # Diff: Snapshot vs. aktueller Stand
+    if [ -d "$PROJECT_DIR/src" ]; then
+        diff -ruN "$_diff_tmp/src" "$PROJECT_DIR/src" > "$SESSION_DIR/changes.diff" 2>/dev/null || true
+    else
+        diff -ruN "$_diff_tmp" "$PROJECT_DIR" \
+            --exclude='_tasks' --exclude='assets' --exclude='.git' \
+            > "$SESSION_DIR/changes.diff" 2>/dev/null || true
+    fi
+
+    # CLAUDE.md-Diff
+    if [ -f "$SESSION_DIR/CLAUDE.md" ] && [ -f "$PROJECT_DIR/CLAUDE.md" ]; then
+        diff -u "$SESSION_DIR/CLAUDE.md" "$PROJECT_DIR/CLAUDE.md" \
+            > "$SESSION_DIR/claude_md.diff" 2>/dev/null || true
+    fi
+
+    _diff_lines=$(wc -l < "$SESSION_DIR/changes.diff" 2>/dev/null || echo "0")
+    rm -rf "$_diff_tmp"
+fi
+
+# --- 19. Sandbox entfernen ---
 echo ""
 log_info "Entferne Sandbox-Distro..."
 wsl.exe --unregister "$DISTRO_NAME" 2>/dev/null || true
@@ -551,6 +741,19 @@ log_ok "Sandbox entfernt: $DISTRO_NAME"
 
 echo ""
 echo -e "${GREEN}Session beendet.${NC} Code und CLAUDE.md bleiben in: $PROJECT_DIR"
+
+# Session-Info anzeigen
+if [ -d "$SESSION_DIR" ]; then
+    echo ""
+    echo -e "${CYAN}Session-ID:${NC} $SESSION_ID"
+    echo -e "${CYAN}Diff:${NC}       ${_diff_lines:-0} Zeilen geaendert"
+    echo ""
+    echo "Replay mit anderem Agent:"
+    echo "  agentbox --replay $SESSION_ID"
+    echo ""
+    echo "Zwei Sessions vergleichen:"
+    echo "  agentbox --compare <session1> <session2>"
+fi
 echo ""
 
 exit $EXIT_CODE
