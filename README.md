@@ -221,7 +221,7 @@ AI_Projects_Source\               (or your custom path)
 
 ## Prerequisites
 
-- Windows 11 + WSL2
+- Windows 10 (2004+) or Windows 11 + WSL2 (auto-installed if missing)
 - Git
 - Admin privileges (one-time only)
 - **No Docker. No Kubernetes. No cloud.**

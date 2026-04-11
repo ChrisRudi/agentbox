@@ -23,16 +23,95 @@ if (-not $isAdmin) {
 }
 Write-Host "[OK] Admin-Rechte vorhanden" -ForegroundColor Green
 
-# --- 2. WSL2 pruefen ---
-try {
-    $wslOutput = & wsl.exe --status 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "WSL nicht aktiv" }
-} catch {
-    Write-Host "FEHLER: WSL2 ist nicht installiert oder nicht aktiv." -ForegroundColor Red
-    Write-Host "Installieren mit: wsl --install" -ForegroundColor Yellow
+# --- 2. Windows-Version pruefen ---
+$osVersion = [System.Environment]::OSVersion.Version
+$osBuild = $osVersion.Build
+$osName = (Get-CimInstance Win32_OperatingSystem).Caption
+
+# Windows 10 Build 19041+ (2004) oder Windows 11 (Build 22000+)
+if ($osBuild -lt 19041) {
+    Write-Host "FEHLER: Windows 10 Version 2004 (Build 19041) oder hoeher benoetigt." -ForegroundColor Red
+    Write-Host "Aktuell: $osName (Build $osBuild)" -ForegroundColor Yellow
+    Write-Host "Bitte Windows aktualisieren." -ForegroundColor Yellow
     exit 1
 }
-Write-Host "[OK] WSL2 erkannt" -ForegroundColor Green
+Write-Host "[OK] $osName (Build $osBuild)" -ForegroundColor Green
+
+# --- 2b. WSL2 pruefen und bei Bedarf installieren ---
+$wslReady = $false
+try {
+    $wslOutput = & wsl.exe --status 2>&1
+    if ($LASTEXITCODE -eq 0) { $wslReady = $true }
+} catch { }
+
+if (-not $wslReady) {
+    Write-Host ""
+    Write-Host "WSL2 ist nicht installiert — richte es automatisch ein..." -ForegroundColor Yellow
+
+    if ($osBuild -ge 19041) {
+        # Methode 1: wsl --install (funktioniert ab Win10 2004 mit neueren Updates + Win11)
+        Write-Host "Versuche: wsl --install --no-distribution ..." -ForegroundColor Cyan
+        $installResult = & wsl.exe --install --no-distribution 2>&1
+        $installSuccess = ($LASTEXITCODE -eq 0)
+
+        if (-not $installSuccess) {
+            # Methode 2: Features manuell aktivieren (aeltere Win10 Builds)
+            Write-Host "Fallback: Aktiviere WSL- und VM-Features manuell..." -ForegroundColor Cyan
+
+            $features = @(
+                @{ Name = "Microsoft-Windows-Subsystem-Linux"; Display = "Windows Subsystem for Linux" },
+                @{ Name = "VirtualMachinePlatform";           Display = "Virtual Machine Platform" }
+            )
+
+            foreach ($feat in $features) {
+                $state = (Get-WindowsOptionalFeature -Online -FeatureName $feat.Name).State
+                if ($state -ne "Enabled") {
+                    Write-Host "  Aktiviere $($feat.Display)..." -ForegroundColor Gray
+                    Enable-WindowsOptionalFeature -Online -FeatureName $feat.Name -NoRestart -ErrorAction Stop | Out-Null
+                    Write-Host "  [OK] $($feat.Display) aktiviert" -ForegroundColor Green
+                } else {
+                    Write-Host "  [OK] $($feat.Display) bereits aktiv" -ForegroundColor Green
+                }
+            }
+
+            # WSL2 als Standard setzen
+            & wsl.exe --set-default-version 2 2>&1 | Out-Null
+
+            # WSL-Kernel-Update herunterladen und installieren
+            Write-Host "  Lade WSL2-Kernel-Update herunter..." -ForegroundColor Gray
+            $kernelUrl = "https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi"
+            $kernelMsi = Join-Path $env:TEMP "wsl_update_x64.msi"
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $kernelUrl -OutFile $kernelMsi -UseBasicParsing
+            Start-Process msiexec.exe -ArgumentList "/i", "`"$kernelMsi`"", "/quiet", "/norestart" -Wait -NoNewWindow
+            Remove-Item -Path $kernelMsi -Force -ErrorAction SilentlyContinue
+            Write-Host "  [OK] WSL2-Kernel-Update installiert" -ForegroundColor Green
+
+            & wsl.exe --set-default-version 2 2>&1 | Out-Null
+        }
+
+        # Pruefen ob Neustart noetig
+        try {
+            $wslCheck = & wsl.exe --status 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "WSL noch nicht bereit" }
+            Write-Host "[OK] WSL2 erfolgreich eingerichtet" -ForegroundColor Green
+        } catch {
+            Write-Host ""
+            Write-Host "========================================" -ForegroundColor Yellow
+            Write-Host " Neustart erforderlich!                 " -ForegroundColor Yellow
+            Write-Host "========================================" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "WSL2-Features wurden aktiviert. Bitte den PC neu starten" -ForegroundColor Yellow
+            Write-Host "und danach install.ps1 erneut ausfuehren:" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex" -ForegroundColor White
+            Write-Host ""
+            exit 0
+        }
+    }
+} else {
+    Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
+}
 
 # --- 3. Git pruefen ---
 try {
