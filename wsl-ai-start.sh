@@ -322,7 +322,6 @@ except:
                     echo -e "         ${YELLOW}[WARN] Update fehlgeschlagen — weiter mit aktueller Version.${NC}"
                 fi
             fi
-            fi
         fi
     fi
 fi
