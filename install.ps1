@@ -1,9 +1,7 @@
-# install.ps1
-# agentbox Bootstrap — Einziger Befehl: irm https://raw.githubusercontent.com/chrisrudi/agentbox/main/install.ps1 | iex
-# Braucht: Admin-Rechte, WSL2, Git
-# Version: 3.2
-
-param()
+# install.ps1 — agentbox Bootstrap (PS 5.1 kompatibel)
+# CRLF-Selbstreparatur fuer den Fall dass die Datei lokal mit LF-Zeilenenden vorliegt.
+if (-not $env:_AGENTBOX_CRLF) { $p = $MyInvocation.MyCommand.Path; if ($p -and (Test-Path $p)) { $t = [IO.File]::ReadAllText($p); if (-not $t.Contains("`r")) { [IO.File]::WriteAllText($p, $t.Replace("`n", "`r`n")); $env:_AGENTBOX_CRLF = '1'; & $p; return } } }
+$env:_AGENTBOX_CRLF = $null
 
 $ErrorActionPreference = "Stop"
 
@@ -324,15 +322,6 @@ if (-not (Test-Path $setupScript)) {
 Write-Host ""
 Write-Host "Fuehre win-setup.ps1 aus (Template, Event-Source, Task)..." -ForegroundColor Cyan
 Write-Host ""
-
-# Fix: GitHub-ZIP liefert LF-Zeilenenden, PS 5.1 braucht CRLF fuer Here-Strings
-Get-ChildItem -Path $controlDir -Filter "*.ps1" | ForEach-Object {
-    $raw = [System.IO.File]::ReadAllText($_.FullName)
-    if ($raw.Contains("`n") -and -not $raw.Contains("`r`n")) {
-        $raw = $raw.Replace("`n", "`r`n")
-        [System.IO.File]::WriteAllText($_.FullName, $raw)
-    }
-}
 
 & $setupScript
 if ($LASTEXITCODE -ne 0) {
