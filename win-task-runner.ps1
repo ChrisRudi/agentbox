@@ -23,26 +23,54 @@ if ($env:OneDrive) {
     exit 1
 }
 $controlDir = Join-Path $baseDir "_control"
+
+# --- config.json laden ---
+$configPath = Join-Path $controlDir "config.json"
+$config = $null
+try {
+    if (Test-Path $configPath) {
+        $config = Get-Content -Path $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    }
+} catch {
+    Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
+}
+
+# base_path_override aus Config anwenden
+if ($config -and $config.base_path_override -and $config.base_path_override -ne "") {
+    $baseDir = $config.base_path_override
+    $controlDir = Join-Path $baseDir (
+        if ($config.control_dir_name) { $config.control_dir_name } else { "_control" }
+    )
+}
+
 $historyDir = Join-Path $controlDir "history"
-$eventSource = "AIProjects"
+$eventSource = if ($config -and $config.event_log_source) { $config.event_log_source } else { "AIProjects" }
 
 # Build-Whitelist (exakter Match, kein Prefix, kein Wildcard)
-$buildWhitelist = @(
-    "npm run build",
-    "npm run test",
-    "npm install",
-    "pip install -r requirements.txt",
-    "python build.py",
-    "python setup.py install",
-    "dotnet build",
-    "make"
-)
+$buildWhitelist = if ($config -and $config.build_whitelist) {
+    @($config.build_whitelist)
+} else {
+    @(
+        "npm run build",
+        "npm run test",
+        "npm install",
+        "pip install -r requirements.txt",
+        "python build.py",
+        "python setup.py install",
+        "dotnet build",
+        "make"
+    )
+}
 
 # Deploy-Whitelist (exakter Match)
-$deployWhitelist = @(
-    "local",
-    "github"
-)
+$deployWhitelist = if ($config -and $config.deploy_whitelist) {
+    @($config.deploy_whitelist)
+} else {
+    @(
+        "local",
+        "github"
+    )
+}
 
 # --- Hilfsfunktionen ---
 

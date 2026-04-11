@@ -4,7 +4,7 @@
     <strong>AI coding agents have full access to your filesystem.<br>agentbox changes that.</strong>
   </p>
   <p align="center">
-    <a href="#installation">Installation</a> · <a href="#daily-usage">Usage</a> · <a href="#security-model">Security</a> · <a href="#comparison">Comparison</a>
+    <a href="#installation">Installation</a> · <a href="#supported-agents">Agents</a> · <a href="#daily-usage">Usage</a> · <a href="#security-model">Security</a> · <a href="#configuration">Config</a>
   </p>
   <p align="center">
     🌍 <a href="./docs/README.de.md">Deutsch</a>
@@ -13,7 +13,7 @@
 
 ---
 
-**agentbox** runs AI coding agents (Claude Code, OpenAI Codex, Gemini CLI) in **disposable WSL2 distributions** with real filesystem and network isolation.
+**agentbox** runs AI coding agents in **disposable WSL2 distributions** with real filesystem and network isolation.
 
 One command. No Docker. No Kubernetes. Just Windows + WSL2.
 
@@ -27,6 +27,18 @@ AI coding agents are powerful — but they run with full privileges on your syst
 
 agentbox gives you the productivity of AI agents **without the risk**.
 
+## Supported Agents
+
+| Agent | Default | Install | Activate |
+|-------|---------|---------|----------|
+| **Claude Code** (Anthropic) | Enabled | npm | — |
+| **OpenAI Codex** (OpenAI) | Enabled | npm | — |
+| **Gemini CLI** (Google) | Enabled | pip | — |
+| **Aider** | Disabled | pip | Set `agent_aider_enabled` to `true` in `config.json` |
+| **Goose** (Block) | Disabled | pip | Set `agent_goose_enabled` to `true` in `config.json` |
+
+Enable additional agents → edit `config.json` → run `install.ps1` again to rebuild the template.
+
 ## Installation
 
 One command in an admin PowerShell:
@@ -37,18 +49,38 @@ irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
 
 That's it. Open a WSL terminal — agentbox starts automatically.
 
+### Update
+
+Same command. If agentbox is already installed, it pulls the latest version and rebuilds the template (including newly enabled agents).
+
 <details>
 <summary>What happens during installation?</summary>
 
-1. Repository is cloned to `OneDrive\AI_Projects_Source\_control`
-2. WSL2 template is built (Ubuntu Minimal + Node.js + Python3 + AI CLIs)
+1. Repository is cloned to `AI_Projects_Source\_control` (or your custom path)
+2. WSL2 template is built (Ubuntu Minimal + Node.js + Python3 + enabled AI CLIs)
 3. Windows Event Source and Scheduled Task are created
 4. WSL `.bashrc` is configured (auto-start)
 5. Desktop shortcut `agentbox.lnk` is created
-6. `.wslconfig` with resource limits is set (4 GB RAM, 2 CPUs)
+6. `.wslconfig` with resource limits is set (configurable via `config.json`)
 
-Duration: approx. 3–5 minutes, one-time only.
+Duration: approx. 3–5 minutes, one-time only. Updates are faster.
 </details>
+
+### Storage Location
+
+By default, agentbox uses `OneDrive\AI_Projects_Source\`. You can use **any folder** instead:
+
+| Storage | How to configure |
+|---------|-----------------|
+| **OneDrive** (default) | Works out of the box |
+| **Google Drive** | Set `base_path_override` in `config.json` to your Google Drive path |
+| **Dropbox** | Set `base_path_override` in `config.json` to your Dropbox path |
+| **Local folder** | Set `base_path_override` to any path, e.g. `D:\Dev\AgentProjects` |
+
+Example in `config.json`:
+```json
+"base_path_override": "D:\\GoogleDrive\\AI_Projects"
+```
 
 ## Daily Usage
 
@@ -75,17 +107,7 @@ Selection [1]: 1
 
 **Agent works → session ends → sandbox is deleted → code stays.**
 
-### Where does the code live?
-
-All projects live in `OneDrive\AI_Projects_Source\` — on your Windows filesystem. The sandbox bind-mounts only the project folder. The agent writes directly to your OneDrive directory:
-
-| Benefit | Description |
-|---------|-------------|
-| **OneDrive sync** | Code is automatically backed up to the cloud |
-| **No copying** | Changes land on Windows immediately |
-| **Sandbox gone, code stays** | Only the distro is deleted, not your files |
-| **Package cache persists** | npm/pip caches are persistent — no re-downloads |
-| **WSL stays lean** | No growing VHDX from caches and artifacts |
+Only agents that are both **enabled** in `config.json` and **installed** in the template are shown.
 
 ## Security Model
 
@@ -112,7 +134,7 @@ Via `iptables` — only what's necessary:
 
 | Allowed | Blocked |
 |---------|---------|
-| AI APIs (Anthropic, OpenAI, Google) | Everything else |
+| AI APIs (configurable in `config.json`) | Everything else |
 | Package registries (auto by project type) | Arbitrary outbound connections |
 | DNS (port 53) | Access to local services |
 
@@ -120,17 +142,36 @@ Project type `node` → only `npmjs.org`. Project type `python` → only `pypi.o
 
 ### Resource Limits
 
-- `.wslconfig`: 4 GB RAM, 2 CPUs, 1 GB swap (adjustable)
-- **RAM watchdog**: Warns via Windows dialog when sandbox uses > 90% RAM
+- `.wslconfig`: configurable via `config.json` (default: 4 GB RAM, 2 CPUs, 1 GB swap)
+- **RAM watchdog**: Warns via Windows dialog when sandbox exceeds threshold (default: 90%)
 - Protection against runaway loops that freeze the host
 
 ### Build/Deploy Control
 
 The agent **cannot execute anything itself**. It writes a task file, a Windows-side runner validates:
 
-- Build command on whitelist? (`npm run build`, `make`, etc.) → Execute
-- Deploy target on whitelist? (`local`, `github`) → Execute
+- Build command on whitelist? → Execute
+- Deploy target on whitelist? → Execute
 - Everything else → **Rejected. No wildcards, no prefix matching.**
+
+Both whitelists are configurable in `config.json`.
+
+## Configuration
+
+All settings live in `config.json` (optional — all values have built-in defaults):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `base_path_override` | `""` (OneDrive) | Custom project storage path |
+| `resources_memory` | `4GB` | WSL2 memory limit |
+| `resources_processors` | `2` | WSL2 CPU cores |
+| `build_whitelist` | 8 commands | Allowed build commands |
+| `deploy_whitelist` | `local`, `github` | Allowed deploy targets |
+| `firewall_ai_apis` | 3 endpoints | Allowed AI API domains |
+| `agent_*_enabled` | Big 3 on | Enable/disable agents |
+| `auto_start_timeout` | `5` | Auto-start countdown (seconds) |
+
+See [`config.json`](config.json) for the full list with all defaults.
 
 ## Comparison
 
@@ -153,20 +194,23 @@ Agents read `CLAUDE.md` at the start and update it at the end of each session. N
 ## File Structure
 
 ```
-OneDrive\AI_Projects_Source\
+AI_Projects_Source\               (or your custom path)
 +-- _control\
-|   +-- install.ps1              # Bootstrap from GitHub
-|   +-- win-setup.ps1            # One-time: build template
-|   +-- win-task-runner.ps1      # Build/deploy runner
-|   +-- wsl-ai-start.sh          # Project/agent selection
-|   +-- wsl-sandbox-init.sh      # Sandbox initialization
-|   +-- type_defaults.json       # Type detection + defaults
-|   +-- SYSTEM_META_PROMPT.md    # Agent contract
+|   +-- config.json               # Central configuration
+|   +-- install.ps1               # Bootstrap from GitHub
+|   +-- win-setup.ps1             # One-time: build template
+|   +-- win-task-runner.ps1       # Build/deploy runner
+|   +-- wsl-ai-start.sh           # Project/agent selection
+|   +-- wsl-sandbox-init.sh       # Sandbox initialization
+|   +-- type_defaults.json        # Type detection + defaults
+|   +-- SYSTEM_META_PROMPT.md     # Agent contract
+|   +-- lib\
+|   |   +-- config.sh             # Bash config helper
 |   +-- sandbox\
-|   |   +-- template.tar.gz      # Template distro
+|   |   +-- template.tar.gz       # Template distro
 |   +-- cache\
-|       +-- npm\                  # Persistent npm cache
-|       +-- pip\                  # Persistent pip cache
+|       +-- npm\                   # Persistent npm cache
+|       +-- pip\                   # Persistent pip cache
 +-- MyProject\
 |   +-- project.json
 |   +-- CLAUDE.md
@@ -174,8 +218,6 @@ OneDrive\AI_Projects_Source\
 |   +-- assets\
 |   +-- _tasks\
 ```
-
-Seven scripts, two folders. That's all.
 
 ## Prerequisites
 

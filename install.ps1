@@ -46,14 +46,41 @@ try {
 Write-Host "[OK] $gitVersion" -ForegroundColor Green
 
 # --- 4. Zielordner bestimmen ---
-if (-not $env:OneDrive) {
-    Write-Host "FEHLER: OneDrive-Umgebungsvariable nicht gesetzt." -ForegroundColor Red
-    Write-Host "OneDrive muss eingerichtet sein." -ForegroundColor Yellow
-    exit 1
+# Default: OneDrive\AI_Projects_Source (kann per config.json ueberschrieben werden)
+$baseDir = $null
+$controlDir = $null
+
+# Pruefen ob bereits installiert — dann config.json lesen fuer base_path_override
+$possibleControlDirs = @()
+if ($env:OneDrive) {
+    $possibleControlDirs += Join-Path (Join-Path $env:OneDrive "AI_Projects_Source") "_control"
 }
 
-$baseDir = Join-Path $env:OneDrive "AI_Projects_Source"
-$controlDir = Join-Path $baseDir "_control"
+foreach ($tryDir in $possibleControlDirs) {
+    $tryConfig = Join-Path $tryDir "config.json"
+    if (Test-Path $tryConfig) {
+        try {
+            $existingConfig = Get-Content -Path $tryConfig -Raw -ErrorAction Stop | ConvertFrom-Json
+            if ($existingConfig.base_path_override -and $existingConfig.base_path_override -ne "") {
+                $baseDir = $existingConfig.base_path_override
+                $controlDirName = if ($existingConfig.control_dir_name) { $existingConfig.control_dir_name } else { "_control" }
+                $controlDir = Join-Path $baseDir $controlDirName
+                Write-Host "[INFO] base_path_override aus config.json: $baseDir" -ForegroundColor Cyan
+            }
+        } catch { }
+    }
+}
+
+# Fallback auf OneDrive-Standard
+if (-not $baseDir) {
+    if (-not $env:OneDrive) {
+        Write-Host "FEHLER: OneDrive-Umgebungsvariable nicht gesetzt." -ForegroundColor Red
+        Write-Host "OneDrive muss eingerichtet sein, oder setze 'base_path_override' in config.json." -ForegroundColor Yellow
+        exit 1
+    }
+    $baseDir = Join-Path $env:OneDrive "AI_Projects_Source"
+    $controlDir = Join-Path $baseDir "_control"
+}
 
 if (-not (Test-Path $baseDir)) {
     New-Item -ItemType Directory -Path $baseDir -Force | Out-Null
@@ -158,21 +185,34 @@ fi
 Write-Host ""
 Write-Host "Pruefe WSL Ressourcen-Limits..." -ForegroundColor Cyan
 
+# Werte aus config.json lesen (nach Clone verfuegbar)
+$installConfig = $null
+$installConfigPath = Join-Path $controlDir "config.json"
+try {
+    if (Test-Path $installConfigPath) {
+        $installConfig = Get-Content -Path $installConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    }
+} catch { }
+
+$resMem  = if ($installConfig -and $installConfig.resources_memory)     { $installConfig.resources_memory }     else { "4GB" }
+$resCpu  = if ($installConfig -and $installConfig.resources_processors) { $installConfig.resources_processors } else { 2 }
+$resSwap = if ($installConfig -and $installConfig.resources_swap)       { $installConfig.resources_swap }       else { "1GB" }
+
 $wslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
 $wslConfigMarker = "# agentbox"
 
 if (-not (Test-Path $wslConfigPath)) {
-    # .wslconfig existiert nicht — mit sinnvollen Defaults erstellen
+    # .wslconfig existiert nicht — mit Werten aus config.json erstellen
     $wslConfigContent = @"
 $wslConfigMarker — Ressourcen-Limits fuer Sandbox-Distros
 [wsl2]
-memory=4GB
-processors=2
-swap=1GB
+memory=$resMem
+processors=$resCpu
+swap=$resSwap
 "@
     $wslConfigContent | Out-File -FilePath $wslConfigPath -Encoding ascii -NoNewline
-    Write-Host "[OK] .wslconfig erstellt (4 GB RAM, 2 CPUs, 1 GB Swap)" -ForegroundColor Green
-    Write-Host "     Anpassbar unter: $wslConfigPath" -ForegroundColor Gray
+    Write-Host "[OK] .wslconfig erstellt ($resMem RAM, $resCpu CPUs, $resSwap Swap)" -ForegroundColor Green
+    Write-Host "     Anpassbar unter: $wslConfigPath oder in config.json" -ForegroundColor Gray
 } else {
     # .wslconfig existiert — pruefen ob bereits konfiguriert
     $existingConfig = Get-Content -Path $wslConfigPath -Raw -ErrorAction SilentlyContinue

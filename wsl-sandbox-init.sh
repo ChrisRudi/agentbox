@@ -10,10 +10,14 @@ set -euo pipefail
 WIN_PROJECT_PATH="${1:-}"
 AGENT_CMD="${2:-claude}"
 WIN_CACHE_PATH="${3:-}"
+SANDBOX_USER="${4:-agent}"
+AI_API_DOMAINS="${5:-api.anthropic.com api.openai.com generativelanguage.googleapis.com}"
+CFG_REG_NODE="${6:-registry.npmjs.org}"
+CFG_REG_PYTHON="${7:-pypi.org files.pythonhosted.org}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     echo "FEHLER: Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD]"
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AI_APIS] [REG_NODE] [REG_PYTHON]"
     exit 1
 fi
 
@@ -30,7 +34,7 @@ echo "Agent: $AGENT_CMD"
 echo ""
 
 # --- 1. Sandbox-User anlegen (kein sudo) ---
-SANDBOX_USER="agent"
+# SANDBOX_USER kommt aus Parameter $4 (Default: "agent")
 SANDBOX_HOME="/home/$SANDBOX_USER"
 
 if ! id "$SANDBOX_USER" &>/dev/null; then
@@ -149,16 +153,16 @@ fi
 
 echo "[INFO] Projekttyp: $PROJECT_TYPE"
 
-# Paketquellen basierend auf Projekttyp bestimmen
+# Paketquellen basierend auf Projekttyp bestimmen (aus Config-Parametern)
 PACKAGE_DOMAINS=""
 case "$PROJECT_TYPE" in
     node)
-        PACKAGE_DOMAINS="registry.npmjs.org"
-        echo "[INFO] Paketquelle: npmjs.org (Node.js)"
+        PACKAGE_DOMAINS="$CFG_REG_NODE"
+        echo "[INFO] Paketquelle: $CFG_REG_NODE (Node.js)"
         ;;
     python)
-        PACKAGE_DOMAINS="pypi.org files.pythonhosted.org"
-        echo "[INFO] Paketquelle: pypi.org (Python)"
+        PACKAGE_DOMAINS="$CFG_REG_PYTHON"
+        echo "[INFO] Paketquelle: $CFG_REG_PYTHON (Python)"
         ;;
     *)
         # generic, html, powershell — keine Paketquellen noetig
@@ -173,13 +177,16 @@ iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 
-# AI-API-Endpoints (immer erlaubt)
-for domain in api.anthropic.com api.openai.com generativelanguage.googleapis.com; do
-    for ip in $(dig +short "$domain" 2>/dev/null); do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT 2>/dev/null || true
-        fi
-    done
+# AI-API-Endpoints (immer erlaubt, aus Config)
+for domain in $AI_API_DOMAINS; do
+    # Domain-Validierung (nur Hostnamen, keine Injection)
+    if [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then
+        for ip in $(dig +short "$domain" 2>/dev/null); do
+            if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT 2>/dev/null || true
+            fi
+        done
+    fi
 done
 
 # Paketquellen nur wenn fuer Projekttyp relevant
@@ -202,17 +209,11 @@ echo "[OK] Firewall-Regeln angewendet"
 echo ""
 echo "Pruefe CLI-Version..."
 
-case "$AGENT_CMD" in
-    claude)
-        timeout 10 claude --version 2>/dev/null || echo "[INFO] Claude Code Version-Check uebersprungen"
-        ;;
-    codex)
-        timeout 10 codex --version 2>/dev/null || echo "[INFO] Codex Version-Check uebersprungen"
-        ;;
-    gemini)
-        timeout 10 gemini --version 2>/dev/null || echo "[INFO] Gemini CLI Version-Check uebersprungen"
-        ;;
-esac
+if command -v "$AGENT_CMD" &> /dev/null; then
+    timeout 10 "$AGENT_CMD" --version 2>/dev/null || echo "[INFO] $AGENT_CMD Version-Check uebersprungen"
+else
+    echo "[WARN] Agent '$AGENT_CMD' nicht gefunden — ist er installiert?"
+fi
 
 # --- 7. SYSTEM_META_PROMPT.md kopieren falls vorhanden ---
 META_PROMPT="/etc/agentbox/SYSTEM_META_PROMPT.md"
@@ -233,23 +234,14 @@ echo ""
 
 cd "$WORKSPACE"
 
-# Agent als unprivilegierter User starten
-case "$AGENT_CMD" in
-    claude)
-        su - "$SANDBOX_USER" -c "cd /workspace && claude"
-        ;;
-    codex)
-        su - "$SANDBOX_USER" -c "cd /workspace && codex"
-        ;;
-    gemini)
-        su - "$SANDBOX_USER" -c "cd /workspace && gemini"
-        ;;
-    *)
-        echo "FEHLER: Unbekannter Agent '$AGENT_CMD'"
-        echo "Erlaubt: claude, codex, gemini"
-        exit 1
-        ;;
-esac
+# Agent als unprivilegierter User starten (generisch fuer alle Agents)
+if command -v "$AGENT_CMD" &> /dev/null; then
+    su - "$SANDBOX_USER" -c "cd /workspace && $AGENT_CMD"
+else
+    echo "FEHLER: Agent '$AGENT_CMD' nicht in der Sandbox installiert."
+    echo "Bitte Agent in config.json aktivieren und win-setup.ps1 erneut ausfuehren (Template-Rebuild)."
+    exit 1
+fi
 
 EXIT_CODE=$?
 

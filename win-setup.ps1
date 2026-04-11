@@ -19,6 +19,17 @@ $tempBase = Join-Path $env:TEMP "agentbox"
 $tempSetup = Join-Path $tempBase "setup"
 $distroName = "agentbox-template-build"
 
+# --- config.json laden ---
+$configPath = Join-Path $scriptDir "config.json"
+$config = $null
+try {
+    if (Test-Path $configPath) {
+        $config = Get-Content -Path $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    }
+} catch {
+    Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
+}
+
 # --- 1. WSL2 pruefen ---
 try {
     $wslOutput = & wsl.exe --status 2>&1
@@ -33,7 +44,9 @@ Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 Write-Host ""
 Write-Host "Lade Ubuntu-Minimal herunter..." -ForegroundColor Cyan
 
-$ubuntuUrl = "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-noble-minimal-cloudimg-amd64-root.tar.xz"
+$ubuntuUrl = if ($config -and $config.ubuntu_image_url) { $config.ubuntu_image_url } else {
+    "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-noble-minimal-cloudimg-amd64-root.tar.xz"
+}
 $downloadPath = Join-Path $tempBase "ubuntu-minimal.tar.xz"
 
 if (-not (Test-Path $tempBase)) {
@@ -82,7 +95,53 @@ Write-Host "[OK] Temporaere Distro importiert" -ForegroundColor Green
 Write-Host ""
 Write-Host "Installiere Pakete in der Template-Distro..." -ForegroundColor Cyan
 
-$installScript = @'
+# Agent-Install-Commands aus Config zusammenstellen (nur aktivierte Agents)
+$agentInstallLines = @()
+$agentIds = @("claude", "codex", "gemini", "aider", "goose")
+foreach ($aid in $agentIds) {
+    $enabledProp = "agent_${aid}_enabled"
+    $installProp = "agent_${aid}_install"
+    $nameProp = "agent_${aid}_name"
+
+    $isEnabled = $false
+    if ($config -and (Get-Member -InputObject $config -Name $enabledProp -MemberType NoteProperty)) {
+        $isEnabled = $config.$enabledProp
+    } elseif ($aid -in @("claude", "codex", "gemini")) {
+        # Big 3 standardmaessig aktiviert
+        $isEnabled = $true
+    }
+
+    if ($isEnabled) {
+        $installCmd = $null
+        $agentName = $aid
+        if ($config -and (Get-Member -InputObject $config -Name $installProp -MemberType NoteProperty)) {
+            $installCmd = $config.$installProp
+        }
+        if ($config -and (Get-Member -InputObject $config -Name $nameProp -MemberType NoteProperty)) {
+            $agentName = $config.$nameProp
+        }
+
+        # Fallback-Install-Commands falls config unvollstaendig
+        if (-not $installCmd) {
+            $installCmd = switch ($aid) {
+                "claude" { "npm install -g @anthropic-ai/claude-code@latest" }
+                "codex"  { "npm install -g @openai/codex@latest" }
+                "gemini" { "pip3 install google-gemini-cli" }
+                "aider"  { "pip3 install aider-chat" }
+                "goose"  { "pip3 install goose-ai" }
+            }
+        }
+
+        if ($installCmd) {
+            $agentInstallLines += "$installCmd 2>/dev/null || echo ""WARNUNG: $agentName Installation fehlgeschlagen"""
+        }
+    }
+}
+
+$agentInstallBlock = $agentInstallLines -join "`n"
+$nodejsUrl = if ($config -and $config.nodejs_setup_url) { $config.nodejs_setup_url } else { "https://deb.nodesource.com/setup_20.x" }
+
+$installScript = @"
 #!/bin/bash
 set -e
 
@@ -93,23 +152,21 @@ apt-get update -qq
 apt-get install -y -qq bash curl wget git iptables > /dev/null 2>&1
 
 echo "[2/5] Node.js installieren..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+curl -fsSL $nodejsUrl | bash - > /dev/null 2>&1
 apt-get install -y -qq nodejs > /dev/null 2>&1
 
 echo "[3/5] Python3 installieren..."
 apt-get install -y -qq python3 python3-pip python3-venv > /dev/null 2>&1
 
 echo "[4/5] AI CLI-Tools installieren..."
-npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || echo "WARNUNG: Claude Code Installation fehlgeschlagen"
-npm install -g @openai/codex@latest 2>/dev/null || echo "WARNUNG: Codex Installation fehlgeschlagen"
-pip3 install google-gemini-cli 2>/dev/null || echo "WARNUNG: Gemini CLI Installation fehlgeschlagen"
+$agentInstallBlock
 
 echo "[5/5] Aufraumen..."
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 echo "Pakete fertig installiert."
-'@
+"@
 
 & wsl.exe -d $distroName -- bash -c $installScript 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) {
@@ -121,7 +178,17 @@ Write-Host "[OK] Pakete installiert" -ForegroundColor Green
 Write-Host ""
 Write-Host "Hinterlege Firewall-Regeln..." -ForegroundColor Cyan
 
-$firewallScript = @'
+# Firewall-Domains aus Config
+$fwAiApis = if ($config -and $config.firewall_ai_apis) {
+    ($config.firewall_ai_apis -join " ")
+} else { "api.anthropic.com api.openai.com generativelanguage.googleapis.com" }
+
+$fwRegistries = @()
+if ($config -and $config.firewall_registries_node)   { $fwRegistries += $config.firewall_registries_node }
+if ($config -and $config.firewall_registries_python)  { $fwRegistries += $config.firewall_registries_python }
+$fwPkgDomains = if ($fwRegistries.Count -gt 0) { $fwRegistries -join " " } else { "registry.npmjs.org pypi.org files.pythonhosted.org" }
+
+$firewallScript = @"
 #!/bin/bash
 # firewall.sh — agentbox Netzwerk-Isolation
 # Erlaubt nur AI-API-Endpoints und Package-Registries
@@ -142,19 +209,19 @@ iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # AI-API-Endpoints erlauben (HTTPS, Port 443)
-for domain in api.anthropic.com api.openai.com generativelanguage.googleapis.com; do
-    for ip in $(dig +short "$domain" 2>/dev/null); do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
+for domain in $fwAiApis; do
+    for ip in `$(dig +short "`$domain" 2>/dev/null); do
+        if [[ "`$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+`$ ]]; then
+            iptables -A OUTPUT -p tcp --dport 443 -d "`$ip" -j ACCEPT
         fi
     done
 done
 
 # Package-Registries erlauben (fuer CLI-Updates)
-for domain in registry.npmjs.org pypi.org files.pythonhosted.org; do
-    for ip in $(dig +short "$domain" 2>/dev/null); do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
+for domain in $fwPkgDomains; do
+    for ip in `$(dig +short "`$domain" 2>/dev/null); do
+        if [[ "`$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+`$ ]]; then
+            iptables -A OUTPUT -p tcp --dport 443 -d "`$ip" -j ACCEPT
         fi
     done
 done
@@ -163,7 +230,7 @@ done
 iptables -A OUTPUT -j DROP
 
 echo "Firewall-Regeln angewendet."
-'@
+"@
 
 $setupFirewall = @"
 mkdir -p /etc/agentbox
@@ -233,7 +300,7 @@ Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 Write-Host ""
 Write-Host "Registriere Windows Event-Source..." -ForegroundColor Cyan
 
-$eventSource = "AIProjects"
+$eventSource = if ($config -and $config.event_log_source) { $config.event_log_source } else { "AIProjects" }
 $eventLog = "Application"
 
 if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
@@ -246,7 +313,7 @@ if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
 # --- 11. Scheduled Task anlegen ---
 Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
 
-$taskName = "agentbox-task-runner"
+$taskName = if ($config -and $config.scheduled_task_name) { $config.scheduled_task_name } else { "agentbox-task-runner" }
 $runnerScript = Join-Path $scriptDir "win-task-runner.ps1"
 
 $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue

@@ -1,0 +1,74 @@
+{
+  "_version": 1,
+  "_doc": "agentbox configuration — edit with care, invalid values are ignored (defaults apply)",
+
+  "base_dir_name": "AI_Projects_Source",
+  "base_path_override": "",
+  "control_dir_name": "_control",
+  "sandbox_user": "agent",
+  "auto_start_timeout": 5,
+  "event_log_source": "AIProjects",
+  "scheduled_task_name": "agentbox-task-runner",
+
+  "resources_memory": "4GB",
+  "resources_processors": 2,
+  "resources_swap": "1GB",
+  "resources_ram_warn_percent": 90,
+  "resources_watchdog_interval": 30,
+
+  "firewall_ai_apis": [
+    "api.anthropic.com",
+    "api.openai.com",
+    "generativelanguage.googleapis.com"
+  ],
+  "firewall_registries_node": [
+    "registry.npmjs.org"
+  ],
+  "firewall_registries_python": [
+    "pypi.org",
+    "files.pythonhosted.org"
+  ],
+
+  "build_whitelist": [
+    "npm run build",
+    "npm run test",
+    "npm install",
+    "pip install -r requirements.txt",
+    "python build.py",
+    "python setup.py install",
+    "dotnet build",
+    "make"
+  ],
+  "deploy_whitelist": [
+    "local",
+    "github"
+  ],
+
+  "agent_claude_name": "Claude Code",
+  "agent_claude_command": "claude",
+  "agent_claude_install": "npm install -g @anthropic-ai/claude-code@latest",
+  "agent_claude_enabled": true,
+
+  "agent_codex_name": "OpenAI Codex",
+  "agent_codex_command": "codex",
+  "agent_codex_install": "npm install -g @openai/codex@latest",
+  "agent_codex_enabled": true,
+
+  "agent_gemini_name": "Gemini CLI",
+  "agent_gemini_command": "gemini",
+  "agent_gemini_install": "pip3 install google-gemini-cli",
+  "agent_gemini_enabled": true,
+
+  "agent_aider_name": "Aider",
+  "agent_aider_command": "aider",
+  "agent_aider_install": "pip3 install aider-chat",
+  "agent_aider_enabled": false,
+
+  "agent_goose_name": "Goose (Block)",
+  "agent_goose_command": "goose",
+  "agent_goose_install": "pip3 install goose-ai",
+  "agent_goose_enabled": false,
+
+  "ubuntu_image_url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-noble-minimal-cloudimg-amd64-root.tar.xz",
+  "nodejs_setup_url": "https://deb.nodesource.com/setup_20.x"
+}

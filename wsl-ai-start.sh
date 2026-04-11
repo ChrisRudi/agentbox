@@ -12,9 +12,24 @@ if [ "${1:-}" = "--auto" ]; then
     AUTO_MODE=true
     shift
 
+    # Auto-Start-Timeout aus Config (Fallback: 5s)
+    _auto_timeout=5
+    _cfg_file="${AI_PROJECTS_ROOT:-}/_control/config.json"
+    if [ -f "$_cfg_file" ] && command -v python3 &> /dev/null; then
+        _auto_timeout=$(python3 -c "
+import json
+try:
+    with open('$_cfg_file') as f:
+        v = json.load(f).get('auto_start_timeout', 5)
+    print(int(v) if 1 <= int(v) <= 60 else 5)
+except:
+    print(5)
+" 2>/dev/null || echo 5)
+    fi
+
     echo ""
-    echo -e "\033[0;36magentbox starten? [J/n]\033[0m (automatisch in 5s)"
-    if read -r -t 5 answer; then
+    echo -e "\033[0;36magentbox starten? [J/n]\033[0m (automatisch in ${_auto_timeout}s)"
+    if read -r -t "$_auto_timeout" answer; then
         case "$answer" in
             n|N|nein|Nein) echo "OK — normales Terminal."; exit 0 ;;
         esac
@@ -31,6 +46,25 @@ if [ -z "$AI_PROJECTS_ROOT" ]; then
 fi
 
 CONTROL_DIR="$AI_PROJECTS_ROOT/_control"
+
+# --- config.json laden ---
+CONFIG_LIB="$CONTROL_DIR/lib/config.sh"
+if [ -f "$CONFIG_LIB" ]; then
+    . "$CONFIG_LIB"
+fi
+
+# base_path_override anwenden
+_base_override=$(cfg_get "base_path_override" "")
+if [ -n "$_base_override" ]; then
+    # Windows-Pfad in Linux-Pfad konvertieren falls noetig
+    if [[ "$_base_override" == *\\* ]] || [[ "$_base_override" == *:* ]]; then
+        AI_PROJECTS_ROOT=$(wslpath -u "$_base_override" 2>/dev/null || echo "$_base_override")
+    else
+        AI_PROJECTS_ROOT="$_base_override"
+    fi
+    CONTROL_DIR="$AI_PROJECTS_ROOT/$(cfg_get 'control_dir_name' '_control')"
+fi
+
 TEMPLATE_PATH="$CONTROL_DIR/sandbox/template.tar.gz"
 SANDBOX_INIT="$CONTROL_DIR/wsl-sandbox-init.sh"
 TYPE_DEFAULTS="$CONTROL_DIR/type_defaults.json"
@@ -204,22 +238,35 @@ echo ""
 agents=()
 agent_cmds=()
 
-if command -v claude &> /dev/null; then
-    agents+=("Claude Code")
-    agent_cmds+=("claude")
+# Agents aus config.json laden (nur aktivierte + installierte)
+if type cfg_get_agents &> /dev/null; then
+    while IFS=: read -r _aid _aname _acmd; do
+        if [ -n "$_acmd" ] && command -v "$_acmd" &> /dev/null; then
+            agents+=("$_aname")
+            agent_cmds+=("$_acmd")
+        fi
+    done < <(cfg_get_agents)
 fi
-if command -v codex &> /dev/null; then
-    agents+=("OpenAI Codex")
-    agent_cmds+=("codex")
-fi
-if command -v gemini &> /dev/null; then
-    agents+=("Gemini CLI")
-    agent_cmds+=("gemini")
+
+# Fallback: hardcoded Discovery falls config.sh nicht geladen
+if [ ${#agents[@]} -eq 0 ]; then
+    if command -v claude &> /dev/null; then
+        agents+=("Claude Code")
+        agent_cmds+=("claude")
+    fi
+    if command -v codex &> /dev/null; then
+        agents+=("OpenAI Codex")
+        agent_cmds+=("codex")
+    fi
+    if command -v gemini &> /dev/null; then
+        agents+=("Gemini CLI")
+        agent_cmds+=("gemini")
+    fi
 fi
 
 if [ ${#agents[@]} -eq 0 ]; then
     log_error "Kein AI-Agent installiert."
-    echo "Bitte zuerst win-setup.ps1 ausfuehren."
+    echo "Bitte zuerst win-setup.ps1 ausfuehren oder Agents in config.json aktivieren."
     exit 1
 fi
 
@@ -275,10 +322,18 @@ wsl.exe -d "$DISTRO_NAME" -- chmod +x /sandbox-init.sh
 # --- 13. RAM-Watchdog im Hintergrund starten ---
 WATCHDOG_PID=""
 (
-    RAM_WARN_THRESHOLD=90
+    RAM_WARN_THRESHOLD=$(cfg_get "resources_ram_warn_percent" "90")
+    WATCHDOG_INTERVAL=$(cfg_get "resources_watchdog_interval" "30")
+    # Validierung
+    if ! [[ "$RAM_WARN_THRESHOLD" =~ ^[0-9]+$ ]] || [ "$RAM_WARN_THRESHOLD" -lt 50 ] || [ "$RAM_WARN_THRESHOLD" -gt 99 ]; then
+        RAM_WARN_THRESHOLD=90
+    fi
+    if ! [[ "$WATCHDOG_INTERVAL" =~ ^[0-9]+$ ]] || [ "$WATCHDOG_INTERVAL" -lt 5 ] || [ "$WATCHDOG_INTERVAL" -gt 300 ]; then
+        WATCHDOG_INTERVAL=30
+    fi
     WARN_SENT=false
     while true; do
-        sleep 30
+        sleep "$WATCHDOG_INTERVAL"
 
         # RAM-Auslastung der Sandbox pruefen
         MEM_INFO=$(wsl.exe -d "$DISTRO_NAME" -- bash -c \
@@ -320,8 +375,20 @@ echo ""
 echo -e "${GREEN}=== Starte $AGENT_NAME fuer $PROJECT_NAME ===${NC}"
 echo ""
 
+# Config-Werte fuer Sandbox zusammenstellen
+SANDBOX_USER=$(cfg_get "sandbox_user" "agent")
+CFG_AI_APIS=$(cfg_get_array "firewall_ai_apis" | tr '\n' ' ')
+CFG_REG_NODE=$(cfg_get_array "firewall_registries_node" | tr '\n' ' ')
+CFG_REG_PYTHON=$(cfg_get_array "firewall_registries_python" | tr '\n' ' ')
+# Defaults falls Config leer
+: "${CFG_AI_APIS:=api.anthropic.com api.openai.com generativelanguage.googleapis.com}"
+: "${CFG_REG_NODE:=registry.npmjs.org}"
+: "${CFG_REG_PYTHON:=pypi.org files.pythonhosted.org}"
+
 WIN_CACHE_DIR=$(wslpath -w "$CACHE_DIR" 2>/dev/null || echo "$CACHE_DIR")
-wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh "$WIN_PROJECT_DIR" "$AGENT_CMD" "$WIN_CACHE_DIR"
+wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
+    "$WIN_PROJECT_DIR" "$AGENT_CMD" "$WIN_CACHE_DIR" \
+    "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON"
 EXIT_CODE=$?
 
 # --- 15. Watchdog beenden ---
