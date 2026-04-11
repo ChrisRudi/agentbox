@@ -133,7 +133,7 @@ foreach ($aid in $agentIds) {
         }
 
         if ($installCmd) {
-            $agentInstallLines += "$installCmd 2>/dev/null || echo `"WARNUNG: $agentName Installation fehlgeschlagen`""
+            $agentInstallLines += ($installCmd + ' 2>/dev/null || echo "WARNUNG: ' + $agentName + ' Installation fehlgeschlagen"')
         }
     }
 }
@@ -141,7 +141,7 @@ foreach ($aid in $agentIds) {
 $agentInstallBlock = $agentInstallLines -join "`n"
 $nodejsUrl = if ($config -and $config.nodejs_setup_url) { $config.nodejs_setup_url } else { "https://deb.nodesource.com/setup_20.x" }
 
-$installScript = @"
+$installScript = @'
 #!/bin/bash
 set -e
 
@@ -152,21 +152,22 @@ apt-get update -qq
 apt-get install -y -qq bash curl wget git iptables > /dev/null 2>&1
 
 echo "[2/5] Node.js installieren..."
-curl -fsSL $nodejsUrl | bash - > /dev/null 2>&1
+curl -fsSL __NODEJS_URL__ | bash - > /dev/null 2>&1
 apt-get install -y -qq nodejs > /dev/null 2>&1
 
 echo "[3/5] Python3 installieren..."
 apt-get install -y -qq python3 python3-pip python3-venv > /dev/null 2>&1
 
 echo "[4/5] AI CLI-Tools installieren..."
-$agentInstallBlock
+__AGENT_INSTALL_BLOCK__
 
 echo "[5/5] Aufraumen..."
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 echo "Pakete fertig installiert."
-"@
+'@
+$installScript = $installScript.Replace('__NODEJS_URL__', $nodejsUrl).Replace('__AGENT_INSTALL_BLOCK__', $agentInstallBlock)
 
 & wsl.exe -d $distroName -- bash -c $installScript 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) {
@@ -188,7 +189,7 @@ if ($config -and $config.firewall_registries_node)   { $fwRegistries += $config.
 if ($config -and $config.firewall_registries_python)  { $fwRegistries += $config.firewall_registries_python }
 $fwPkgDomains = if ($fwRegistries.Count -gt 0) { $fwRegistries -join " " } else { "registry.npmjs.org pypi.org files.pythonhosted.org" }
 
-$firewallScript = @"
+$firewallScript = @'
 #!/bin/bash
 # firewall.sh — agentbox Netzwerk-Isolation
 # Erlaubt nur AI-API-Endpoints und Package-Registries
@@ -209,19 +210,19 @@ iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # AI-API-Endpoints erlauben (HTTPS, Port 443)
-for domain in $fwAiApis; do
-    for ip in `$(dig +short "`$domain" 2>/dev/null); do
-        if [[ "`$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+`$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "`$ip" -j ACCEPT
+for domain in __FW_AI_APIS__; do
+    for ip in $(dig +short "$domain" 2>/dev/null); do
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
         fi
     done
 done
 
 # Package-Registries erlauben (fuer CLI-Updates)
-for domain in $fwPkgDomains; do
-    for ip in `$(dig +short "`$domain" 2>/dev/null); do
-        if [[ "`$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+`$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "`$ip" -j ACCEPT
+for domain in __FW_PKG_DOMAINS__; do
+    for ip in $(dig +short "$domain" 2>/dev/null); do
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
         fi
     done
 done
@@ -230,15 +231,17 @@ done
 iptables -A OUTPUT -j DROP
 
 echo "Firewall-Regeln angewendet."
-"@
+'@
+$firewallScript = $firewallScript.Replace('__FW_AI_APIS__', $fwAiApis).Replace('__FW_PKG_DOMAINS__', $fwPkgDomains)
 
-$setupFirewall = @"
+$setupFirewall = @'
 mkdir -p /etc/agentbox
 cat > /etc/agentbox/firewall.sh << 'FWEOF'
-$firewallScript
+__FIREWALL_SCRIPT__
 FWEOF
 chmod +x /etc/agentbox/firewall.sh
-"@
+'@
+$setupFirewall = $setupFirewall.Replace('__FIREWALL_SCRIPT__', $firewallScript)
 
 & wsl.exe -d $distroName -- bash -c $setupFirewall 2>&1 | Out-Host
 Write-Host "[OK] Firewall-Regeln hinterlegt" -ForegroundColor Green
