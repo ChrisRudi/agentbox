@@ -1,168 +1,173 @@
 <p align="center">
   <h1 align="center">agentbox</h1>
   <p align="center">
-    <strong>AI-Coding-Agenten haben vollen Zugriff auf dein Dateisystem.<br>agentbox aendert das.</strong>
+    <strong>AI coding agents have full access to your filesystem.<br>agentbox changes that.</strong>
   </p>
   <p align="center">
-    <a href="#installation">Installation</a> · <a href="#taegliche-nutzung">Nutzung</a> · <a href="#sicherheitsmodell">Sicherheit</a> · <a href="#vergleich">Vergleich</a>
+    <a href="#installation">Installation</a> · <a href="#daily-usage">Usage</a> · <a href="#security-model">Security</a> · <a href="#comparison">Comparison</a>
+  </p>
+  <p align="center">
+    🌍 <a href="./docs/README.de.md">Deutsch</a>
   </p>
 </p>
 
 ---
 
-**agentbox** startet AI-Coding-Agenten (Claude Code, OpenAI Codex, Gemini CLI) in **wegwerfbaren WSL2-Distributionen** mit echter Dateisystem- und Netzwerkisolation.
+**agentbox** runs AI coding agents (Claude Code, OpenAI Codex, Gemini CLI) in **disposable WSL2 distributions** with real filesystem and network isolation.
 
-Ein Befehl. Kein Docker. Kein Kubernetes. Nur Windows + WSL2.
+One command. No Docker. No Kubernetes. Just Windows + WSL2.
 
-## Warum?
+## Why?
 
-AI-Coding-Agenten sind maechtig — aber sie laufen mit vollen Rechten auf deinem System. Sie koennen:
+AI coding agents are powerful — but they run with full privileges on your system. They can:
 
-- Jede Datei lesen und aendern (SSH-Keys, Browser-Profile, andere Projekte)
-- Beliebige Prozesse starten und Netzwerkverbindungen oeffnen
-- Build-Artefakte, Caches und temporaere Dateien hinterlassen, die WSL aufblaehenagentbox gibt dir die Produktivitaet von AI-Agenten **ohne das Risiko**.
+- Read and modify any file (SSH keys, browser profiles, other projects)
+- Spawn arbitrary processes and open network connections
+- Leave behind build artifacts, caches, and temp files that bloat WSL
+
+agentbox gives you the productivity of AI agents **without the risk**.
 
 ## Installation
 
-Ein Befehl in einer Admin-PowerShell:
+One command in an admin PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
 ```
 
-Das wars. WSL-Terminal oeffnen — agentbox startet automatisch.
+That's it. Open a WSL terminal — agentbox starts automatically.
 
 <details>
-<summary>Was passiert bei der Installation?</summary>
+<summary>What happens during installation?</summary>
 
-1. Repository wird nach `OneDrive\AI_Projects_Source\_control` geklont
-2. WSL2-Template wird gebaut (Ubuntu-Minimal + Node.js + Python3 + AI-CLIs)
-3. Windows Event-Source und Scheduled Task werden angelegt
-4. WSL `.bashrc` wird konfiguriert (Auto-Start)
-5. Desktop-Shortcut `agentbox.lnk` wird erstellt
-6. `.wslconfig` mit Ressourcen-Limits gesetzt (4 GB RAM, 2 CPUs)
+1. Repository is cloned to `OneDrive\AI_Projects_Source\_control`
+2. WSL2 template is built (Ubuntu Minimal + Node.js + Python3 + AI CLIs)
+3. Windows Event Source and Scheduled Task are created
+4. WSL `.bashrc` is configured (auto-start)
+5. Desktop shortcut `agentbox.lnk` is created
+6. `.wslconfig` with resource limits is set (4 GB RAM, 2 CPUs)
 
-Dauer: ca. 3-5 Minuten, einmalig.
+Duration: approx. 3–5 minutes, one-time only.
 </details>
 
-## Taegliche Nutzung
+## Daily Usage
 
-WSL-Terminal oeffnen (oder Doppelklick auf den Desktop-Shortcut):
+Open a WSL terminal (or double-click the desktop shortcut):
 
 ```
-agentbox starten? [J/n] (automatisch in 5s)
+Start agentbox? [Y/n] (auto in 5s)
 
 === agentbox ===
 
-Welches Projekt?
-  [1] MeinProjekt (zuletzt)
-  [2] AnderesProjekt
-Auswahl [1]: 1
+Which project?
+  [1] MyProject (recent)
+  [2] AnotherProject
+Selection [1]: 1
 
-Welcher Agent?
+Which agent?
   [1] Claude Code
   [2] OpenAI Codex
   [3] Gemini CLI
-Auswahl [1]: 1
+Selection [1]: 1
 
-=== Starte Claude Code fuer MeinProjekt ===
+=== Starting Claude Code for MyProject ===
 ```
 
-**Agent arbeitet → Session endet → Sandbox wird geloescht → Code bleibt.**
+**Agent works → session ends → sandbox is deleted → code stays.**
 
-### Wo liegt der Code?
+### Where does the code live?
 
-Alle Projekte liegen in `OneDrive\AI_Projects_Source\` — auf deinem Windows-Dateisystem. Die Sandbox mountet nur den Projektordner per Bind-Mount. Der Agent schreibt direkt in deinen OneDrive-Ordner:
+All projects live in `OneDrive\AI_Projects_Source\` — on your Windows filesystem. The sandbox bind-mounts only the project folder. The agent writes directly to your OneDrive directory:
 
-| Vorteil | Beschreibung |
+| Benefit | Description |
 |---------|-------------|
-| **OneDrive-Sync** | Code wird automatisch in die Cloud gesichert |
-| **Kein Kopieren** | Aenderungen landen sofort auf Windows |
-| **Sandbox weg, Code bleibt** | Nur die Distro wird geloescht, nicht deine Dateien |
-| **Paket-Cache bleibt** | npm/pip-Caches sind persistent — kein Re-Download |
-| **WSL bleibt schlank** | Keine wachsende VHDX durch Caches und Artefakte |
+| **OneDrive sync** | Code is automatically backed up to the cloud |
+| **No copying** | Changes land on Windows immediately |
+| **Sandbox gone, code stays** | Only the distro is deleted, not your files |
+| **Package cache persists** | npm/pip caches are persistent — no re-downloads |
+| **WSL stays lean** | No growing VHDX from caches and artifacts |
 
-## Sicherheitsmodell
+## Security Model
 
-### Dateisystem-Isolation
+### Filesystem Isolation
 
-Der Agent sieht **nur**:
+The agent sees **only**:
 
 ```
 /workspace/
-  src/           (read-write)   Dein Code
-  assets/        (read-only)    Statische Dateien
-  _tasks/        (read-write)   Task-Trigger
-  CLAUDE.md      (read-write)   Session-Kontext
-  project.json   (read-only)    Konfiguration
+  src/           (read-write)   Your code
+  assets/        (read-only)    Static files
+  _tasks/        (read-write)   Task triggers
+  CLAUDE.md      (read-write)   Session context
+  project.json   (read-only)    Configuration
 ```
 
-Der Agent sieht **nicht**: `/mnt/c/`, OneDrive, `~/.ssh/`, andere Projekte, `_control/`.
+The agent does **not** see: `/mnt/c/`, OneDrive, `~/.ssh/`, other projects, `_control/`.
 
-Mounts: `nosymfollow` + `nodev` + Hardlink-Schutz (`sysctl`).
+Mounts use `nosymfollow` + `nodev` + hardlink protection (`sysctl`).
 
-### Netzwerk-Isolation
+### Network Isolation
 
-Per `iptables` — nur das Noetige:
+Via `iptables` — only what's necessary:
 
-| Erlaubt | Blockiert |
-|---------|-----------|
-| AI-APIs (Anthropic, OpenAI, Google) | Alles andere |
-| Paketquellen (automatisch nach Projekttyp) | Beliebige Outbound-Verbindungen |
-| DNS (Port 53) | Zugriff auf lokale Dienste |
+| Allowed | Blocked |
+|---------|---------|
+| AI APIs (Anthropic, OpenAI, Google) | Everything else |
+| Package registries (auto by project type) | Arbitrary outbound connections |
+| DNS (port 53) | Access to local services |
 
-Projekttyp `node` → nur `npmjs.org`. Projekttyp `python` → nur `pypi.org`. HTML/PowerShell → keine Paketquellen.
+Project type `node` → only `npmjs.org`. Project type `python` → only `pypi.org`. HTML/PowerShell → no package registries.
 
-### Ressourcen-Limits
+### Resource Limits
 
-- `.wslconfig`: 4 GB RAM, 2 CPUs, 1 GB Swap (anpassbar)
-- **RAM-Watchdog**: Warnt per Windows-Dialog wenn Sandbox > 90% RAM nutzt
-- Schutz vor Endlosschleifen die den Host lahmlegen
+- `.wslconfig`: 4 GB RAM, 2 CPUs, 1 GB swap (adjustable)
+- **RAM watchdog**: Warns via Windows dialog when sandbox uses > 90% RAM
+- Protection against runaway loops that freeze the host
 
-### Build/Deploy-Kontrolle
+### Build/Deploy Control
 
-Der Agent kann **nichts selbst ausfuehren**. Er schreibt eine Task-Datei, ein Windows-Runner prueft:
+The agent **cannot execute anything itself**. It writes a task file, a Windows-side runner validates:
 
-- Build-Kommando in Whitelist? (`npm run build`, `make`, etc.) → Ausfuehren
-- Deploy-Target in Whitelist? (`local`, `github`) → Ausfuehren
-- Alles andere → **Abgelehnt. Kein Wildcard, kein Prefix-Match.**
+- Build command on whitelist? (`npm run build`, `make`, etc.) → Execute
+- Deploy target on whitelist? (`local`, `github`) → Execute
+- Everything else → **Rejected. No wildcards, no prefix matching.**
 
-## Vergleich
+## Comparison
 
 |                          | Docker Dev Container | GitHub Codespaces | **agentbox** |
 |--------------------------|:-------------------:|:-----------------:|:------------:|
-| Braucht Docker           | Ja                  | Nein (Cloud)      | **Nein**     |
-| One-Liner Install        | Nein                | Nein              | **Ja**       |
-| Agent-Isolation          | Manuell             | Teilweise         | **Automatisch** |
-| Netzwerk-Beschraenkung   | Manuell             | Nein              | **Automatisch** |
-| Build/Deploy-Whitelist   | Nein                | Nein              | **Ja**       |
-| Session wegwerfbar       | Manuell             | Nein              | **Automatisch** |
-| Funktioniert offline     | Ja                  | Nein              | **Ja**       |
-| Kosten                   | Gratis              | Ab $0/Monat       | **Gratis**   |
-| Setup-Zeit               | 10-30 Min           | 5 Min             | **3-5 Min**  |
+| Requires Docker          | Yes                 | No (cloud)        | **No**       |
+| One-liner install        | No                  | No                | **Yes**      |
+| Agent isolation          | Manual              | Partial           | **Automatic** |
+| Network restriction      | Manual              | No                | **Automatic** |
+| Build/deploy whitelist   | No                  | No                | **Yes**      |
+| Disposable sessions      | Manual              | No                | **Automatic** |
+| Works offline            | Yes                 | No                | **Yes**      |
+| Cost                     | Free                | From $0/month     | **Free**     |
+| Setup time               | 10–30 min           | 5 min             | **3–5 min**  |
 
-## Session-Kontinuitaet
+## Session Continuity
 
-Agenten lesen `CLAUDE.md` zu Beginn und aktualisieren sie am Ende jeder Session. Kein Kontext geht verloren. Vor jeder Session wird automatisch ein Backup (`CLAUDE.md.bak`) erstellt.
+Agents read `CLAUDE.md` at the start and update it at the end of each session. No context is lost. A backup (`CLAUDE.md.bak`) is automatically created before each session.
 
-## Dateistruktur
+## File Structure
 
 ```
 OneDrive\AI_Projects_Source\
 +-- _control\
-|   +-- install.ps1              # Bootstrap von GitHub
-|   +-- win-setup.ps1            # Einmalig: Template bauen
-|   +-- win-task-runner.ps1      # Build/Deploy Runner
-|   +-- wsl-ai-start.sh          # Projekt/Agent-Auswahl
-|   +-- wsl-sandbox-init.sh      # Sandbox-Initialisierung
-|   +-- type_defaults.json       # Typ-Erkennung + Defaults
-|   +-- SYSTEM_META_PROMPT.md    # Arbeitsvertrag fuer Agenten
+|   +-- install.ps1              # Bootstrap from GitHub
+|   +-- win-setup.ps1            # One-time: build template
+|   +-- win-task-runner.ps1      # Build/deploy runner
+|   +-- wsl-ai-start.sh          # Project/agent selection
+|   +-- wsl-sandbox-init.sh      # Sandbox initialization
+|   +-- type_defaults.json       # Type detection + defaults
+|   +-- SYSTEM_META_PROMPT.md    # Agent contract
 |   +-- sandbox\
-|   |   +-- template.tar.gz      # Template-Distro
+|   |   +-- template.tar.gz      # Template distro
 |   +-- cache\
-|       +-- npm\                  # Persistenter npm-Cache
-|       +-- pip\                  # Persistenter pip-Cache
-+-- MeinProjekt\
+|       +-- npm\                  # Persistent npm cache
+|       +-- pip\                  # Persistent pip cache
++-- MyProject\
 |   +-- project.json
 |   +-- CLAUDE.md
 |   +-- src\
@@ -170,22 +175,22 @@ OneDrive\AI_Projects_Source\
 |   +-- _tasks\
 ```
 
-Sieben Skripte, zwei Ordner. Das ist alles.
+Seven scripts, two folders. That's all.
 
-## Voraussetzungen
+## Prerequisites
 
 - Windows 11 + WSL2
 - Git
-- Admin-Rechte (nur einmalig)
-- **Kein Docker. Kein Kubernetes. Keine Cloud.**
+- Admin privileges (one-time only)
+- **No Docker. No Kubernetes. No cloud.**
 
-## Ehrlichkeit
+## Transparency
 
-### Was agentbox NICHT schuetzt
+### What agentbox does NOT protect against
 
-- WSL2-Kernel-Exploits (Microsoft-Verantwortung)
-- Boesartiger Code im Projektordner (Agent hat dort r/w — das ist beabsichtigt)
-- DNS-Tunneling (theoretisch moeglich, praktisch irrelevant)
-- Kein Multi-User-System (ein Entwickler, ein Rechner)
+- WSL2 kernel exploits (Microsoft's responsibility)
+- Malicious code in the project folder (the agent has r/w there — by design)
+- DNS tunneling (theoretically possible, practically irrelevant)
+- Not a multi-user system (one developer, one machine)
 
-Wir dokumentieren das, weil Sicherheitsversprechen nur zaehlen, wenn man ehrlich sagt wo die Grenzen sind.
+We document this because security claims only count when you're honest about the boundaries.
