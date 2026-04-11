@@ -325,6 +325,15 @@ Write-Host ""
 Write-Host "Fuehre win-setup.ps1 aus (Template, Event-Source, Task)..." -ForegroundColor Cyan
 Write-Host ""
 
+# Fix: GitHub-ZIP liefert LF-Zeilenenden, PS 5.1 braucht CRLF fuer Here-Strings
+Get-ChildItem -Path $controlDir -Filter "*.ps1" | ForEach-Object {
+    $raw = [System.IO.File]::ReadAllText($_.FullName)
+    if ($raw.Contains("`n") -and -not $raw.Contains("`r`n")) {
+        $raw = $raw.Replace("`n", "`r`n")
+        [System.IO.File]::WriteAllText($_.FullName, $raw)
+    }
+}
+
 & $setupScript
 if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNUNG: win-setup.ps1 meldete Fehler. Bitte manuell pruefen." -ForegroundColor Yellow
