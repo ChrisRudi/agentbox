@@ -217,33 +217,19 @@ echo "Firewall-Regeln angewendet."
 '@
 $firewallScript = $firewallScript.Replace('__FW_AI_APIS__', $fwAiApis).Replace('__FW_PKG_DOMAINS__', $fwPkgDomains)
 
-$setupFirewall = @'
-mkdir -p /etc/agentbox
-cat > /etc/agentbox/firewall.sh << 'FWEOF'
-__FIREWALL_SCRIPT__
-FWEOF
-chmod +x /etc/agentbox/firewall.sh
-'@
-$setupFirewall = $setupFirewall.Replace('__FIREWALL_SCRIPT__', $firewallScript)
-
-$setupFirewall = $setupFirewall.Replace("`r", "")
+$firewallScript = $firewallScript.Replace("`r", "")
+$fwB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($firewallScript))
+$setupFirewall = "mkdir -p /etc/agentbox && echo $fwB64 | base64 -d > /etc/agentbox/firewall.sh && chmod +x /etc/agentbox/firewall.sh"
 & wsl.exe -d $distroName -- bash -c $setupFirewall 2>&1 | Out-Host
 Write-Host "[OK] Firewall-Regeln hinterlegt" -ForegroundColor Green
 
 # --- 6. Sysctl-Hardening ---
 Write-Host "Setze Sysctl-Hardening..." -ForegroundColor Cyan
 
-$sysctlScript = @'
-cat >> /etc/sysctl.conf << 'EOF'
-# agentbox — Hardlink- und Symlink-Schutz
-fs.protected_hardlinks = 1
-fs.protected_symlinks = 1
-EOF
-sysctl -p > /dev/null 2>&1 || true
-'@
-
-$sysctlScript = $sysctlScript.Replace("`r", "")
-& wsl.exe -d $distroName -- bash -c $sysctlScript 2>&1 | Out-Host
+$sysctlContent = "# agentbox — Hardlink- und Symlink-Schutz`nfs.protected_hardlinks = 1`nfs.protected_symlinks = 1"
+$sysctlB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($sysctlContent))
+$sysctlCmd = "echo $sysctlB64 | base64 -d >> /etc/sysctl.conf && sysctl -p > /dev/null 2>&1 || true"
+& wsl.exe -d $distroName -- bash -c $sysctlCmd 2>&1 | Out-Host
 Write-Host "[OK] Sysctl-Hardening gesetzt" -ForegroundColor Green
 
 # --- 7. SYSTEM_META_PROMPT.md in Distro kopieren ---
