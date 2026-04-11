@@ -173,7 +173,7 @@ Selection [1]: 1
 === Starting Claude Code for MyProject ===
 ```
 
-**Agent works → session ends → sandbox is deleted → code stays.**
+> **Agent works → session ends → sandbox is deleted → code stays.**
 
 Only agents that are both **enabled** in `config.json` and **installed** in the template are shown.
 
@@ -206,7 +206,9 @@ Via `iptables` — only what's necessary:
 | Package registries (auto by project type) | Arbitrary outbound connections |
 | DNS (port 53) | Access to local services |
 
-Project type `node` → only `npmjs.org`. Project type `python` → only `pypi.org`. HTML/PowerShell → no package registries.
+Project type `node` → only `registry.npmjs.org`. Project type `python` → only `pypi.org` + `files.pythonhosted.org`. HTML/PowerShell → no package registries.
+
+> **Note:** Modern package managers use CDNs and subdomains. The defaults in `config.json` cover the exact domains needed (`registry.npmjs.org`, not just `npmjs.org`). If a package install fails, check `firewall_registries_node` / `firewall_registries_python` in `config.json` and add missing domains.
 
 ### Resource Limits
 

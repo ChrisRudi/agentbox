@@ -171,7 +171,7 @@ Auswahl [1]: 1
 === Starte Claude Code fuer MeinProjekt ===
 ```
 
-**Agent arbeitet → Session endet → Sandbox wird geloescht → Code bleibt.**
+> **Agent arbeitet → Session endet → Sandbox wird geloescht → Code bleibt.**
 
 Es werden nur Agenten angezeigt, die in `config.json` **aktiviert** und im Template **installiert** sind.
 
@@ -204,7 +204,9 @@ Per `iptables` — nur das Noetige:
 | Paketquellen (automatisch nach Projekttyp) | Beliebige Outbound-Verbindungen |
 | DNS (Port 53) | Zugriff auf lokale Dienste |
 
-Projekttyp `node` → nur `npmjs.org`. Projekttyp `python` → nur `pypi.org`. HTML/PowerShell → keine Paketquellen.
+Projekttyp `node` → nur `registry.npmjs.org`. Projekttyp `python` → nur `pypi.org` + `files.pythonhosted.org`. HTML/PowerShell → keine Paketquellen.
+
+> **Hinweis:** Moderne Paketmanager nutzen CDNs und Subdomains. Die Defaults in `config.json` enthalten die exakten Domains (`registry.npmjs.org`, nicht nur `npmjs.org`). Falls ein `npm install` fehlschlaegt, prüfe `firewall_registries_node` / `firewall_registries_python` in `config.json` und ergaenze fehlende Domains.
 
 ### Ressourcen-Limits
 

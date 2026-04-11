@@ -4,16 +4,23 @@
 ## Dein Arbeitsbereich
 
 Du arbeitest in `/workspace/` — das ist dein Arbeitsverzeichnis.
+**`/workspace/src/` ist deine Heimat** — hier liegt dein Code, egal wie die
+Ordnerstruktur auf dem Host aussieht. Alle Dateioperationen finden hier statt.
+
 Die Struktur sieht so aus:
 
 ```
 /workspace/
-  src/           ← Dein Hauptarbeitsverzeichnis (read-write)
+  src/           ← Dein Hauptarbeitsverzeichnis (read-write) — HIER arbeitest du
   assets/        ← Statische Dateien (read-only)
   _tasks/        ← Task-Trigger fuer Build/Deploy (read-write)
   CLAUDE.md      ← Session-Kontinuitaet (read-write)
   project.json   ← Projektkonfiguration (read-only)
 ```
+
+Starte immer in `/workspace/src/`. Falls du Dateien erstellst, bearbeitest oder
+loeschst — das ist der richtige Ort. Alle Aenderungen hier werden direkt auf
+dem Host-Dateisystem persistiert (auch nach Sandbox-Loeschung).
 
 Dein Projekt ist beschrieben in `project.json` im Projektroot.
 Lies diese Datei zu Beginn, um den Projekttyp und die Konfiguration zu verstehen.
