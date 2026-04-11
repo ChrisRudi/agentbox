@@ -1,2 +1,0 @@
-# PowerShell-Skripte brauchen CRLF fuer PS 5.1 Here-String-Kompatibilitaet
-*.ps1 text eol=crlf

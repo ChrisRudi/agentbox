@@ -165,6 +165,7 @@ echo "Pakete fertig installiert."
 '@
 $installScript = $installScript.Replace('__NODEJS_URL__', $nodejsUrl).Replace('__AGENT_INSTALL_BLOCK__', $agentInstallBlock)
 
+$installScript = $installScript.Replace("`r", "")
 & wsl.exe -d $distroName -- bash -c $installScript 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNUNG: Einige Pakete konnten nicht installiert werden." -ForegroundColor Yellow
@@ -225,6 +226,7 @@ chmod +x /etc/agentbox/firewall.sh
 '@
 $setupFirewall = $setupFirewall.Replace('__FIREWALL_SCRIPT__', $firewallScript)
 
+$setupFirewall = $setupFirewall.Replace("`r", "")
 & wsl.exe -d $distroName -- bash -c $setupFirewall 2>&1 | Out-Host
 Write-Host "[OK] Firewall-Regeln hinterlegt" -ForegroundColor Green
 
@@ -240,6 +242,7 @@ EOF
 sysctl -p > /dev/null 2>&1 || true
 '@
 
+$sysctlScript = $sysctlScript.Replace("`r", "")
 & wsl.exe -d $distroName -- bash -c $sysctlScript 2>&1 | Out-Host
 Write-Host "[OK] Sysctl-Hardening gesetzt" -ForegroundColor Green
 
