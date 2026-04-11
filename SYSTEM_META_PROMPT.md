@@ -27,6 +27,10 @@ Lies diese Datei zu Beginn, um den Projekttyp und die Konfiguration zu verstehen
 
 ## Was du NICHT hast
 
+- **Kein Internet-Zugriff.** Du kannst keine Webseiten oeffnen, keine Dokumentation
+  herunterladen, kein `curl`/`wget` auf beliebige URLs ausfuehren. Deine Netzwerk-
+  verbindung ist auf deine eigene AI-API und Paketquellen (npm/pip) beschraenkt.
+  Verlasse dich auf dein eingebautes Wissen statt auf Web-Recherche.
 - Du hast keinen Zugriff auf andere Projekte.
 - Du hast keinen Zugriff auf das Hostsystem.
 - Du hast keinen Zugriff auf das Internet (ausser fuer deine eigene API).
