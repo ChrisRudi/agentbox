@@ -161,15 +161,25 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 | Einstellung | Standard | Beschreibung |
 |-------------|----------|-------------|
 | `base_path_override` | `""` (OneDrive) | Eigener Projektordner-Pfad |
+| `base_dir_name` | `AI_Projects_Source` | Name des Projektordners |
+| `control_dir_name` | `_control` | Name des Steuerungsordners |
+| `sandbox_user` | `agent` | Unprivilegierter User in der Sandbox |
 | `resources_memory` | `4GB` | WSL2-Speicherlimit |
 | `resources_processors` | `2` | WSL2-CPU-Kerne |
+| `resources_swap` | `1GB` | WSL2-Swap-Groesse |
+| `resources_ram_warn_percent` | `90` | RAM-Watchdog-Schwelle (%) |
+| `resources_watchdog_interval` | `30` | Watchdog-Pruefintervall (Sekunden) |
 | `build_whitelist` | 8 Kommandos | Erlaubte Build-Befehle |
 | `deploy_whitelist` | `local`, `github` | Erlaubte Deploy-Ziele |
 | `firewall_ai_apis` | 3 Endpoints | Erlaubte AI-API-Domains |
+| `firewall_registries_node` | `npmjs.org` | Node.js-Paketquellen |
+| `firewall_registries_python` | `pypi.org`, `pythonhosted.org` | Python-Paketquellen |
 | `agent_*_enabled` | Big 3 an | Agenten aktivieren/deaktivieren |
 | `auto_start_timeout` | `5` | Auto-Start-Countdown (Sekunden) |
 | `auto_update` | `true` | Beim Start nach Updates suchen |
 | `auto_update_interval_hours` | `24` | Stunden zwischen Update-Checks |
+| `event_log_source` | `AIProjects` | Windows Event-Log-Quellname |
+| `scheduled_task_name` | `agentbox-task-runner` | Windows Scheduled-Task-Name |
 
 Siehe [`config.json`](../config.json) fuer die vollstaendige Liste mit allen Defaults.
 

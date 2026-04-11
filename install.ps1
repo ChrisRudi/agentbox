@@ -328,7 +328,7 @@ try {
     Write-Host $_.Exception.Message -ForegroundColor Yellow
 }
 
-# --- 9. Erfolgsmeldung ---
+# --- 10. Erfolgsmeldung ---
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green

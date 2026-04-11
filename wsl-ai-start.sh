@@ -62,6 +62,8 @@ if [ -n "$_base_override" ]; then
     else
         AI_PROJECTS_ROOT="$_base_override"
     fi
+    # Trailing Slashes entfernen
+    AI_PROJECTS_ROOT="${AI_PROJECTS_ROOT%/}"
     CONTROL_DIR="$AI_PROJECTS_ROOT/$(cfg_get 'control_dir_name' '_control')"
 fi
 
@@ -86,6 +88,10 @@ log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
 # --- 1. Auto-Update pruefen ---
 _auto_update=$(cfg_get "auto_update" "true")
 _update_interval=$(cfg_get "auto_update_interval_hours" "24")
+# Validierung: Intervall muss 1-999 sein
+if ! [[ "$_update_interval" =~ ^[0-9]+$ ]] || [ "$_update_interval" -lt 1 ] || [ "$_update_interval" -gt 999 ]; then
+    _update_interval=24
+fi
 _last_check_file="$CONTROL_DIR/.last_update_check"
 
 if [ "$_auto_update" = "true" ] && [ -d "$CONTROL_DIR/.git" ]; then
@@ -94,6 +100,8 @@ if [ "$_auto_update" = "true" ] && [ -d "$CONTROL_DIR/.git" ]; then
     # Intervall pruefen (nicht bei jedem Start)
     if [ -f "$_last_check_file" ]; then
         _last_ts=$(cat "$_last_check_file" 2>/dev/null || echo "0")
+        # Sanitierung: nur Ziffern akzeptieren
+        if ! [[ "$_last_ts" =~ ^[0-9]+$ ]]; then _last_ts=0; fi
         _now_ts=$(date +%s)
         _interval_sec=$(( _update_interval * 3600 ))
         if [ $(( _now_ts - _last_ts )) -lt "$_interval_sec" ] 2>/dev/null; then
@@ -208,7 +216,7 @@ if [ ${#projects[@]} -eq 0 ]; then
     exit 1
 fi
 
-# --- 3. Projekt auswaehlen ---
+# --- 4. Projekt auswaehlen ---
 echo "Welches Projekt?"
 echo ""
 for i in "${!projects[@]}"; do
@@ -232,7 +240,7 @@ PROJECT_NAME=$(basename "$PROJECT_DIR")
 
 log_ok "Projekt: $PROJECT_NAME"
 
-# --- 4. project.json pruefen/generieren ---
+# --- 5. project.json pruefen/generieren ---
 PROJECT_JSON="$PROJECT_DIR/project.json"
 
 if [ ! -f "$PROJECT_JSON" ]; then
@@ -289,7 +297,7 @@ PJEOF
     log_ok "project.json generiert"
 fi
 
-# --- 5. CLAUDE.md generieren falls nicht vorhanden ---
+# --- 6. CLAUDE.md generieren falls nicht vorhanden ---
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 
 if [ ! -f "$CLAUDE_MD" ]; then
@@ -309,25 +317,25 @@ CMDEOF
     log_ok "CLAUDE.md erstellt"
 fi
 
-# --- 6. CLAUDE.md Backup ---
+# --- 7. CLAUDE.md Backup ---
 cp "$CLAUDE_MD" "${CLAUDE_MD}.bak"
 log_ok "CLAUDE.md Backup erstellt"
 
-# --- 7. _tasks/ Ordner anlegen ---
+# --- 8. _tasks/ Ordner anlegen ---
 TASKS_DIR="$PROJECT_DIR/_tasks"
 if [ ! -d "$TASKS_DIR" ]; then
     mkdir -p "$TASKS_DIR"
 fi
 
-# --- 7b. Paket-Cache anlegen (persistiert ueber Sessions) ---
+# --- 8b. Paket-Cache anlegen (persistiert ueber Sessions) ---
 CACHE_DIR="$CONTROL_DIR/cache"
 mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/pip"
 
-# --- 8. Alte status_*.json loeschen ---
+# --- 9. Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
 log_ok "Alte Status-Dateien bereinigt"
 
-# --- 9. Agent auswaehlen ---
+# --- 10. Agent auswaehlen ---
 echo ""
 echo "Welcher Agent?"
 echo ""
@@ -384,7 +392,7 @@ AGENT_CMD="${agent_cmds[$((agent_choice-1))]}"
 AGENT_NAME="${agents[$((agent_choice-1))]}"
 log_ok "Agent: $AGENT_NAME"
 
-# --- 10. Session-Lock pruefen ---
+# --- 11. Session-Lock pruefen ---
 DISTRO_NAME="agentbox-${PROJECT_NAME}"
 
 existing=$(wsl.exe -l -q 2>/dev/null | tr -d '\r' | grep -c "^${DISTRO_NAME}$" || true)
@@ -395,7 +403,7 @@ if [ "$existing" -gt 0 ]; then
     exit 1
 fi
 
-# --- 11. Sandbox-Distro importieren ---
+# --- 12. Sandbox-Distro importieren ---
 echo ""
 log_info "Importiere Sandbox-Distro..."
 
@@ -411,12 +419,12 @@ if [ $? -ne 0 ]; then
 fi
 log_ok "Sandbox-Distro importiert: $DISTRO_NAME"
 
-# --- 12. Sandbox-Init-Skript kopieren ---
+# --- 13. Sandbox-Init-Skript kopieren ---
 log_info "Kopiere Sandbox-Init-Skript..."
 wsl.exe -d "$DISTRO_NAME" -- bash -c "cat > /sandbox-init.sh" < "$SANDBOX_INIT"
 wsl.exe -d "$DISTRO_NAME" -- chmod +x /sandbox-init.sh
 
-# --- 13. RAM-Watchdog im Hintergrund starten ---
+# --- 14. RAM-Watchdog im Hintergrund starten ---
 WATCHDOG_PID=""
 (
     RAM_WARN_THRESHOLD=$(cfg_get "resources_ram_warn_percent" "90")
@@ -467,7 +475,7 @@ Agent eventuell in einer Endlosschleife?', \
 ) &
 WATCHDOG_PID=$!
 
-# --- 14. Sandbox starten ---
+# --- 15. Sandbox starten ---
 echo ""
 echo -e "${GREEN}=== Starte $AGENT_NAME fuer $PROJECT_NAME ===${NC}"
 echo ""
@@ -477,10 +485,12 @@ SANDBOX_USER=$(cfg_get "sandbox_user" "agent")
 CFG_AI_APIS=$(cfg_get_array "firewall_ai_apis" | tr '\n' ' ')
 CFG_REG_NODE=$(cfg_get_array "firewall_registries_node" | tr '\n' ' ')
 CFG_REG_PYTHON=$(cfg_get_array "firewall_registries_python" | tr '\n' ' ')
-# Defaults falls Config leer
-: "${CFG_AI_APIS:=api.anthropic.com api.openai.com generativelanguage.googleapis.com}"
-: "${CFG_REG_NODE:=registry.npmjs.org}"
-: "${CFG_REG_PYTHON:=pypi.org files.pythonhosted.org}"
+# Defaults nur wenn config.json fehlt oder nicht lesbar (nicht bei leeren Arrays)
+if [ ! -f "$AGENTBOX_CONFIG" ]; then
+    : "${CFG_AI_APIS:=api.anthropic.com api.openai.com generativelanguage.googleapis.com}"
+    : "${CFG_REG_NODE:=registry.npmjs.org}"
+    : "${CFG_REG_PYTHON:=pypi.org files.pythonhosted.org}"
+fi
 
 WIN_CACHE_DIR=$(wslpath -w "$CACHE_DIR" 2>/dev/null || echo "$CACHE_DIR")
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
@@ -488,13 +498,13 @@ wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON"
 EXIT_CODE=$?
 
-# --- 15. Watchdog beenden ---
+# --- 16. Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
     wait "$WATCHDOG_PID" 2>/dev/null || true
 fi
 
-# --- 16. Sandbox entfernen ---
+# --- 17. Sandbox entfernen ---
 echo ""
 log_info "Entferne Sandbox-Distro..."
 wsl.exe --unregister "$DISTRO_NAME" 2>/dev/null || true

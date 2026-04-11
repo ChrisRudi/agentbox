@@ -35,6 +35,11 @@ echo ""
 
 # --- 1. Sandbox-User anlegen (kein sudo) ---
 # SANDBOX_USER kommt aus Parameter $4 (Default: "agent")
+# Sicherheit: root und system-User verbieten
+if [ "$SANDBOX_USER" = "root" ] || [ "$(id -u "$SANDBOX_USER" 2>/dev/null)" = "0" ] 2>/dev/null; then
+    echo "FEHLER: Sandbox-User darf nicht 'root' sein — verwende Default 'agent'."
+    SANDBOX_USER="agent"
+fi
 SANDBOX_HOME="/home/$SANDBOX_USER"
 
 if ! id "$SANDBOX_USER" &>/dev/null; then
@@ -234,9 +239,15 @@ echo ""
 
 cd "$WORKSPACE"
 
-# Agent als unprivilegierter User starten (generisch fuer alle Agents)
+# Agent-Kommando validieren (nur alphanumerisch + Bindestrich, keine Sonderzeichen)
+if ! [[ "$AGENT_CMD" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "FEHLER: Ungueltiges Agent-Kommando '$AGENT_CMD' — nur Buchstaben, Zahlen, Bindestrich erlaubt."
+    exit 1
+fi
+
+# Agent als unprivilegierter User starten
 if command -v "$AGENT_CMD" &> /dev/null; then
-    su - "$SANDBOX_USER" -c "cd /workspace && $AGENT_CMD"
+    su - "$SANDBOX_USER" -c "cd /workspace && exec $AGENT_CMD"
 else
     echo "FEHLER: Agent '$AGENT_CMD' nicht in der Sandbox installiert."
     echo "Bitte Agent in config.json aktivieren und win-setup.ps1 erneut ausfuehren (Template-Rebuild)."

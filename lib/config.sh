@@ -127,8 +127,10 @@ except:
         return
     fi
 
-    # Fallback: die drei Standard-Agents
+    # Fallback: Standard-Agents (alle, die standardmaessig aktiviert sind)
     echo "claude:Claude Code:claude"
     echo "codex:OpenAI Codex:codex"
     echo "gemini:Gemini CLI:gemini"
+    # Aider und Goose nur wenn installiert (standardmaessig deaktiviert)
+    # Im Fallback-Modus nicht ausgeben — config.json ist die Wahrheitsquelle
 }
