@@ -72,6 +72,6 @@
   "auto_update": true,
   "auto_update_interval_hours": 24,
 
-  "ubuntu_image_url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-noble-minimal-cloudimg-amd64-root.tar.xz",
+  "ubuntu_image_url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz",
   "nodejs_setup_url": "https://deb.nodesource.com/setup_20.x"
 }
