@@ -133,7 +133,7 @@ foreach ($aid in $agentIds) {
         }
 
         if ($installCmd) {
-            $agentInstallLines += "$installCmd 2>/dev/null || echo ""WARNUNG: $agentName Installation fehlgeschlagen"""
+            $agentInstallLines += "$installCmd 2>/dev/null || echo `"WARNUNG: $agentName Installation fehlgeschlagen`""
         }
     }
 }
