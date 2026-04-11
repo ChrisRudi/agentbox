@@ -83,14 +83,111 @@ log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
 
-# --- 1. Template pruefen ---
+# --- 1. Auto-Update pruefen ---
+_auto_update=$(cfg_get "auto_update" "true")
+_update_interval=$(cfg_get "auto_update_interval_hours" "24")
+_last_check_file="$CONTROL_DIR/.last_update_check"
+
+if [ "$_auto_update" = "true" ] && [ -d "$CONTROL_DIR/.git" ]; then
+    _do_check=true
+
+    # Intervall pruefen (nicht bei jedem Start)
+    if [ -f "$_last_check_file" ]; then
+        _last_ts=$(cat "$_last_check_file" 2>/dev/null || echo "0")
+        _now_ts=$(date +%s)
+        _interval_sec=$(( _update_interval * 3600 ))
+        if [ $(( _now_ts - _last_ts )) -lt "$_interval_sec" ] 2>/dev/null; then
+            _do_check=false
+        fi
+    fi
+
+    if [ "$_do_check" = true ]; then
+        # Fetch im Hintergrund, max 5 Sekunden
+        _fetch_ok=false
+        (cd "$CONTROL_DIR" && git fetch origin main --quiet 2>/dev/null) &
+        _fetch_pid=$!
+        ( sleep 5; kill $_fetch_pid 2>/dev/null ) &
+        _timer_pid=$!
+        wait $_fetch_pid 2>/dev/null && _fetch_ok=true
+        kill $_timer_pid 2>/dev/null; wait $_timer_pid 2>/dev/null
+
+        if [ "$_fetch_ok" = true ]; then
+            date +%s > "$_last_check_file"
+
+            # Lokalen und Remote-Stand vergleichen
+            _local_head=$(cd "$CONTROL_DIR" && git rev-parse HEAD 2>/dev/null)
+            _remote_head=$(cd "$CONTROL_DIR" && git rev-parse origin/main 2>/dev/null)
+
+            if [ -n "$_local_head" ] && [ -n "$_remote_head" ] && [ "$_local_head" != "$_remote_head" ]; then
+                echo ""
+                echo -e "${CYAN}[UPDATE]${NC} Neue agentbox-Version verfuegbar!"
+                echo -n "         Jetzt aktualisieren? [J/n] "
+                if read -r -t 10 _update_answer; then
+                    case "$_update_answer" in
+                        n|N|nein|Nein)
+                            echo "         Update uebersprungen."
+                            ;;
+                        *)
+                            echo -e "         ${CYAN}Aktualisiere...${NC}"
+                            (cd "$CONTROL_DIR" && git pull origin main --quiet 2>/dev/null)
+                            if [ $? -eq 0 ]; then
+                                echo -e "         ${GREEN}[OK] Update erfolgreich.${NC}"
+
+                                # Pruefen ob Template-Rebuild noetig (Agent-Config geaendert?)
+                                _cfg_hash_file="$CONTROL_DIR/sandbox/.config_hash"
+                                _current_hash=""
+                                if command -v python3 &> /dev/null && [ -f "$AGENTBOX_CONFIG" ]; then
+                                    _current_hash=$(python3 -c "
+import json, hashlib
+try:
+    with open('$AGENTBOX_CONFIG') as f:
+        data = json.load(f)
+    keys = sorted(k for k in data if k.startswith('agent_') or k in ('ubuntu_image_url','nodejs_setup_url'))
+    h = hashlib.md5(json.dumps({k: data[k] for k in keys}).encode()).hexdigest()
+    print(h)
+except:
+    print('')
+" 2>/dev/null)
+                                fi
+
+                                _saved_hash=""
+                                if [ -f "$_cfg_hash_file" ]; then
+                                    _saved_hash=$(cat "$_cfg_hash_file" 2>/dev/null)
+                                fi
+
+                                if [ -n "$_current_hash" ] && [ "$_current_hash" != "$_saved_hash" ]; then
+                                    echo ""
+                                    echo -e "         ${YELLOW}[INFO] Agent-Konfiguration geaendert — Template-Rebuild empfohlen.${NC}"
+                                    echo "         Bitte in einer Admin-PowerShell ausfuehren:"
+                                    echo "         & \"$CONTROL_DIR/win-setup.ps1\""
+                                fi
+                            else
+                                echo -e "         ${YELLOW}[WARN] Update fehlgeschlagen — weiter mit aktueller Version.${NC}"
+                            fi
+                            ;;
+                    esac
+                else
+                    # Timeout → Update ausfuehren
+                    echo ""
+                    echo -e "         ${CYAN}Aktualisiere...${NC}"
+                    (cd "$CONTROL_DIR" && git pull origin main --quiet 2>/dev/null)
+                    if [ $? -eq 0 ]; then
+                        echo -e "         ${GREEN}[OK] Update erfolgreich.${NC}"
+                    fi
+                fi
+            fi
+        fi
+    fi
+fi
+
+# --- 2. Template pruefen ---
 if [ ! -f "$TEMPLATE_PATH" ]; then
     log_error "template.tar.gz nicht gefunden: $TEMPLATE_PATH"
     echo "Bitte zuerst win-setup.ps1 als Admin in PowerShell ausfuehren."
     exit 1
 fi
 
-# --- 2. Projektordner scannen ---
+# --- 3. Projektordner scannen ---
 echo ""
 echo -e "${CYAN}=== agentbox ===${NC}"
 echo ""

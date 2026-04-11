@@ -69,6 +69,9 @@
   "agent_goose_install": "pip3 install goose-ai",
   "agent_goose_enabled": false,
 
+  "auto_update": true,
+  "auto_update_interval_hours": 24,
+
   "ubuntu_image_url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-noble-minimal-cloudimg-amd64-root.tar.xz",
   "nodejs_setup_url": "https://deb.nodesource.com/setup_20.x"
 }

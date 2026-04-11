@@ -168,6 +168,8 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 | `firewall_ai_apis` | 3 Endpoints | Erlaubte AI-API-Domains |
 | `agent_*_enabled` | Big 3 an | Agenten aktivieren/deaktivieren |
 | `auto_start_timeout` | `5` | Auto-Start-Countdown (Sekunden) |
+| `auto_update` | `true` | Beim Start nach Updates suchen |
+| `auto_update_interval_hours` | `24` | Stunden zwischen Update-Checks |
 
 Siehe [`config.json`](../config.json) fuer die vollstaendige Liste mit allen Defaults.
 

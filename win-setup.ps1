@@ -285,6 +285,21 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Config-Hash speichern (fuer Auto-Update Rebuild-Erkennung)
+$configHashFile = Join-Path $sandboxDir ".config_hash"
+try {
+    if ($config) {
+        $hashKeys = ($config.PSObject.Properties |
+            Where-Object { $_.Name -match '^agent_' -or $_.Name -in @('ubuntu_image_url','nodejs_setup_url') } |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name)=$($_.Value)" }) -join "|"
+        $md5 = [System.Security.Cryptography.MD5]::Create()
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($hashKeys)
+        $hash = ($md5.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
+        $hash | Out-File -FilePath $configHashFile -Encoding ascii -NoNewline
+    }
+} catch { }
+
 $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
 Write-Host "[OK] Template exportiert: $templatePath ($templateSize MB)" -ForegroundColor Green
 
