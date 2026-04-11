@@ -1,9 +1,8 @@
-# win-setup.ps1
-# agentbox — Einmalige Einrichtung: Template bauen, Event-Source, Scheduled Task
-# Braucht: Admin-Rechte, WSL2
-# Version: 3.2
-
-param()
+# win-setup.ps1 — agentbox Setup (PS 5.1 kompatibel)
+# CRLF-Selbstreparatur: GitHub-ZIPs haben LF; PS 5.1 braucht CRLF fuer Multi-Line-Parsing.
+# Die naechste Zeile MUSS ein Einzeiler bleiben — sie ist das Einzige was PS 5.1 mit LF parsen kann.
+if (-not $env:_AGENTBOX_CRLF) { $p = $MyInvocation.MyCommand.Path; if ($p -and (Test-Path $p)) { $t = [IO.File]::ReadAllText($p); if (-not $t.Contains("`r")) { [IO.File]::WriteAllText($p, $t.Replace("`n", "`r`n")); $env:_AGENTBOX_CRLF = '1'; & $p; return } } }
+$env:_AGENTBOX_CRLF = $null
 
 $ErrorActionPreference = "Stop"
 
