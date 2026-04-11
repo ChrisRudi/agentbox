@@ -94,7 +94,7 @@ if ! [[ "$_update_interval" =~ ^[0-9]+$ ]] || [ "$_update_interval" -lt 1 ] || [
 fi
 _last_check_file="$CONTROL_DIR/.last_update_check"
 
-if [ "$_auto_update" = "true" ] && [ -d "$CONTROL_DIR/.git" ]; then
+if [ "$_auto_update" = "true" ]; then
     _do_check=true
 
     # Intervall pruefen (nicht bei jedem Start)
@@ -110,42 +110,91 @@ if [ "$_auto_update" = "true" ] && [ -d "$CONTROL_DIR/.git" ]; then
     fi
 
     if [ "$_do_check" = true ]; then
-        # Fetch im Hintergrund, max 5 Sekunden
-        _fetch_ok=false
-        (cd "$CONTROL_DIR" && git fetch origin main --quiet 2>/dev/null) &
-        _fetch_pid=$!
-        ( sleep 5; kill $_fetch_pid 2>/dev/null ) &
-        _timer_pid=$!
-        wait $_fetch_pid 2>/dev/null && _fetch_ok=true
-        kill $_timer_pid 2>/dev/null; wait $_timer_pid 2>/dev/null
+        # Lokale Version lesen
+        _local_version=""
+        if [ -f "$CONTROL_DIR/.version" ]; then
+            _local_version=$(cat "$CONTROL_DIR/.version" 2>/dev/null | tr -d '[:space:]')
+        fi
 
-        if [ "$_fetch_ok" = true ]; then
-            date +%s > "$_last_check_file"
+        # Remote-Version pruefen (curl, max 5 Sekunden)
+        _remote_version=""
+        _version_url="https://raw.githubusercontent.com/ChrisRudi/agentbox/main/.version"
+        if command -v curl &> /dev/null; then
+            _remote_version=$(curl -fsSL --connect-timeout 5 --max-time 5 "$_version_url" 2>/dev/null | tr -d '[:space:]')
+        elif command -v wget &> /dev/null; then
+            _remote_version=$(wget -qO- --timeout=5 "$_version_url" 2>/dev/null | tr -d '[:space:]')
+        fi
 
-            # Lokalen und Remote-Stand vergleichen
-            _local_head=$(cd "$CONTROL_DIR" && git rev-parse HEAD 2>/dev/null)
-            _remote_head=$(cd "$CONTROL_DIR" && git rev-parse origin/main 2>/dev/null)
+        date +%s > "$_last_check_file"
 
-            if [ -n "$_local_head" ] && [ -n "$_remote_head" ] && [ "$_local_head" != "$_remote_head" ]; then
+        if [ -n "$_remote_version" ] && [ -n "$_local_version" ] && [ "$_local_version" != "$_remote_version" ]; then
+            echo ""
+            echo -e "${CYAN}[UPDATE]${NC} Neue agentbox-Version verfuegbar! ($YELLOW$_local_version${NC} → ${GREEN}$_remote_version${NC})"
+            echo -n "         Jetzt aktualisieren? [J/n] "
+
+            _do_update=false
+            if read -r -t 10 _update_answer; then
+                case "$_update_answer" in
+                    n|N|nein|Nein) echo "         Update uebersprungen." ;;
+                    *) _do_update=true ;;
+                esac
+            else
+                # Timeout → Update ausfuehren
                 echo ""
-                echo -e "${CYAN}[UPDATE]${NC} Neue agentbox-Version verfuegbar!"
-                echo -n "         Jetzt aktualisieren? [J/n] "
-                if read -r -t 10 _update_answer; then
-                    case "$_update_answer" in
-                        n|N|nein|Nein)
-                            echo "         Update uebersprungen."
-                            ;;
-                        *)
-                            echo -e "         ${CYAN}Aktualisiere...${NC}"
-                            (cd "$CONTROL_DIR" && git pull origin main --quiet 2>/dev/null)
-                            if [ $? -eq 0 ]; then
-                                echo -e "         ${GREEN}[OK] Update erfolgreich.${NC}"
+                _do_update=true
+            fi
 
-                                # Pruefen ob Template-Rebuild noetig (Agent-Config geaendert?)
-                                _cfg_hash_file="$CONTROL_DIR/sandbox/.config_hash"
-                                _current_hash=""
-                                if command -v python3 &> /dev/null && [ -f "$AGENTBOX_CONFIG" ]; then
-                                    _current_hash=$(python3 -c "
+            if [ "$_do_update" = true ]; then
+                echo -e "         ${CYAN}Aktualisiere...${NC}"
+                _update_ok=false
+
+                # Methode 1: git pull (wenn git-Repo vorhanden)
+                if [ -d "$CONTROL_DIR/.git" ] && command -v git &> /dev/null; then
+                    (cd "$CONTROL_DIR" && git pull origin main --quiet 2>/dev/null) && _update_ok=true
+                fi
+
+                # Methode 2: ZIP-Download (Fallback)
+                if [ "$_update_ok" = false ] && command -v curl &> /dev/null; then
+                    _zip_url="https://github.com/ChrisRudi/agentbox/archive/refs/heads/main.zip"
+                    _tmp_zip="/tmp/agentbox_update_$$.zip"
+                    _tmp_dir="/tmp/agentbox_extract_$$"
+
+                    if curl -fsSL --connect-timeout 10 --max-time 60 -o "$_tmp_zip" "$_zip_url" 2>/dev/null; then
+                        mkdir -p "$_tmp_dir"
+                        (cd "$_tmp_dir" && python3 -c "
+import zipfile, sys
+with zipfile.ZipFile('$_tmp_zip') as z:
+    z.extractall()
+" 2>/dev/null)
+                        _extracted=$(find "$_tmp_dir" -maxdepth 1 -mindepth 1 -type d | head -1)
+                        if [ -n "$_extracted" ] && [ -d "$_extracted" ]; then
+                            # User-config.json sichern
+                            _user_cfg=""
+                            if [ -f "$CONTROL_DIR/config.json" ]; then
+                                _user_cfg=$(cat "$CONTROL_DIR/config.json")
+                            fi
+                            # Dateien kopieren (sandbox/ und cache/ nicht ueberschreiben)
+                            find "$_extracted" -maxdepth 1 -mindepth 1 -not -name "sandbox" -not -name "cache" | while read -r item; do
+                                cp -rf "$item" "$CONTROL_DIR/" 2>/dev/null
+                            done
+                            # User-config.json wiederherstellen
+                            if [ -n "$_user_cfg" ]; then
+                                echo "$_user_cfg" > "$CONTROL_DIR/config.json"
+                            fi
+                            _update_ok=true
+                        fi
+                    fi
+                    rm -rf "$_tmp_zip" "$_tmp_dir" 2>/dev/null
+                fi
+
+                if [ "$_update_ok" = true ]; then
+                    echo -e "         ${GREEN}[OK] Update auf Version $_remote_version erfolgreich.${NC}"
+
+                    # Pruefen ob Template-Rebuild noetig (Agent-Config geaendert?)
+                    _cfg_hash_file="$CONTROL_DIR/sandbox/.config_hash"
+                    _current_hash=""
+                    if command -v python3 &> /dev/null && [ -f "$AGENTBOX_CONFIG" ]; then
+                        _current_hash=$(python3 -c "
 import json, hashlib
 try:
     with open('$AGENTBOX_CONFIG') as f:
@@ -156,33 +205,23 @@ try:
 except:
     print('')
 " 2>/dev/null)
-                                fi
-
-                                _saved_hash=""
-                                if [ -f "$_cfg_hash_file" ]; then
-                                    _saved_hash=$(cat "$_cfg_hash_file" 2>/dev/null)
-                                fi
-
-                                if [ -n "$_current_hash" ] && [ "$_current_hash" != "$_saved_hash" ]; then
-                                    echo ""
-                                    echo -e "         ${YELLOW}[INFO] Agent-Konfiguration geaendert — Template-Rebuild empfohlen.${NC}"
-                                    echo "         Bitte in einer Admin-PowerShell ausfuehren:"
-                                    echo "         & \"$CONTROL_DIR/win-setup.ps1\""
-                                fi
-                            else
-                                echo -e "         ${YELLOW}[WARN] Update fehlgeschlagen — weiter mit aktueller Version.${NC}"
-                            fi
-                            ;;
-                    esac
-                else
-                    # Timeout → Update ausfuehren
-                    echo ""
-                    echo -e "         ${CYAN}Aktualisiere...${NC}"
-                    (cd "$CONTROL_DIR" && git pull origin main --quiet 2>/dev/null)
-                    if [ $? -eq 0 ]; then
-                        echo -e "         ${GREEN}[OK] Update erfolgreich.${NC}"
                     fi
+
+                    _saved_hash=""
+                    if [ -f "$_cfg_hash_file" ]; then
+                        _saved_hash=$(cat "$_cfg_hash_file" 2>/dev/null)
+                    fi
+
+                    if [ -n "$_current_hash" ] && [ "$_current_hash" != "$_saved_hash" ]; then
+                        echo ""
+                        echo -e "         ${YELLOW}[INFO] Agent-Konfiguration geaendert — Template-Rebuild empfohlen.${NC}"
+                        echo "         Bitte in einer Admin-PowerShell ausfuehren:"
+                        echo "         & \"$CONTROL_DIR/win-setup.ps1\""
+                    fi
+                else
+                    echo -e "         ${YELLOW}[WARN] Update fehlgeschlagen — weiter mit aktueller Version.${NC}"
                 fi
+            fi
             fi
         fi
     fi

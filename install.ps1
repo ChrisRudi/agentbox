@@ -113,16 +113,18 @@ if (-not $wslReady) {
     Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 }
 
-# --- 3. Git pruefen ---
+# --- 3. Git pruefen (optional — wird fuer ZIP-Fallback nicht benoetigt) ---
+$hasGit = $false
 try {
     $gitVersion = & git.exe --version 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Git nicht gefunden" }
-} catch {
-    Write-Host "FEHLER: Git ist nicht installiert." -ForegroundColor Red
-    Write-Host "Download: https://git-scm.com/download/win" -ForegroundColor Yellow
-    exit 1
+    if ($LASTEXITCODE -eq 0) {
+        $hasGit = $true
+        Write-Host "[OK] $gitVersion (wird fuer Updates genutzt)" -ForegroundColor Green
+    }
+} catch { }
+if (-not $hasGit) {
+    Write-Host "[INFO] Git nicht gefunden — Installation per ZIP-Download." -ForegroundColor Gray
 }
-Write-Host "[OK] $gitVersion" -ForegroundColor Green
 
 # --- 4. Zielordner bestimmen ---
 # Default: OneDrive\AI_Projects_Source (kann per config.json ueberschrieben werden)
@@ -168,42 +170,146 @@ if (-not (Test-Path $baseDir)) {
 
 # --- 5. Update oder Neuinstallation ---
 $repoUrl = "https://github.com/chrisrudi/agentbox.git"
+$zipUrl = "https://github.com/ChrisRudi/agentbox/archive/refs/heads/main.zip"
+$versionUrl = "https://raw.githubusercontent.com/ChrisRudi/agentbox/main/.version"
 
-if (Test-Path (Join-Path $controlDir ".git")) {
+$isInstalled = Test-Path $controlDir
+$isGitRepo = $isInstalled -and (Test-Path (Join-Path $controlDir ".git"))
+
+if ($isInstalled) {
+    # --- Update ---
     Write-Host ""
-    Write-Host "agentbox bereits installiert — aktualisiere..." -ForegroundColor Yellow
-    Push-Location $controlDir
-    try {
-        & git.exe pull origin main 2>&1 | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw "git pull fehlgeschlagen" }
-        Write-Host "[OK] Update abgeschlossen" -ForegroundColor Green
-    } catch {
-        Write-Host "WARNUNG: git pull fehlgeschlagen, fahre mit bestehender Version fort." -ForegroundColor Yellow
-    } finally {
-        Pop-Location
+    Write-Host "agentbox bereits installiert — pruefe Update..." -ForegroundColor Yellow
+
+    # Versionsvergleich
+    $localVersion = ""
+    $localVersionFile = Join-Path $controlDir ".version"
+    if (Test-Path $localVersionFile) {
+        $localVersion = (Get-Content -Path $localVersionFile -Raw -ErrorAction SilentlyContinue).Trim()
     }
-} else {
-    Write-Host ""
-    Write-Host "Klone agentbox Repository..." -ForegroundColor Cyan
-    $tempClone = Join-Path $env:TEMP "agentbox_clone_$(Get-Random)"
 
+    $remoteVersion = ""
     try {
-        & git.exe clone $repoUrl $tempClone 2>&1 | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw "git clone fehlgeschlagen" }
+        $ProgressPreference = 'SilentlyContinue'
+        $remoteVersion = (Invoke-WebRequest -Uri $versionUrl -UseBasicParsing -TimeoutSec 5).Content.Trim()
+    } catch {
+        Write-Host "[INFO] Versions-Check fehlgeschlagen — pruefe trotzdem." -ForegroundColor Gray
+    }
 
-        if (Test-Path $controlDir) {
-            Remove-Item -Path $controlDir -Recurse -Force
+    $needsUpdate = $true
+    if ($localVersion -and $remoteVersion -and ($localVersion -eq $remoteVersion)) {
+        Write-Host "[OK] Bereits auf Version $localVersion — kein Update noetig." -ForegroundColor Green
+        $needsUpdate = $false
+    } elseif ($remoteVersion) {
+        Write-Host "[INFO] Lokale Version: $localVersion → Remote: $remoteVersion" -ForegroundColor Cyan
+    }
+
+    if ($needsUpdate) {
+        if ($isGitRepo -and $hasGit) {
+            # Bevorzugt: git pull (schneller, inkrementell)
+            Push-Location $controlDir
+            try {
+                & git.exe pull origin main 2>&1 | Out-Host
+                if ($LASTEXITCODE -ne 0) { throw "git pull fehlgeschlagen" }
+                Write-Host "[OK] Update per git pull abgeschlossen" -ForegroundColor Green
+            } catch {
+                Write-Host "WARNUNG: git pull fehlgeschlagen, versuche ZIP-Fallback..." -ForegroundColor Yellow
+                Pop-Location
+                $needsUpdate = $true
+                $isGitRepo = $false
+            }
+            if ($isGitRepo) { Pop-Location; $needsUpdate = $false }
         }
 
-        Copy-Item -Path $tempClone -Destination $controlDir -Recurse -Force
-        Write-Host "[OK] agentbox installiert nach: $controlDir" -ForegroundColor Green
-    } catch {
-        Write-Host "FEHLER: Repository konnte nicht geklont werden." -ForegroundColor Red
-        Write-Host $_.Exception.Message -ForegroundColor Red
-        exit 1
-    } finally {
-        if (Test-Path $tempClone) {
-            Remove-Item -Path $tempClone -Recurse -Force -ErrorAction SilentlyContinue
+        if ($needsUpdate) {
+            # Fallback: ZIP-Download
+            Write-Host "Lade neueste Version als ZIP..." -ForegroundColor Cyan
+            $tempZip = Join-Path $env:TEMP "agentbox_update_$(Get-Random).zip"
+            $tempExtract = Join-Path $env:TEMP "agentbox_extract_$(Get-Random)"
+            try {
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
+                Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+
+                # ZIP enthaelt agentbox-main/ Unterordner
+                $extractedDir = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
+
+                # Bestehende config.json sichern (User-Anpassungen)
+                $userConfig = $null
+                $existingConfigPath = Join-Path $controlDir "config.json"
+                if (Test-Path $existingConfigPath) {
+                    $userConfig = Get-Content -Path $existingConfigPath -Raw -ErrorAction SilentlyContinue
+                }
+
+                # Dateien aktualisieren (nicht _control loeschen — cache/ und sandbox/ bleiben)
+                Get-ChildItem -Path $extractedDir.FullName -Exclude "sandbox","cache" | ForEach-Object {
+                    $destPath = Join-Path $controlDir $_.Name
+                    if ($_.PSIsContainer) {
+                        Copy-Item -Path $_.FullName -Destination $destPath -Recurse -Force
+                    } else {
+                        Copy-Item -Path $_.FullName -Destination $destPath -Force
+                    }
+                }
+
+                # User-config.json wiederherstellen falls vorhanden
+                if ($userConfig) {
+                    $userConfig | Out-File -FilePath $existingConfigPath -Encoding utf8NoBOM -NoNewline
+                }
+
+                Write-Host "[OK] Update per ZIP abgeschlossen" -ForegroundColor Green
+            } catch {
+                Write-Host "WARNUNG: ZIP-Update fehlgeschlagen, fahre mit bestehender Version fort." -ForegroundColor Yellow
+                Write-Host $_.Exception.Message -ForegroundColor Yellow
+            } finally {
+                Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+} else {
+    # --- Neuinstallation ---
+    Write-Host ""
+
+    if ($hasGit) {
+        Write-Host "Klone agentbox Repository..." -ForegroundColor Cyan
+        $tempClone = Join-Path $env:TEMP "agentbox_clone_$(Get-Random)"
+
+        try {
+            & git.exe clone $repoUrl $tempClone 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "git clone fehlgeschlagen" }
+
+            Copy-Item -Path $tempClone -Destination $controlDir -Recurse -Force
+            Write-Host "[OK] agentbox installiert nach: $controlDir" -ForegroundColor Green
+        } catch {
+            Write-Host "WARNUNG: git clone fehlgeschlagen, versuche ZIP-Fallback..." -ForegroundColor Yellow
+            $hasGit = $false
+        } finally {
+            if (Test-Path $tempClone) {
+                Remove-Item -Path $tempClone -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    if (-not $hasGit -or -not (Test-Path $controlDir)) {
+        Write-Host "Lade agentbox als ZIP herunter..." -ForegroundColor Cyan
+        $tempZip = Join-Path $env:TEMP "agentbox_install_$(Get-Random).zip"
+        $tempExtract = Join-Path $env:TEMP "agentbox_extract_$(Get-Random)"
+
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
+            Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+
+            $extractedDir = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
+            Copy-Item -Path $extractedDir.FullName -Destination $controlDir -Recurse -Force
+            Write-Host "[OK] agentbox installiert nach: $controlDir" -ForegroundColor Green
+        } catch {
+            Write-Host "FEHLER: Download fehlgeschlagen." -ForegroundColor Red
+            Write-Host $_.Exception.Message -ForegroundColor Red
+            exit 1
+        } finally {
+            Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }

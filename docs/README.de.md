@@ -232,8 +232,8 @@ AI_Projects_Source\                (oder eigener Pfad)
 ## Voraussetzungen
 
 - Windows 10 (2004+) oder Windows 11 + WSL2 (wird automatisch installiert falls nicht vorhanden)
-- Git
 - Admin-Rechte (nur einmalig)
+- Git (optional — wird fuer schnellere Updates genutzt, nicht zwingend erforderlich)
 - **Kein Docker. Kein Kubernetes. Keine Cloud.**
 
 ## Ehrlichkeit
