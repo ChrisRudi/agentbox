@@ -35,6 +35,8 @@ $distroName = "agentbox-template-build"
 # Wer von einer aelteren Version kommt, hat template.tar.gz + .config_hash
 # noch unter $scriptDir\sandbox\. Einmalig ruebermoven und den alten
 # Ordner entsorgen, damit kein verwaister Cloud-Sync-Verkehr mehr entsteht.
+# MUSS hier laufen — sonst greift gleich der Cache-Check unten ins Leere
+# und Import-AgentboxHostDistro findet das Template nicht am neuen Ort.
 $legacySandboxDir = Join-Path $scriptDir "sandbox"
 if (Test-Path $legacySandboxDir) {
     Write-Host "[MIGRATE] Altes sandbox/ unter $legacySandboxDir gefunden — verschiebe nach $sandboxDir" -ForegroundColor Yellow
@@ -46,7 +48,16 @@ if (Test-Path $legacySandboxDir) {
                 Move-Item -Path $legacyFile -Destination $targetFile -Force -ErrorAction Stop
                 Write-Host "          moved: $name" -ForegroundColor Gray
             } catch {
-                Write-Host "          WARN: $name — $($_.Exception.Message)" -ForegroundColor Yellow
+                # Move-Item kann an OneDrive-Files-On-Demand-Placeholdern oder
+                # cross-volume Sync-Aussetzern scheitern (Template ist ~1.2 GB).
+                # Copy + Remove als Fallback — erzwingt Hydration via Read.
+                try {
+                    Copy-Item -Path $legacyFile -Destination $targetFile -Force -ErrorAction Stop
+                    Remove-Item -Path $legacyFile -Force -ErrorAction SilentlyContinue
+                    Write-Host "          copied: $name" -ForegroundColor Gray
+                } catch {
+                    Write-Host "          WARN: $name — $($_.Exception.Message)" -ForegroundColor Yellow
+                }
             }
         }
     }
