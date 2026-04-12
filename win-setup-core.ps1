@@ -171,17 +171,24 @@ $installScript = $installScript.Replace('__NODEJS_URL__', $nodejsUrl).Replace('_
 $installScript = $installScript.Replace("`r", "")
 
 # Als Base64 ueber Datei in die Distro schieben (umgeht bash -c Quoting-Probleme)
+# Exit-Code in /tmp/install.rc schreiben, weil PS 5.1's 2>&1 | Out-Host $LASTEXITCODE verwaschen kann
 $installB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($installScript))
-$runInstall = "echo $installB64 | base64 -d > /tmp/install.sh && bash /tmp/install.sh; rc=`$?; rm -f /tmp/install.sh; exit `$rc"
+$runInstall = "echo $installB64 | base64 -d > /tmp/install.sh; bash /tmp/install.sh; echo `$? > /tmp/install.rc; rm -f /tmp/install.sh"
 & wsl.exe -d $distroName -- bash -c $runInstall 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "FEHLER: Paket-Installation fehlgeschlagen (Exit $LASTEXITCODE)." -ForegroundColor Red
+
+# Exit-Code aus der Sandbox lesen (zuverlaessiger als $LASTEXITCODE nach Pipe)
+$installRc = & wsl.exe -d $distroName -- cat /tmp/install.rc 2>&1
+$installRc = "$installRc".Trim() -replace '\D',''
+& wsl.exe -d $distroName -- rm -f /tmp/install.rc 2>&1 | Out-Null
+if ([string]::IsNullOrEmpty($installRc) -or $installRc -ne "0") {
+    Write-Host "FEHLER: Paket-Installation fehlgeschlagen (Exit $installRc)." -ForegroundColor Red
+    Write-Host "        Pruefe die apt-Ausgabe oben. Moegliche Ursache: Netzwerk-Ausfall." -ForegroundColor Yellow
     & wsl.exe --unregister $distroName 2>&1 | Out-Null
     exit 1
 }
 Write-Host "[OK] Pakete installiert" -ForegroundColor Green
 
-# --- 4b. Agent-Binaries verifizieren ---
+# --- 4b. Agent-Binaries verifizieren (HART: Abbruch bei fehlenden Agents) ---
 Write-Host ""
 Write-Host "Verifiziere Agent-Binaries..." -ForegroundColor Cyan
 $missingAgents = @()
@@ -191,7 +198,7 @@ foreach ($aid in $agentIds) {
     $isEnabled = $false
     if ($config -and (Get-Member -InputObject $config -Name $enabledProp -MemberType NoteProperty)) {
         $isEnabled = $config.$enabledProp
-    } elseif ($aid -in @("claude", "codex", "gemini")) {
+    } elseif ($aid -in @("claude", "codex")) {
         $isEnabled = $true
     }
     if (-not $isEnabled) { continue }
@@ -204,13 +211,18 @@ foreach ($aid in $agentIds) {
     if ($check -eq "OK") {
         Write-Host "  [OK] $agentCmd" -ForegroundColor Green
     } else {
-        Write-Host "  [FEHLT] $agentCmd" -ForegroundColor Yellow
+        Write-Host "  [FEHLT] $agentCmd" -ForegroundColor Red
         $missingAgents += $agentCmd
     }
 }
 if ($missingAgents.Count -gt 0) {
-    Write-Host "WARNUNG: Folgende Agents wurden nicht installiert: $($missingAgents -join ', ')" -ForegroundColor Yellow
-    Write-Host "         Deaktiviere sie in config.json oder pruefe die Install-Commands." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "FEHLER: Folgende aktivierte Agents wurden nicht installiert:" -ForegroundColor Red
+    Write-Host "        $($missingAgents -join ', ')" -ForegroundColor Red
+    Write-Host "        Template wird NICHT exportiert — Installation abgebrochen." -ForegroundColor Red
+    Write-Host "        Deaktiviere die Agents in config.json oder pruefe die Install-Commands." -ForegroundColor Yellow
+    & wsl.exe --unregister $distroName 2>&1 | Out-Null
+    exit 1
 }
 
 # --- 5. iptables-Regeln hinterlegen ---
