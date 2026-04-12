@@ -988,10 +988,19 @@ if [ -z "$WIN_TEMP_BASE" ]; then
 fi
 WIN_TEMP_DIR="${WIN_TEMP_BASE}\\agentbox\\${PROJECT_NAME}"
 
-# Zielverzeichnis im Voraus aufraeumen falls existiert
+# Zielverzeichnis im Voraus aufraeumen UND sicherstellen, dass der Pfad
+# existiert. wsl --import wirft Wsl/ERROR_PATH_NOT_FOUND wenn der Parent
+# fehlt — und beim allerersten Run nach sauberem Setup existiert
+# %TEMP%\agentbox\ noch nicht, weil ephemere Distros am Ende unregistered
+# werden und kein Verzeichnis zuruecklassen. Frueher hat das nur deshalb
+# funktioniert, weil Reste aus alten Laeufen den Parent zufaellig stehen
+# liessen — nicht zuverlaessig.
 LINUX_TEMP_DIR=$(wslpath -u "$WIN_TEMP_DIR" 2>/dev/null || echo "")
-if [ -n "$LINUX_TEMP_DIR" ] && [ -d "$LINUX_TEMP_DIR" ]; then
-    rm -rf "$LINUX_TEMP_DIR" 2>/dev/null || true
+if [ -n "$LINUX_TEMP_DIR" ]; then
+    if [ -d "$LINUX_TEMP_DIR" ]; then
+        rm -rf "$LINUX_TEMP_DIR" 2>/dev/null || true
+    fi
+    mkdir -p "$LINUX_TEMP_DIR" 2>/dev/null || true
 fi
 
 echo "[INFO] Import-Ziel: $WIN_TEMP_DIR"
