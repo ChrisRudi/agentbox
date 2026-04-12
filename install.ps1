@@ -513,7 +513,24 @@ swap=$resSwap
     }
 }
 
-# --- 9. Desktop-Shortcut erstellen ---
+# --- 9. Bei fehlgeschlagenem Setup: hier abbrechen, BEVOR Shortcut erstellt wird ---
+# Ein Shortcut auf 'wsl.exe -e bash -li -c agentbox' ohne funktionierende
+# Sandbox-Template waere irrefuehrend — der Doppelklick wuerde nur Fehler zeigen.
+if (-not $setupOk) {
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host " agentbox Installation UNVOLLSTAENDIG   " -ForegroundColor Red
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "win-setup.ps1 ist fehlgeschlagen — Template wurde nicht gebaut." -ForegroundColor Yellow
+    Write-Host "Desktop-Shortcut wurde NICHT erstellt (waere ohne Ziel)." -ForegroundColor Yellow
+    Write-Host "Bitte die Fehlermeldung oben pruefen und install.ps1 erneut ausfuehren." -ForegroundColor Yellow
+    Write-Host "Falls ein Reboot verlangt wurde: zuerst neu starten." -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
+# --- 10. Desktop-Shortcut erstellen (nur bei erfolgreichem Setup) ---
 Write-Host ""
 Write-Host "Erstelle Desktop-Shortcut..." -ForegroundColor Cyan
 
@@ -536,28 +553,16 @@ try {
     Write-Host $_.Exception.Message -ForegroundColor Yellow
 }
 
-# --- 10. Erfolgsmeldung ---
+# --- 10b. Erfolgsmeldung ---
 Write-Host ""
-if ($setupOk) {
-    Write-Host "========================================" -ForegroundColor Green
-    Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Starten:" -ForegroundColor Cyan
-    Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
-    Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
-    Write-Host ""
-} else {
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host " agentbox Installation UNVOLLSTAENDIG   " -ForegroundColor Red
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "win-setup.ps1 ist fehlgeschlagen — Template wurde nicht gebaut." -ForegroundColor Yellow
-    Write-Host "Bitte die Fehlermeldung oben pruefen und install.ps1 erneut ausfuehren." -ForegroundColor Yellow
-    Write-Host "Falls ein Reboot verlangt wurde: zuerst neu starten." -ForegroundColor Yellow
-    Write-Host ""
-    exit 1
-}
+Write-Host "========================================" -ForegroundColor Green
+Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "Starten:" -ForegroundColor Cyan
+Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
+Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
+Write-Host ""
 
 # --- 11. Direkt starten? ---
 Write-Host "Jetzt agentbox starten? [J/n] (5s Timeout = ja)" -ForegroundColor Cyan -NoNewline
