@@ -145,7 +145,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "[1/5] System-Update..."
 apt-get update
-apt-get install -y -qq bash curl wget git iptables ca-certificates
+apt-get install -y -qq bash curl wget git iptables ca-certificates dnsutils
 
 echo "[2/5] Node.js installieren..."
 curl -fsSL __NODEJS_URL__ -o /tmp/nodesource_setup.sh
