@@ -182,13 +182,15 @@ Es werden nur Agenten angezeigt, die in `config.json` **aktiviert** und im Templ
 Der Agent sieht **nur**:
 
 ```
-/workspace/
+/workspace/                    ← Projekt-Root und Startverzeichnis des Agenten
   src/           (read-write)   Dein Code
   assets/        (read-only)    Statische Dateien
   _tasks/        (read-write)   Task-Trigger
   CLAUDE.md      (read-write)   Session-Kontext
   project.json   (read-only)    Konfiguration
 ```
+
+Der Agent startet in `/workspace/`, sodass das komplette Projekt-Layout beim ersten `ls` sichtbar ist. Projekte ohne `src/`-Unterordner bekommen ihren Projekt-Root als `/workspace/src/` bind-gemountet.
 
 Der Agent sieht **nicht**: `/mnt/c/`, OneDrive, `~/.ssh/`, andere Projekte, `_control/`.
 
