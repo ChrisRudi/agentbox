@@ -136,7 +136,8 @@ else
 fi
 
 # --- 4c. Windows-Laufwerke unmounten (Sandbox-Isolation) ---
-# wsl.conf greift erst nach Distro-Neustart, daher hier manuell
+# wsl.conf greift erst nach Distro-Neustart, daher hier manuell.
+# WSL mountet /mnt/c u.U. automatisch wieder — daher am Ende tmpfs ueber /mnt.
 echo ""
 echo "Isoliere Sandbox von Windows-Dateisystem..."
 # Alle /mnt Unterverzeichnisse unmounten (WSL DrvFs Automounts)
@@ -144,15 +145,14 @@ for _mnt in /mnt/*/; do
     umount -f "$_mnt" 2>/dev/null || umount -l "$_mnt" 2>/dev/null || true
     rmdir "$_mnt" 2>/dev/null || true
 done
-# /mnt selbst auch sperren
-umount -f /mnt 2>/dev/null || umount -l /mnt 2>/dev/null || true
-# Sicherstellen dass nichts mehr erreichbar ist
-if [ -d "/mnt/c" ] && ls /mnt/c/ >/dev/null 2>&1; then
-    echo "[WARN] /mnt/c noch erreichbar — versuche erneut"
-    umount -f /mnt/c 2>/dev/null || true
-    mount -t tmpfs tmpfs /mnt -o size=1k,mode=000 2>/dev/null || true
+# tmpfs ueber /mnt — blockiert jeglichen Zugriff und verhindert WSL-Re-Mount
+mount -t tmpfs tmpfs_sandbox /mnt -o size=1k,mode=000,nosuid,nodev,noexec 2>/dev/null || true
+# Verifizieren
+if [ -e /mnt/c/Users ] 2>/dev/null; then
+    echo "[FEHLER] Windows-Laufwerke NICHT isoliert — /mnt/c/Users noch erreichbar!"
+    exit 1
 else
-    echo "[OK] Windows-Laufwerke isoliert"
+    echo "[OK] Windows-Laufwerke isoliert (tmpfs ueber /mnt)"
 fi
 
 # --- 5. iptables-Regeln anwenden ---
