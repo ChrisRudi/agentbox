@@ -450,11 +450,13 @@ if conflict_lines:
 else:
     print('[OK] Kein Konflikt gefunden')
 "@
-    $tmpPy = Join-Path $env:TEMP "agentbox_bashrc_cleanup_$(Get-Random).py"
-    [System.IO.File]::WriteAllText($tmpPy, $cleanupScript, (New-Object System.Text.UTF8Encoding $false))
-    $wslPy = ConvertTo-WslPath $tmpPy
-    & wsl.exe bash -c "python3 '$wslPy' 2>&1" 2>&1 | Out-Host
-    Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
+    # Content per base64 + stdin in /tmp/ der Distro schreiben — vermeidet
+    # den /mnt/c-Roundtrip, bei dem WSL2 gerade frisch geschriebene Dateien
+    # wegen 9P-Sync-Verzoegerung kurzzeitig nicht sieht.
+    $cleanupScript = $cleanupScript -replace "`r", ""
+    $cleanupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($cleanupScript))
+    $runCleanup = "echo $cleanupB64 | base64 -d > /tmp/agentbox_bashrc_cleanup.py && python3 /tmp/agentbox_bashrc_cleanup.py; rc=`$?; rm -f /tmp/agentbox_bashrc_cleanup.py; exit `$rc"
+    & wsl.exe bash -c $runCleanup 2>&1 | ForEach-Object { "$_" } | Out-Host
 }
 
 # Exit-Code-basierte Pruefung: grep -q ist zuverlaessiger als Output-Capture,
@@ -476,12 +478,14 @@ if [ -f "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh" ]; then
 fi
 "@
 
-    # Schreibe den Block sicher ueber eine temporaere Datei
-    $tempBashrc = Join-Path $env:TEMP "agentbox_bashrc_$(Get-Random).tmp"
-    $bashrcBlock | Out-File -FilePath $tempBashrc -Encoding ascii -NoNewline
-    $wslTempPath = ConvertTo-WslPath $tempBashrc
-    & wsl.exe bash -c "cat '$wslTempPath' >> ~/.bashrc" 2>&1
-    Remove-Item -Path $tempBashrc -Force -ErrorAction SilentlyContinue
+    # Block per base64 direkt an wsl.exe pipen — KEINE Temp-Datei auf /mnt/c.
+    # Grund: WSL2 hat einen bekannten 9P-Sync-Bug, bei dem gerade mit Out-File
+    # geschriebene Dateien von Linux-Seite aus ein paar Millisekunden unsichtbar
+    # sind → "cat: /mnt/c/.../xxx.tmp: No such file or directory". base64 + stdin
+    # umgeht das Windows-Filesystem komplett.
+    $bashrcBlock = $bashrcBlock -replace "`r", ""
+    $bashrcB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($bashrcBlock))
+    & wsl.exe bash -c "echo $bashrcB64 | base64 -d >> ~/.bashrc" 2>&1 | ForEach-Object { "$_" } | Out-Null
 
     Write-Host "[OK] .bashrc-Eintrag gesetzt" -ForegroundColor Green
 } else {
@@ -550,15 +554,28 @@ if (-not $setupOk) {
     exit 1
 }
 
-# --- 10. Desktop-Shortcut erstellen (nur bei erfolgreichem Setup) ---
+# --- 10. Desktop-Shortcuts erstellen (nur bei erfolgreichem Setup) ---
 Write-Host ""
-Write-Host "Erstelle Desktop-Shortcut..." -ForegroundColor Cyan
+Write-Host "Erstelle Desktop-Shortcuts..." -ForegroundColor Cyan
 
 $desktopPath = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktopPath "agentbox.lnk"
+$updateShortcutPath = Join-Path $desktopPath "agentbox-installer.lnk"
+
+# Helper: setzt das "Run as administrator"-Flag in einer .lnk-Datei.
+# Offset 0x15 ist das Link-Flags-Byte, Bit 0x20 = RunAsAdministrator.
+# (Quelle: [MS-SHLLINK] Shell Link Binary File Format, LinkFlags)
+function Set-ShortcutRunAsAdmin {
+    param([Parameter(Mandatory)][string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $bytes[0x15] = $bytes[0x15] -bor 0x20
+    [System.IO.File]::WriteAllBytes($Path, $bytes)
+}
 
 try {
     $shell = New-Object -ComObject WScript.Shell
+
+    # 1) Agentbox-Start-Shortcut (laeuft im Normal-User-Kontext, kein UAC).
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = "wsl.exe"
     $shortcut.Arguments = "-e bash -li -c agentbox"
@@ -566,10 +583,25 @@ try {
     $shortcut.Description = "agentbox — Sandboxed AI Agent Runner"
     $shortcut.IconLocation = "wsl.exe,0"
     $shortcut.Save()
-    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
     Write-Host "[OK] Desktop-Shortcut erstellt: $shortcutPath" -ForegroundColor Green
+
+    # 2) Installer/Update-Shortcut: 'irm ... | iex' als Admin (UAC-Prompt).
+    # Verwendung: Doppelklick → UAC → PS laedt frische install.ps1 von GitHub
+    # und fuehrt sie aus (idempotent, macht Update wenn schon installiert).
+    $updater = $shell.CreateShortcut($updateShortcutPath)
+    $updater.TargetPath = "powershell.exe"
+    $updater.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex`""
+    $updater.WorkingDirectory = "%USERPROFILE%"
+    $updater.Description = "agentbox installieren/aktualisieren (als Administrator)"
+    $updater.IconLocation = "powershell.exe,0"
+    $updater.Save()
+    Set-ShortcutRunAsAdmin -Path $updateShortcutPath
+    Write-Host "[OK] Installer-Shortcut erstellt: $updateShortcutPath" -ForegroundColor Green
+    Write-Host "     (Doppelklick fuer Update/Neuinstall — UAC-Prompt)" -ForegroundColor Gray
+
+    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
 } catch {
-    Write-Host "WARNUNG: Desktop-Shortcut konnte nicht erstellt werden." -ForegroundColor Yellow
+    Write-Host "WARNUNG: Desktop-Shortcuts konnten nicht erstellt werden." -ForegroundColor Yellow
     Write-Host $_.Exception.Message -ForegroundColor Yellow
 }
 
