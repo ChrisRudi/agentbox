@@ -66,17 +66,10 @@ if ! id "$SANDBOX_USER" &>/dev/null; then
     echo "[OK] Sandbox-User '$SANDBOX_USER' angelegt"
 fi
 
-# --- Windows-Automount deaktivieren ---
-cat > /etc/wsl.conf << 'EOF'
-[automount]
-enabled = false
-mountFsTab = false
-
-[interop]
-enabled = false
-appendWindowsPath = false
-EOF
-echo "[OK] Windows-Automount deaktiviert"
+# Kein /etc/wsl.conf-Write hier: die Datei greift erst nach Distro-Neustart,
+# und die Sandbox-Distro wird nach der Session verworfen — sie startet nie
+# neu. Die tatsaechliche Isolation vom Host-Dateisystem passiert weiter
+# unten per manuellem `umount -f /mnt/*` + tmpfs-over-/mnt.
 
 # --- Mount-Punkte erstellen ---
 WORKSPACE="/workspace"
@@ -194,7 +187,6 @@ if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
 fi
 
 # --- Windows-Laufwerke unmounten (Sandbox-Isolation) ---
-# wsl.conf greift erst nach Distro-Neustart, daher hier manuell.
 # WSL mountet /mnt/c u.U. automatisch wieder — daher am Ende tmpfs ueber /mnt.
 echo ""
 echo "Isoliere Sandbox von Windows-Dateisystem..."
@@ -403,40 +395,24 @@ fi
 echo ""
 echo "Agent beendet (Exit-Code: $EXIT_CODE)"
 
-# Blockierte IPs aus Kernel-Log extrahieren und als Domains aufloesen
+# Blockierte Pakete aus dem Kernel-Log (unsere LOG-Regel vor dem Final-DROP).
+# Das sind Verbindungen, die NICHT 443/80 auf public IPs waren — also entweder
+# Versuche in private Netze (Host/LAN-Services) oder auf Nicht-Web-Ports.
 BLOCKED_IPS=$(dmesg 2>/dev/null | grep "agentbox-blocked:" | grep -oP 'DST=\K[0-9.]+' | sort -u)
 
 if [ -n "$BLOCKED_IPS" ]; then
     echo ""
-    echo "=== Blockierte Verbindungen ==="
+    echo "=== Blockierte Verbindungsversuche ==="
+    echo "(nicht 443/80 oder in private Netze — Host-Protection-Regeln haben gegriffen)"
     echo ""
-
-    BLOCKED_DOMAINS=""
     for ip in $BLOCKED_IPS; do
-        # Reverse-DNS-Lookup
         domain=$(dig +short -x "$ip" 2>/dev/null | head -1 | sed 's/\.$//')
         if [ -n "$domain" ]; then
             echo "  [BLOCKED] $domain ($ip)"
-            BLOCKED_DOMAINS="$BLOCKED_DOMAINS $domain"
         else
-            echo "  [BLOCKED] $ip (kein Reverse-DNS)"
+            echo "  [BLOCKED] $ip"
         fi
     done
-
-    # Vorschlaege fuer config.json
-    if [ -n "$BLOCKED_DOMAINS" ]; then
-        echo ""
-        echo "Falls Pakete nicht installiert werden konnten, ergaenze"
-        echo "die fehlenden Domains in config.json:"
-        echo ""
-        echo "  Fuer Node.js:  \"firewall_registries_node\""
-        echo "  Fuer Python:   \"firewall_registries_python\""
-        echo "  Fuer AI-APIs:  \"firewall_ai_apis\""
-        echo ""
-        echo "  Blockierte Domains:$BLOCKED_DOMAINS"
-        echo ""
-        echo "Danach: win-setup.ps1 erneut ausfuehren (Template-Rebuild)."
-    fi
 fi
 
 exit $EXIT_CODE

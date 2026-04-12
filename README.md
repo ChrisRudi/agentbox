@@ -194,21 +194,24 @@ The agent sees **only**:
 
 The agent does **not** see: `/mnt/c/`, OneDrive, `~/.ssh/`, other projects, `_control/`.
 
-Mounts use `nosymfollow` + `nodev` + hardlink protection (`sysctl`).
+Directory mounts use `nosymfollow` + `nodev`; hardlink protection is enforced via `sysctl`.
 
-### Network Isolation
+### Network Isolation — What It Actually Does
 
-Via `iptables` — only what's necessary:
+**agentbox protects your machine from the agent, not the internet from the agent.**
+
+iptables rules in the sandbox enforce:
 
 | Allowed | Blocked |
 |---------|---------|
-| AI APIs (configurable in `config.json`) | Everything else |
-| Package registries (auto by project type) | Arbitrary outbound connections |
-| DNS (port 53) | Access to local services |
+| Outbound HTTPS/HTTP to any public IP | Access to private ranges (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `127/8`) |
+| DNS (port 53) | All non-HTTP(S) ports |
 
-Project type `node` → only `registry.npmjs.org`. Project type `python` → only `pypi.org` + `files.pythonhosted.org`. HTML/PowerShell → no package registries.
+The private-range drops are the important bit: they stop the agent from reaching your Windows host, LAN services, metadata endpoints, or other WSL distros. That's the client-protection threat model.
 
-> **Note:** Modern package managers use CDNs and subdomains. The defaults in `config.json` cover the exact domains needed (`registry.npmjs.org`, not just `npmjs.org`). If a package install fails, check `firewall_registries_node` / `firewall_registries_python` in `config.json` and add missing domains.
+**What agentbox does NOT do:** per-domain egress filtering. iptables can't match hostnames reliably because CDNs rotate IPs mid-request, so there's no whitelist enforced on the actual packets. An agent with network access *can* reach any public HTTPS endpoint while a session is running. If that's in your threat model, you need an egress proxy — agentbox doesn't ship one.
+
+The `firewall_ai_apis` / `firewall_registries_node` / `firewall_registries_python` keys in `config.json` are **carryovers from an earlier design** and have **no runtime effect**. They're left in the schema to avoid breaking existing configs — treat them as unused.
 
 ### Resource Limits
 
@@ -225,6 +228,15 @@ The agent **cannot execute anything itself**. It writes a task file, a Windows-s
 - Everything else → **Rejected. No wildcards, no prefix matching.**
 
 Both whitelists are configurable in `config.json`.
+
+### What Persists Across Sessions
+
+The sandbox distro itself is disposable, but two layers on the Windows host survive session boundaries and get bind-mounted into each new sandbox:
+
+- **Package caches**: `_control/cache/npm` and `_control/cache/pip` — so `npm install` / `pip install` don't re-download between sessions. Trade-off: an agent could theoretically poison the cache for a future session.
+- **Per-agent auth dirs**: `%LOCALAPPDATA%\agentbox\auth\{claude,codex,gemini,aider,goose}` — so you don't have to log into each CLI on every session. Each agent gets its own subdir; within a session only the active agent's auth is mounted, so agents can't see each other's tokens.
+
+Delete either tree on the Windows side if you want a fully fresh start.
 
 ## Configuration
 
@@ -243,9 +255,9 @@ All settings live in `config.json` (optional — all values have built-in defaul
 | `resources_watchdog_interval` | `30` | Watchdog check interval (seconds) |
 | `build_whitelist` | 8 commands | Allowed build commands |
 | `deploy_whitelist` | `local`, `github` | Allowed deploy targets |
-| `firewall_ai_apis` | 3 endpoints | Allowed AI API domains |
-| `firewall_registries_node` | `npmjs.org` | Node.js package registries |
-| `firewall_registries_python` | `pypi.org`, `pythonhosted.org` | Python package registries |
+| `firewall_ai_apis` | 3 endpoints | Legacy, no runtime effect (see Network Isolation) |
+| `firewall_registries_node` | `npmjs.org` | Legacy, no runtime effect |
+| `firewall_registries_python` | `pypi.org`, `pythonhosted.org` | Legacy, no runtime effect |
 | `agent_*_enabled` | Big 3 on | Enable/disable agents |
 | `auto_start_timeout` | `5` | Auto-start countdown (seconds) |
 | `auto_update` | `true` | Check for updates at startup |
@@ -311,22 +323,19 @@ agentbox --compare 20260411_143000_claude_MyProject 20260411_150000_codex_MyProj
 
 This is useful for evaluating which agent handles specific tasks best, or for verifying that a refactoring produces equivalent results across agents.
 
-## Firewall Diagnostics
+## Post-Session Diagnostics
 
-After each session, agentbox shows **blocked network connections** with domain names and actionable suggestions:
+After each session, agentbox lists connection attempts the sandbox host-protection rules rejected — anything that tried to go somewhere other than HTTPS/HTTP on a public IP:
 
 ```
-=== Blocked Connections ===
+=== Blocked connection attempts ===
+(not 443/80 or to private networks — host-protection rules matched)
 
-  [BLOCKED] cdn.example.com (203.0.113.42)
-  [BLOCKED] assets.npmjs.org (198.51.100.7)
-
-Add missing domains to config.json:
-  For Node.js:  "firewall_registries_node"
-  For Python:   "firewall_registries_python"
+  [BLOCKED] internal-service.local (10.0.0.42)
+  [BLOCKED] 203.0.113.42
 ```
 
-This eliminates guesswork when `npm install` or `pip install` fails due to CDN domains not being whitelisted.
+Typical entries: the agent tried to reach your Windows host (`172.x`, `127.0.0.1`), your LAN (`192.168.x`), or a non-web port. If you see hits on a domain you actually need — e.g. a private artifact mirror — the current build of agentbox has no per-host whitelist knob; you'd need to loosen the iptables rules in `wsl-sandbox-init.sh` yourself.
 
 ## File Structure
 
