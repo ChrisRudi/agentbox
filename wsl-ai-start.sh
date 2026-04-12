@@ -612,6 +612,38 @@ fi
 CACHE_DIR="$CONTROL_DIR/cache"
 mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/pip"
 
+# --- 8c. Auth-State anlegen (persistiert Agent-Logins ueber Sessions) ---
+# Problem: jede agentbox-Session importiert eine frische Sandbox-Distro
+# und unregistriert sie hinterher. /home/$SANDBOX_USER/.claude/ (wo Claude
+# Code seine OAuth-Credentials und Konfiguration ablegt) ist damit jedes
+# Mal leer → der User muesste bei jedem Start neu einloggen.
+#
+# Loesung: wir halten den Auth-State auf Host-Seite unter
+# %LOCALAPPDATA%\agentbox\auth\<agent>\ vor und bind-mounten ihn in die
+# Sandbox. Bewusst NICHT unter _control/cache/, weil _control in OneDrive
+# liegt — OAuth-Tokens haben in einem Cloud-synchronisierten Ordner nichts
+# verloren.
+AUTH_BASE=""
+_win_lad=$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
+if [ -n "$_win_lad" ]; then
+    _lin_lad=$(wslpath -u "$_win_lad" 2>/dev/null || true)
+    if [ -n "$_lin_lad" ] && [ -d "$_lin_lad" ]; then
+        AUTH_BASE="$_lin_lad/agentbox/auth"
+        mkdir -p "$AUTH_BASE/claude"
+        # SYSTEM_META_PROMPT.md als globale Claude-Code-Memory in den
+        # persistenten Ordner schreiben. Ueberschreiben ist bewusst: das
+        # ist der agentbox-Vertrag, nicht user-editierbar — bei einem
+        # agentbox-Update soll der Agent auch die neue Version sehen.
+        if [ -f /etc/agentbox/SYSTEM_META_PROMPT.md ]; then
+            cp /etc/agentbox/SYSTEM_META_PROMPT.md "$AUTH_BASE/claude/CLAUDE.md" 2>/dev/null || true
+        fi
+        log_ok "Auth-Cache: $AUTH_BASE (Claude-Login persistiert)"
+    fi
+fi
+if [ -z "$AUTH_BASE" ]; then
+    log_warn "LOCALAPPDATA nicht ermittelbar — Claude-Login wird NICHT persistiert"
+fi
+
 # --- 9. Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
 log_ok "Alte Status-Dateien bereinigt"
@@ -988,7 +1020,8 @@ fi
 # Argumentpassing durch wsl.exe teilweise verschluckt)
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
-    "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON"
+    "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON" \
+    "$AUTH_BASE"
 EXIT_CODE=$?
 
 # --- 17. Watchdog beenden ---

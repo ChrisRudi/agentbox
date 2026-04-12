@@ -14,6 +14,7 @@ SANDBOX_USER="${4:-agent}"
 AI_API_DOMAINS="${5:-api.anthropic.com api.openai.com generativelanguage.googleapis.com}"
 CFG_REG_NODE="${6:-registry.npmjs.org}"
 CFG_REG_PYTHON="${7:-pypi.org files.pythonhosted.org}"
+AUTH_BASE_IN="${8:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     echo "FEHLER: Kein Projektpfad angegeben."
@@ -44,6 +45,7 @@ _to_linux_path() {
 
 PROJECT_PATH=$(_to_linux_path "$WIN_PROJECT_PATH")
 CACHE_PATH=$(_to_linux_path "$WIN_CACHE_PATH")
+AUTH_BASE=$(_to_linux_path "$AUTH_BASE_IN")
 
 echo "=== agentbox Sandbox-Init ==="
 echo "Projekt: $PROJECT_PATH"
@@ -150,6 +152,27 @@ if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
     fi
 else
     echo "[INFO] Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
+fi
+
+# --- 4b2. Auth-State fuer Claude bind-mounten (persistiert Logins) ---
+# Claude Code legt OAuth-Tokens, Konfig und globale Memory unter
+# /home/$SANDBOX_USER/.claude/ ab. Ohne Persistierung waere dieser Ordner
+# in jeder ephemeren Sandbox-Distro leer → bei jedem Start neuer Login.
+# Mit dem Bind-Mount bleibt der Stand ueber Sessions erhalten.
+# Flag fuer Schritt 7: unterdruecken dann das Kopieren von CLAUDE.md, weil
+# die Datei bereits im persistenten Ordner liegt (von wsl-ai-start.sh).
+CLAUDE_AUTH_PERSISTED=false
+if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE/claude" ]; then
+    CLAUDE_STATE="/home/$SANDBOX_USER/.claude"
+    mkdir -p "$CLAUDE_STATE"
+    if mount --bind "$AUTH_BASE/claude" "$CLAUDE_STATE" 2>/dev/null; then
+        mount -o remount,nosymfollow,nodev "$CLAUDE_STATE" 2>/dev/null || true
+        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$CLAUDE_STATE" 2>/dev/null || true
+        CLAUDE_AUTH_PERSISTED=true
+        echo "[OK] Mount: Claude Auth-State (persistent — Login bleibt erhalten)"
+    else
+        echo "[WARN] Claude Auth-State konnte nicht gemountet werden — Login wird nicht persistiert"
+    fi
 fi
 
 # --- 4c. Windows-Laufwerke unmounten (Sandbox-Isolation) ---
@@ -305,15 +328,19 @@ if [ -f "$META_PROMPT" ]; then
     cp "$META_PROMPT" "$WORKSPACE/SYSTEM_META_PROMPT.md"
     chown "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE/SYSTEM_META_PROMPT.md"
 
-    # Zusaetzlich als globale Claude-Code-Memory ablegen, damit der Agent
-    # den Sandbox-Vertrag (keine Netzwerk-Recherche, /workspace-Layout,
-    # _tasks/-Protokoll) beim Start automatisch im Kontext hat, ohne dass
-    # der User in der CLAUDE.md darauf verweisen muss. Claude Code laedt
-    # ~/.claude/CLAUDE.md als globale User-Memory vor der Projekt-Memory.
-    CLAUDE_HOME="/home/$SANDBOX_USER/.claude"
-    mkdir -p "$CLAUDE_HOME"
-    cp "$META_PROMPT" "$CLAUDE_HOME/CLAUDE.md"
-    chown -R "$SANDBOX_USER:$SANDBOX_USER" "$CLAUDE_HOME"
+    # Globale Claude-Code-Memory: wenn Auth-State persistiert ist, liegt
+    # CLAUDE.md bereits im gemounteten Ordner (wsl-ai-start.sh hat sie vor
+    # dem Sandbox-Start reingeschrieben) und wir ueberschreiben sie NICHT —
+    # sonst wuerden wir jeden Persistenz-Zyklus die User-Session-History
+    # verwerfen. Im Fallback (kein AUTH_BASE) schreiben wir sie direkt in
+    # den ephemeren ~/.claude/-Ordner, damit Claude den Sandbox-Vertrag
+    # wenigstens waehrend der aktuellen Session sieht.
+    if [ "$CLAUDE_AUTH_PERSISTED" != "true" ]; then
+        CLAUDE_HOME="/home/$SANDBOX_USER/.claude"
+        mkdir -p "$CLAUDE_HOME"
+        cp "$META_PROMPT" "$CLAUDE_HOME/CLAUDE.md"
+        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$CLAUDE_HOME"
+    fi
 fi
 
 # --- 8. Workspace-Berechtigungen setzen ---
