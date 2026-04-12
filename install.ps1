@@ -113,7 +113,7 @@ Write-Host "=== agentbox Installer ===" -ForegroundColor Cyan
 Write-Host "Sandboxed AI Agent Runner fuer Windows + WSL2" -ForegroundColor Gray
 Write-Host ""
 
-# --- 1. Admin-Rechte pruefen ---
+# --- Admin-Rechte pruefen ---
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
 )
@@ -124,7 +124,7 @@ if (-not $isAdmin) {
 }
 Write-Host "[OK] Admin-Rechte vorhanden" -ForegroundColor Green
 
-# --- 2. Windows-Version pruefen ---
+# --- Windows-Version pruefen ---
 $osVersion = [System.Environment]::OSVersion.Version
 $osBuild = $osVersion.Build
 $osName = (Get-CimInstance Win32_OperatingSystem).Caption
@@ -138,7 +138,7 @@ if ($osBuild -lt 19041) {
 }
 Write-Host "[OK] $osName (Build $osBuild)" -ForegroundColor Green
 
-# --- 2b. WSL2 pruefen und bei Bedarf installieren ---
+# --- WSL2 pruefen und bei Bedarf installieren ---
 $wslReady = $false
 try {
     $wslOutput = & wsl.exe --status 2>&1
@@ -246,7 +246,7 @@ if (-not $wslReady) {
     Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 }
 
-# --- 3. Git pruefen (optional — wird fuer ZIP-Fallback nicht benoetigt) ---
+# --- Git pruefen (optional — wird fuer ZIP-Fallback nicht benoetigt) ---
 $hasGit = $false
 try {
     $gitVersion = & git.exe --version 2>&1
@@ -259,7 +259,7 @@ if (-not $hasGit) {
     Write-Host "[INFO] Git nicht gefunden — Installation per ZIP-Download." -ForegroundColor Gray
 }
 
-# --- 4. Zielordner bestimmen ---
+# --- Zielordner bestimmen ---
 # Default: OneDrive\AI_Projects_Source (kann per config.json ueberschrieben werden)
 $baseDir = $null
 $controlDir = $null
@@ -301,7 +301,7 @@ if (-not (Test-Path $baseDir)) {
     Write-Host "[OK] Basisordner erstellt: $baseDir" -ForegroundColor Green
 }
 
-# --- 5. Update oder Neuinstallation ---
+# --- Update oder Neuinstallation ---
 $repoUrl = "https://github.com/chrisrudi/agentbox.git"
 $zipUrl = "https://github.com/ChrisRudi/agentbox/archive/refs/heads/main.zip"
 $versionUrl = "https://raw.githubusercontent.com/ChrisRudi/agentbox/main/.version"
@@ -447,7 +447,7 @@ if ($isInstalled) {
     }
 }
 
-# --- 6. win-setup.ps1 ausfuehren ---
+# --- win-setup.ps1 ausfuehren ---
 $setupScript = Join-Path $controlDir "win-setup.ps1"
 if (-not (Test-Path $setupScript)) {
     Write-Host "FEHLER: win-setup.ps1 nicht gefunden in $controlDir" -ForegroundColor Red
@@ -465,7 +465,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNUNG: win-setup.ps1 meldete Fehler. Bitte manuell pruefen." -ForegroundColor Yellow
 }
 
-# --- 6b. Host-Distro sicherstellen ---
+# --- Host-Distro sicherstellen ---
 # agentbox selbst laeuft ephemer (jede Session = eigene Sandbox-Distro, die
 # hinterher verworfen wird). Fuer die `.bashrc`-Integration und den Desktop-
 # Shortcut brauchen wir aber eine *persistente* Default-Distro, in der
@@ -494,7 +494,7 @@ if ($setupOk) {
     }
 }
 
-# --- 7. WSL .bashrc-Eintrag setzen ---
+# --- WSL .bashrc-Eintrag setzen ---
 Write-Host ""
 Write-Host "Konfiguriere WSL-Integration..." -ForegroundColor Cyan
 
@@ -607,7 +607,7 @@ fi
     Write-Host "[OK] .bashrc-Eintrag bereits vorhanden" -ForegroundColor Green
 }
 
-# --- 8. WSL Ressourcen-Limits (.wslconfig) ---
+# --- WSL Ressourcen-Limits (.wslconfig) ---
 Write-Host ""
 Write-Host "Pruefe WSL Ressourcen-Limits..." -ForegroundColor Cyan
 
@@ -652,7 +652,7 @@ swap=$resSwap
     }
 }
 
-# --- 9. Bei fehlgeschlagenem Setup: hier abbrechen, BEVOR Shortcut erstellt wird ---
+# --- Bei fehlgeschlagenem Setup: hier abbrechen, BEVOR Shortcut erstellt wird ---
 # Ein Shortcut auf 'wsl.exe -e bash -li -c agentbox' ohne funktionierende
 # Sandbox-Template waere irrefuehrend — der Doppelklick wuerde nur Fehler zeigen.
 if (-not $setupOk) {
@@ -669,7 +669,7 @@ if (-not $setupOk) {
     exit 1
 }
 
-# --- 10. Desktop-Shortcuts erstellen (nur bei erfolgreichem Setup) ---
+# --- Desktop-Shortcuts erstellen (nur bei erfolgreichem Setup) ---
 Write-Host ""
 Write-Host "Erstelle Desktop-Shortcuts..." -ForegroundColor Cyan
 
@@ -720,7 +720,7 @@ try {
     Write-Host $_.Exception.Message -ForegroundColor Yellow
 }
 
-# --- 10b. Erfolgsmeldung ---
+# --- Erfolgsmeldung ---
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green
@@ -731,7 +731,7 @@ Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
 Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
 Write-Host ""
 
-# --- 11. Direkt starten? ---
+# --- Direkt starten? ---
 Write-Host "Jetzt agentbox starten? [J/n] (5s Timeout = ja)" -ForegroundColor Cyan -NoNewline
 $startNow = $true
 $timeoutSec = 5

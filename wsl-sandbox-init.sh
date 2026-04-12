@@ -52,7 +52,7 @@ echo "Projekt: $PROJECT_PATH"
 echo "Agent: $AGENT_CMD"
 echo ""
 
-# --- 1. Sandbox-User anlegen (kein sudo) ---
+# --- Sandbox-User anlegen (kein sudo) ---
 # SANDBOX_USER kommt aus Parameter $4 (Default: "agent")
 # Sicherheit: root und system-User verbieten
 if [ "$SANDBOX_USER" = "root" ] || [ "$(id -u "$SANDBOX_USER" 2>/dev/null)" = "0" ] 2>/dev/null; then
@@ -66,7 +66,7 @@ if ! id "$SANDBOX_USER" &>/dev/null; then
     echo "[OK] Sandbox-User '$SANDBOX_USER' angelegt"
 fi
 
-# --- 2. Windows-Automount deaktivieren ---
+# --- Windows-Automount deaktivieren ---
 cat > /etc/wsl.conf << 'EOF'
 [automount]
 enabled = false
@@ -78,13 +78,13 @@ appendWindowsPath = false
 EOF
 echo "[OK] Windows-Automount deaktiviert"
 
-# --- 3. Mount-Punkte erstellen ---
+# --- Mount-Punkte erstellen ---
 WORKSPACE="/workspace"
 mkdir -p "$WORKSPACE/src"
 mkdir -p "$WORKSPACE/assets"
 mkdir -p "$WORKSPACE/_tasks"
 
-# --- 4. Bind-Mounts mit nosymfollow ---
+# --- Bind-Mounts mit nosymfollow ---
 
 # src/ (read-write)
 if [ -d "$PROJECT_PATH/src" ]; then
@@ -129,7 +129,7 @@ if [ -f "$PROJECT_PATH/project.json" ]; then
     echo "[OK] Mount: project.json (read-only)"
 fi
 
-# --- 4b. Paket-Cache mounten (persistiert ueber Sessions) ---
+# --- Paket-Cache mounten (persistiert ueber Sessions) ---
 if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
     # npm-Cache
     if [ -d "$CACHE_PATH/npm" ]; then
@@ -154,7 +154,7 @@ else
     echo "[INFO] Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
 fi
 
-# --- 4b2. Auth-State der Agent-CLIs bind-mounten (persistiert Logins) ---
+# --- Auth-State der Agent-CLIs bind-mounten (persistiert Logins) ---
 # Jede Agent-CLI legt OAuth/API-Keys und Konfig in einem eigenen Home-
 # relativen Ordner ab. Ohne Persistierung waere der Ordner in jeder
 # ephemeren Sandbox-Distro leer → bei jedem Start muesste der User neu
@@ -179,9 +179,9 @@ _auth_mount_agent() {
     return 1
 }
 
-# Flag fuer Schritt 7: unterdruecken dann das Kopieren von CLAUDE.md,
-# weil die Datei im gemounteten Claude-Ordner bereits liegt und wir die
-# User-Session-History nicht ueberschreiben wollen.
+# Flag fuer den spaeteren SYSTEM_META_PROMPT.md-Kopier-Schritt: unterdrueckt
+# dort das Kopieren von CLAUDE.md, weil die Datei im gemounteten Claude-
+# Ordner bereits liegt und wir die User-Session-History nicht ueberschreiben.
 CLAUDE_AUTH_PERSISTED=false
 if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
     if _auth_mount_agent claude ".claude"; then
@@ -193,7 +193,7 @@ if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
     _auth_mount_agent goose  ".config/goose" || true
 fi
 
-# --- 4c. Windows-Laufwerke unmounten (Sandbox-Isolation) ---
+# --- Windows-Laufwerke unmounten (Sandbox-Isolation) ---
 # wsl.conf greift erst nach Distro-Neustart, daher hier manuell.
 # WSL mountet /mnt/c u.U. automatisch wieder — daher am Ende tmpfs ueber /mnt.
 echo ""
@@ -213,7 +213,7 @@ else
     echo "[OK] Windows-Laufwerke isoliert (tmpfs ueber /mnt)"
 fi
 
-# --- 4d. DNS-Fallback sicherstellen ---
+# --- DNS-Fallback sicherstellen ---
 # WSL2 generiert /etc/resolv.conf dynamisch, aber in einer importierten Distro
 # mit modifiziertem wsl.conf kann das fehlen. Wir setzen einen expliziten Fallback.
 echo ""
@@ -251,7 +251,7 @@ else
     sed 's/^/       /' /etc/resolv.conf
 fi
 
-# --- 5. iptables-Regeln anwenden ---
+# --- iptables-Regeln anwenden ---
 echo ""
 echo "Wende Firewall-Regeln an..."
 
@@ -319,7 +319,7 @@ iptables -A OUTPUT -j DROP 2>/dev/null || true
 
 echo "[OK] Firewall-Regeln angewendet (HTTPS erlaubt, private Netze blockiert)"
 
-# --- 5b. Konnektivitaets-Test: beide Anthropic-Hosts ---
+# --- Konnektivitaets-Test: beide Anthropic-Hosts ---
 echo ""
 echo "Teste Netzwerk-Konnektivitaet..."
 for _host in api.anthropic.com platform.claude.com; do
@@ -330,7 +330,7 @@ for _host in api.anthropic.com platform.claude.com; do
     fi
 done
 
-# --- 6. CLI-Update-Check (schnell, max 10s) ---
+# --- CLI-Update-Check (schnell, max 10s) ---
 echo ""
 echo "Pruefe CLI-Version..."
 
@@ -340,7 +340,7 @@ else
     echo "[WARN] Agent '$AGENT_CMD' nicht gefunden — ist er installiert?"
 fi
 
-# --- 7. SYSTEM_META_PROMPT.md kopieren falls vorhanden ---
+# --- SYSTEM_META_PROMPT.md kopieren falls vorhanden ---
 META_PROMPT="/etc/agentbox/SYSTEM_META_PROMPT.md"
 if [ -f "$META_PROMPT" ]; then
     cp "$META_PROMPT" "$WORKSPACE/SYSTEM_META_PROMPT.md"
@@ -361,10 +361,10 @@ if [ -f "$META_PROMPT" ]; then
     fi
 fi
 
-# --- 8. Workspace-Berechtigungen setzen ---
+# --- Workspace-Berechtigungen setzen ---
 chown -R "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE" 2>/dev/null || true
 
-# --- 9. Agent starten als Sandbox-User ---
+# --- Agent starten als Sandbox-User ---
 # Startverzeichnis: /workspace/src — dort liegt der Projektcode. Claude Code
 # findet CLAUDE.md und project.json per Parent-Directory-Traversal auf
 # /workspace automatisch, also ohne Funktionsverlust.
@@ -399,7 +399,7 @@ else
     exit 1
 fi
 
-# --- 10. Blockierte Verbindungen analysieren ---
+# --- Blockierte Verbindungen analysieren ---
 echo ""
 echo "Agent beendet (Exit-Code: $EXIT_CODE)"
 

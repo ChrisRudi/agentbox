@@ -34,7 +34,7 @@ try {
     Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
 }
 
-# --- 1. WSL2 pruefen ---
+# --- WSL2 pruefen ---
 try {
     $wslOutput = & wsl.exe --status 2>&1
     if ($LASTEXITCODE -ne 0) { throw "WSL nicht aktiv" }
@@ -44,7 +44,7 @@ try {
 }
 Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 
-# --- 1b. Template-Rebuild noetig? ---
+# --- Template-Rebuild noetig? ---
 # Hash aus config.json (agent_*, *_url). Version absichtlich NICHT enthalten,
 # damit code-only Updates (z.B. wsl-sandbox-init.sh, install.ps1) keinen
 # teuren Template-Rebuild ausloesen. Template muss nur neu wenn sich Pakete
@@ -127,7 +127,7 @@ if ((Test-Path $templatePath) -and (Test-Path $configHashFile)) {
 
 if (-not $agentboxSkipBuild) {
 
-# --- 2. Ubuntu-Minimal herunterladen ---
+# --- Ubuntu-Minimal herunterladen ---
 Write-Host ""
 Write-Host "Lade Ubuntu-Minimal herunter..." -ForegroundColor Cyan
 
@@ -155,7 +155,7 @@ if (-not (Test-Path $downloadPath)) {
     Write-Host "[OK] Ubuntu-Minimal bereits vorhanden (Cache)" -ForegroundColor Green
 }
 
-# --- 3. Temporaere Distro importieren ---
+# --- Temporaere Distro importieren ---
 Write-Host ""
 Write-Host "Importiere temporaere Distro fuer Template-Build..." -ForegroundColor Cyan
 
@@ -196,7 +196,7 @@ if ($importExit -ne 0) {
 }
 Write-Host "[OK] Temporaere Distro importiert" -ForegroundColor Green
 
-# --- 4. Pakete installieren ---
+# --- Pakete installieren ---
 Write-Host ""
 Write-Host "Installiere Pakete in der Template-Distro..." -ForegroundColor Cyan
 
@@ -321,7 +321,7 @@ if ([string]::IsNullOrEmpty($installRc) -or $installRc -ne "0") {
 }
 Write-Host "[OK] Pakete installiert" -ForegroundColor Green
 
-# --- 4b. Agent-Binaries verifizieren (HART: Abbruch bei fehlenden Agents) ---
+# --- Agent-Binaries verifizieren (HART: Abbruch bei fehlenden Agents) ---
 Write-Host ""
 Write-Host "Verifiziere Agent-Binaries..." -ForegroundColor Cyan
 $missingAgents = @()
@@ -358,9 +358,9 @@ if ($missingAgents.Count -gt 0) {
     exit 1
 }
 
-# --- 5. Sysctl-Hardening ---
+# --- Sysctl-Hardening ---
 # (Kein Template-Firewall mehr: die iptables-Regeln baut wsl-sandbox-init.sh
-# fresh pro Session aus den Config-Parametern — siehe dortigen Abschnitt 5.)
+# fresh pro Session aus den Config-Parametern.)
 Write-Host "Setze Sysctl-Hardening..." -ForegroundColor Cyan
 
 $sysctlContent = "# agentbox — Hardlink- und Symlink-Schutz`nfs.protected_hardlinks = 1`nfs.protected_symlinks = 1"
@@ -369,7 +369,7 @@ $sysctlCmd = "echo $sysctlB64 | base64 -d >> /etc/sysctl.conf && sysctl -p > /de
 & wsl.exe -d $distroName -- bash -c $sysctlCmd 2>&1 | ForEach-Object { "$_" } | Out-Null
 Write-Host "[OK] Sysctl-Hardening gesetzt" -ForegroundColor Green
 
-# --- 6. SYSTEM_META_PROMPT.md in Distro kopieren ---
+# --- SYSTEM_META_PROMPT.md in Distro kopieren ---
 Write-Host "Kopiere SYSTEM_META_PROMPT.md..." -ForegroundColor Cyan
 
 $metaPromptSrc = Join-Path $scriptDir "SYSTEM_META_PROMPT.md"
@@ -383,7 +383,7 @@ if (Test-Path $metaPromptSrc) {
     Write-Host "WARNUNG: SYSTEM_META_PROMPT.md nicht gefunden in $scriptDir" -ForegroundColor Yellow
 }
 
-# --- 7. Template exportieren ---
+# --- Template exportieren ---
 Write-Host ""
 Write-Host "Exportiere Template..." -ForegroundColor Cyan
 
@@ -408,7 +408,7 @@ try {
 $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
 Write-Host "[OK] Template exportiert: $templatePath ($templateSize MB)" -ForegroundColor Green
 
-# --- 8. Temporaere Distro entfernen ---
+# --- Temporaere Distro entfernen ---
 Write-Host "Entferne temporaere Build-Distro..." -ForegroundColor Cyan
 & wsl.exe --unregister $distroName 2>&1 | Out-Null
 if (Test-Path $tempSetup) {
@@ -416,7 +416,7 @@ if (Test-Path $tempSetup) {
 }
 Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 
-# --- 9. Event-Source + Scheduled Task registrieren ---
+# --- Event-Source + Scheduled Task registrieren ---
 Write-Host ""
 Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
 

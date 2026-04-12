@@ -200,7 +200,7 @@ _wsl_distro_exists() {
     wsl.exe -l -q 2>/dev/null | tr -d '\000\r' | grep -Fxq "$1"
 }
 
-# --- 1. Auto-Update pruefen ---
+# --- Auto-Update pruefen ---
 _auto_update=$(cfg_get "auto_update" "true")
 _update_interval=$(cfg_get "auto_update_interval_hours" "24")
 # Validierung: Intervall muss 1-999 sein
@@ -351,14 +351,14 @@ except:
     fi
 fi
 
-# --- 2. Template pruefen ---
+# --- Template pruefen ---
 if [ ! -f "$TEMPLATE_PATH" ]; then
     log_error "template.tar.gz nicht gefunden: $TEMPLATE_PATH"
     echo "Bitte zuerst win-setup.ps1 als Admin in PowerShell ausfuehren."
     exit 1
 fi
 
-# --- 3. Projektordner scannen ---
+# --- Projektordner scannen ---
 echo ""
 echo -e "${CYAN}=== agentbox ===${NC}"
 echo ""
@@ -391,7 +391,7 @@ if [ ${#projects[@]} -eq 0 ]; then
     exit 1
 fi
 
-# --- 4. Projekt auswaehlen ---
+# --- Projekt auswaehlen ---
 # Auto-Select wenn nur eine Option vorhanden
 if [ ${#projects[@]} -eq 1 ]; then
     PROJECT_DIR="${projects[0]}"
@@ -422,7 +422,7 @@ else
     log_ok "Projekt: $PROJECT_NAME"
 fi
 
-# --- 4b. OneDrive Files-On-Demand: Projektordner lokal pinnen + hydrieren ---
+# --- OneDrive Files-On-Demand: Projektordner lokal pinnen + hydrieren ---
 # Wenn das Projekt unter OneDrive liegt, sind Dateien haeufig nur als Cloud-
 # Only-Placeholder vorhanden (Reparse-Points mit RECALL_ON_DATA_ACCESS). Die
 # spaeteren bind-Mounts in die Sandbox-Distro koennen solche Placeholder
@@ -531,7 +531,7 @@ if [[ "$_pd_lower" == */onedrive/* ]] || [[ "$_pd_lower" == */onedrive\ * ]]; th
     esac
 fi
 
-# --- 5. project.json pruefen/generieren ---
+# --- project.json pruefen/generieren ---
 PROJECT_JSON="$PROJECT_DIR/project.json"
 
 if [ ! -f "$PROJECT_JSON" ]; then
@@ -588,7 +588,7 @@ PJEOF
     log_ok "project.json generiert"
 fi
 
-# --- 6. CLAUDE.md generieren falls nicht vorhanden ---
+# --- CLAUDE.md generieren falls nicht vorhanden ---
 CLAUDE_MD="$PROJECT_DIR/CLAUDE.md"
 
 if [ ! -f "$CLAUDE_MD" ]; then
@@ -608,21 +608,21 @@ CMDEOF
     log_ok "CLAUDE.md erstellt"
 fi
 
-# --- 7. CLAUDE.md Backup ---
+# --- CLAUDE.md Backup ---
 cp "$CLAUDE_MD" "${CLAUDE_MD}.bak"
 log_ok "CLAUDE.md Backup erstellt"
 
-# --- 8. _tasks/ Ordner anlegen ---
+# --- _tasks/ Ordner anlegen ---
 TASKS_DIR="$PROJECT_DIR/_tasks"
 if [ ! -d "$TASKS_DIR" ]; then
     mkdir -p "$TASKS_DIR"
 fi
 
-# --- 8b. Paket-Cache anlegen (persistiert ueber Sessions) ---
+# --- Paket-Cache anlegen (persistiert ueber Sessions) ---
 CACHE_DIR="$CONTROL_DIR/cache"
 mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/pip"
 
-# --- 8c. Auth-State anlegen (persistiert Agent-Logins ueber Sessions) ---
+# --- Auth-State anlegen (persistiert Agent-Logins ueber Sessions) ---
 # Problem: jede agentbox-Session importiert eine frische Sandbox-Distro
 # und unregistriert sie hinterher. Die Auth-Ordner der Agent-CLIs
 # (~/.claude/, ~/.codex/, ~/.gemini/ etc.) sind damit jedes Mal leer →
@@ -662,11 +662,11 @@ if [ -z "$AUTH_BASE" ]; then
     log_warn "LOCALAPPDATA nicht ermittelbar — Agent-Logins werden NICHT persistiert"
 fi
 
-# --- 9. Alte status_*.json loeschen ---
+# --- Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
 log_ok "Alte Status-Dateien bereinigt"
 
-# --- 10. Agent auswaehlen (mit Config-Menue) ---
+# --- Agent auswaehlen (mit Config-Menue) ---
 # Hilfsfunktion: aktivierte Agents aus config.json laden
 _load_enabled_agents() {
     agents=()
@@ -845,7 +845,7 @@ while true; do
     break
 done
 
-# --- 11. Session-Lock pruefen ---
+# --- Session-Lock pruefen ---
 DISTRO_NAME="agentbox-${PROJECT_NAME}"
 
 if _wsl_distro_exists "$DISTRO_NAME"; then
@@ -855,7 +855,7 @@ if _wsl_distro_exists "$DISTRO_NAME"; then
     exit 1
 fi
 
-# --- 12. Session-Snapshot erstellen (fuer Replay-Modus) ---
+# --- Session-Snapshot erstellen (fuer Replay-Modus) ---
 SESSIONS_DIR="$CONTROL_DIR/sessions"
 SESSION_ID="$(date +%Y%m%d_%H%M%S)_${AGENT_CMD}_${PROJECT_NAME}"
 SESSION_DIR="$SESSIONS_DIR/$SESSION_ID"
@@ -920,7 +920,7 @@ METAEOF
 
 log_ok "Session-Snapshot erstellt: $SESSION_ID"
 
-# --- 13. Sandbox-Distro importieren ---
+# --- Sandbox-Distro importieren ---
 echo ""
 log_info "Importiere Sandbox-Distro..."
 
@@ -958,12 +958,12 @@ if ! wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1; then
 fi
 log_ok "Sandbox-Distro importiert: $DISTRO_NAME"
 
-# --- 14. Sandbox-Init-Skript kopieren ---
+# --- Sandbox-Init-Skript kopieren ---
 log_info "Kopiere Sandbox-Init-Skript..."
 wsl.exe -d "$DISTRO_NAME" -- bash -c "cat > /sandbox-init.sh" < "$SANDBOX_INIT"
 wsl.exe -d "$DISTRO_NAME" -- chmod +x /sandbox-init.sh
 
-# --- 15. RAM-Watchdog im Hintergrund starten ---
+# --- RAM-Watchdog im Hintergrund starten ---
 WATCHDOG_PID=""
 (
     RAM_WARN_THRESHOLD=$(cfg_get "resources_ram_warn_percent" "90")
@@ -1014,7 +1014,7 @@ Agent eventuell in einer Endlosschleife?', \
 ) &
 WATCHDOG_PID=$!
 
-# --- 16. Sandbox starten ---
+# --- Sandbox starten ---
 echo ""
 echo -e "${GREEN}=== Starte $AGENT_NAME fuer $PROJECT_NAME ===${NC}"
 echo ""
@@ -1040,13 +1040,13 @@ wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON" \
     "$AUTH_BASE" || EXIT_CODE=$?
 
-# --- 17. Watchdog beenden ---
+# --- Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then
     kill "$WATCHDOG_PID" 2>/dev/null || true
     wait "$WATCHDOG_PID" 2>/dev/null || true
 fi
 
-# --- 18. Session-Diff erfassen ---
+# --- Session-Diff erfassen ---
 if [ -d "$SESSION_DIR" ] && [ -f "$SESSION_DIR/snapshot.tar.gz" ]; then
     _diff_tmp="/tmp/agentbox_diff_$$"
     mkdir -p "$_diff_tmp"
@@ -1071,7 +1071,7 @@ if [ -d "$SESSION_DIR" ] && [ -f "$SESSION_DIR/snapshot.tar.gz" ]; then
     rm -rf "$_diff_tmp"
 fi
 
-# --- 19. Sandbox entfernen ---
+# --- Sandbox entfernen ---
 echo ""
 log_info "Entferne Sandbox-Distro..."
 wsl.exe --unregister "$DISTRO_NAME" 2>/dev/null || true
