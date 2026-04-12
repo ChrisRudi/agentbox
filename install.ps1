@@ -33,6 +33,81 @@ function ConvertTo-WslPath {
     return $p
 }
 
+# --- WSL-Distro-Inventar ---
+# Liefert die registrierten Distros als Array (ohne '*' Default-Marker und
+# ohne die ephemere `agentbox-template-build`-Build-Distro). `wsl -l -q`
+# schreibt je nach Windows-Version UTF-16LE mit BOM und fuegt NUL-Bytes ein;
+# wir saeubern die Ausgabe rigoros, damit der String-Vergleich zuverlaessig ist.
+# Liefert leeres Array, wenn WSL keine Distros kennt — damit wir sauber
+# "es gibt keine Distro" erkennen koennen, statt im `bash -c`-Aufruf
+# spaeter ins Leere zu greifen.
+function Get-WslRegisteredDistros {
+    # 2>&1 + Stringify + try/catch: PS 5.1 unter $ErrorActionPreference='Stop'
+    # wirft bei stderr-Ausgaben nativer Tools sonst NativeCommandError-Records.
+    $raw = $null
+    try {
+        $raw = & wsl.exe -l -q 2>&1 | ForEach-Object { "$_" }
+    } catch {
+        return @()
+    }
+    if ($LASTEXITCODE -ne 0 -or -not $raw) { return @() }
+    $distros = @()
+    foreach ($line in @($raw)) {
+        $clean = ("$line" -replace "`0", "").Trim()
+        if (-not $clean) { continue }
+        # "Windows-Subsystem fuer Linux verfuegt ueber keine installierten
+        # Distributionen" ist Stderr-Text, kein Distro-Name — ignorieren.
+        if ($clean -match 'installierten Distributionen' -or
+            $clean -match 'no installed distributions' -or
+            $clean -match 'keine installierten') { continue }
+        # agentbox-template-build ist die ephemere Build-Distro aus win-setup-core.ps1
+        # und zaehlt fuer uns nicht als "installierte Distro".
+        if ($clean -eq "agentbox-template-build") { continue }
+        $distros += $clean
+    }
+    return ,$distros
+}
+
+# Import einer persistenten agentbox-host-Distro aus dem frisch gebauten
+# Template. Wird nur aufgerufen, wenn sonst KEINE Distro registriert ist:
+# ohne Default-Distro scheitern alle spaeteren `wsl.exe bash -c`-Aufrufe
+# (inkl. .bashrc-Eintrag) und auch der Desktop-Shortcut `wsl.exe -e bash -li -c agentbox`.
+# Das Template enthaelt bereits bash/python3/git/curl sowie die Agent-CLIs
+# und kann deshalb 1:1 als Host-Distro verwendet werden.
+function Import-AgentboxHostDistro {
+    param(
+        [Parameter(Mandatory)][string]$TemplatePath,
+        [string]$DistroName = "agentbox-host"
+    )
+    if (-not (Test-Path $TemplatePath)) {
+        Write-Host "FEHLER: Template nicht gefunden: $TemplatePath" -ForegroundColor Red
+        return $false
+    }
+    $hostDir = Join-Path $env:LOCALAPPDATA "agentbox\host-distro"
+    if (-not (Test-Path $hostDir)) {
+        New-Item -ItemType Directory -Path $hostDir -Force | Out-Null
+    }
+    # Falls eine alte $DistroName-Registrierung herumliegt (vorheriger Lauf),
+    # zuerst abmelden — wsl --import scheitert sonst mit "already exists".
+    $existing = & wsl.exe -l -q 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
+    if ($existing -contains $DistroName) {
+        & wsl.exe --unregister $DistroName 2>&1 | Out-Null
+    }
+    Write-Host "Importiere Host-Distro '$DistroName' aus Template..." -ForegroundColor Cyan
+    Write-Host "       Ziel: $hostDir" -ForegroundColor Gray
+    $importOutput = @(& wsl.exe --import $DistroName $hostDir $TemplatePath 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -ne 0) {
+        foreach ($l in $importOutput) { Write-Host "       $l" -ForegroundColor DarkGray }
+        Write-Host "FEHLER: Import der Host-Distro fehlgeschlagen." -ForegroundColor Red
+        return $false
+    }
+    # Als Default setzen — damit funktionieren `wsl.exe bash -c ...` und der
+    # Desktop-Shortcut `wsl.exe -e bash -li -c agentbox` ohne explizites `-d`.
+    & wsl.exe --set-default $DistroName 2>&1 | Out-Null
+    Write-Host "[OK] Host-Distro '$DistroName' importiert und als Default gesetzt" -ForegroundColor Green
+    return $true
+}
+
 Write-Host ""
 Write-Host "=== agentbox Installer ===" -ForegroundColor Cyan
 Write-Host "Sandboxed AI Agent Runner fuer Windows + WSL2" -ForegroundColor Gray
@@ -390,6 +465,35 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNUNG: win-setup.ps1 meldete Fehler. Bitte manuell pruefen." -ForegroundColor Yellow
 }
 
+# --- 6b. Host-Distro sicherstellen ---
+# agentbox selbst laeuft ephemer (jede Session = eigene Sandbox-Distro, die
+# hinterher verworfen wird). Fuer die `.bashrc`-Integration und den Desktop-
+# Shortcut brauchen wir aber eine *persistente* Default-Distro, in der
+# `wsl.exe bash -c ...` und `wsl.exe -e bash -li -c agentbox` laufen koennen.
+#
+# Vorher war der Ablauf: win-setup.ps1 baut das Template in einer temporaeren
+# `agentbox-template-build`-Distro, meldet sie wieder ab — und wenn der User
+# sonst keine Distro hat, stehen danach 0 registrierte Distros da. Die
+# folgenden `wsl.exe bash -c`-Aufrufe scheitern dann still (Stderr ist
+# 2>$null unterdrueckt), der Installer schreibt trotzdem "[OK] .bashrc-
+# Eintrag gesetzt", und am Ende zeigt `wsl` nur noch "keine installierten
+# Distributionen". Genau dieses "wsl laesst sich nach dem Installer nicht
+# mehr oeffnen"-Symptom wollen wir hier verhindern.
+if ($setupOk) {
+    $installedDistros = Get-WslRegisteredDistros
+    if ($installedDistros.Count -eq 0) {
+        Write-Host ""
+        Write-Host "Keine WSL-Distro registriert — richte Host-Distro ein..." -ForegroundColor Yellow
+        $hostTemplate = Join-Path $controlDir "sandbox\template.tar.gz"
+        if (-not (Import-AgentboxHostDistro -TemplatePath $hostTemplate)) {
+            $setupOk = $false
+        }
+    } else {
+        Write-Host ""
+        Write-Host "[OK] WSL-Distro(s) vorhanden: $($installedDistros -join ', ')" -ForegroundColor Green
+    }
+}
+
 # --- 7. WSL .bashrc-Eintrag setzen ---
 Write-Host ""
 Write-Host "Konfiguriere WSL-Integration..." -ForegroundColor Cyan
@@ -486,8 +590,19 @@ fi
     $bashrcBlock = $bashrcBlock -replace "`r", ""
     $bashrcB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($bashrcBlock))
     & wsl.exe bash -c "echo $bashrcB64 | base64 -d >> ~/.bashrc" 2>&1 | ForEach-Object { "$_" } | Out-Null
+    $bashrcWriteRc = $LASTEXITCODE
 
-    Write-Host "[OK] .bashrc-Eintrag gesetzt" -ForegroundColor Green
+    if ($bashrcWriteRc -ne 0) {
+        # Kein stilles "[OK]" mehr, wenn wsl.exe den Write nicht ausfuehren
+        # konnte (z.B. weil doch keine Default-Distro da ist). Frueher hat
+        # der Installer hier gelogen und der User stand danach vor einem
+        # nicht mehr oeffenbaren WSL.
+        Write-Host "FEHLER: .bashrc-Eintrag konnte nicht geschrieben werden (wsl exit $bashrcWriteRc)." -ForegroundColor Red
+        Write-Host "        Pruefe 'wsl -l -v' — vermutlich ist keine Default-Distro registriert." -ForegroundColor Yellow
+        $setupOk = $false
+    } else {
+        Write-Host "[OK] .bashrc-Eintrag gesetzt" -ForegroundColor Green
+    }
 } else {
     Write-Host "[OK] .bashrc-Eintrag bereits vorhanden" -ForegroundColor Green
 }
