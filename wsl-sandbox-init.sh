@@ -177,24 +177,38 @@ fi
 # mit modifiziertem wsl.conf kann das fehlen. Wir setzen einen expliziten Fallback.
 echo ""
 echo "Konfiguriere DNS..."
-# Bestehende resolv.conf pruefen
-_dns_ok=false
-if [ -s /etc/resolv.conf ] && grep -q "^nameserver" /etc/resolv.conf 2>/dev/null; then
-    _dns_ok=true
-fi
-if [ "$_dns_ok" = false ]; then
-    echo "[INFO] /etc/resolv.conf leer/fehlt — setze Fallback-DNS (Cloudflare + Google)"
-    # Symlink entfernen falls vorhanden
-    rm -f /etc/resolv.conf 2>/dev/null || true
-    cat > /etc/resolv.conf << 'DNSEOF'
+
+# IPv6 deaktivieren — verhindert getaddrinfo EAI_AGAIN auf Hosts die
+# AAAA-Records haben aber ueber IPv6 nicht erreichbar sind (WSL2 default).
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
+sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+sysctl -w net.ipv6.conf.lo.disable_ipv6=1 >/dev/null 2>&1 || true
+
+# resolv.conf: explizit setzen, Symlink entfernen, immutable machen
+rm -f /etc/resolv.conf 2>/dev/null || true
+cat > /etc/resolv.conf << 'DNSEOF'
 nameserver 1.1.1.1
 nameserver 1.0.0.1
 nameserver 8.8.8.8
 nameserver 8.8.4.4
+options timeout:2 attempts:3 single-request-reopen
 DNSEOF
-    chmod 644 /etc/resolv.conf
+chmod 644 /etc/resolv.conf
+# Immutable setzen damit WSL es nicht ueberschreibt
+chattr +i /etc/resolv.conf 2>/dev/null || true
+
+# /etc/gai.conf: IPv4 vor IPv6 bevorzugen (fallback falls IPv6 doch aktiv ist)
+cat > /etc/gai.conf << 'GAIEOF'
+precedence ::ffff:0:0/96  100
+GAIEOF
+
+# DNS testen
+if getent hosts api.anthropic.com >/dev/null 2>&1; then
+    echo "[OK] DNS funktioniert (api.anthropic.com aufgeloest)"
+else
+    echo "[WARN] DNS-Resolution schlaegt fehl — siehe Log"
+    cat /etc/resolv.conf | sed 's/^/       /'
 fi
-echo "[OK] DNS konfiguriert: $(grep -c '^nameserver' /etc/resolv.conf 2>/dev/null) Server"
 
 # --- 5. iptables-Regeln anwenden ---
 echo ""
@@ -264,23 +278,16 @@ iptables -A OUTPUT -j DROP 2>/dev/null || true
 
 echo "[OK] Firewall-Regeln angewendet (HTTPS erlaubt, private Netze blockiert)"
 
-# --- 5b. Konnektivitaets-Test: kann api.anthropic.com aufgeloest werden? ---
+# --- 5b. Konnektivitaets-Test: beide Anthropic-Hosts ---
 echo ""
 echo "Teste Netzwerk-Konnektivitaet..."
-if getent hosts api.anthropic.com >/dev/null 2>&1; then
-    echo "[OK] DNS: api.anthropic.com aufgeloest"
-else
-    echo "[WARN] DNS-Resolution fehlgeschlagen fuer api.anthropic.com"
-    echo "       /etc/resolv.conf:"
-    cat /etc/resolv.conf 2>/dev/null | sed 's/^/       /'
-    echo "       Versuche direkt gegen Cloudflare DNS..."
-    if timeout 3 getent -s files hosts api.anthropic.com 2>/dev/null || \
-       timeout 3 nslookup api.anthropic.com 1.1.1.1 >/dev/null 2>&1; then
-        echo "       Cloudflare DNS erreichbar — resolv.conf wird erzwungen"
-        rm -f /etc/resolv.conf
-        printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf
+for _host in api.anthropic.com platform.claude.com; do
+    if getent hosts "$_host" >/dev/null 2>&1; then
+        echo "[OK] DNS: $_host aufgeloest"
+    else
+        echo "[WARN] DNS: $_host NICHT aufgeloest"
     fi
-fi
+done
 
 # --- 6. CLI-Update-Check (schnell, max 10s) ---
 echo ""
