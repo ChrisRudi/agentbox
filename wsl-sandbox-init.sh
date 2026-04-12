@@ -172,6 +172,27 @@ _auth_mount_agent() {
     return 1
 }
 
+# Variante fuer einzelne Auth-Dateien (z.B. ~/.claude.json — Claude Code
+# speichert OAuth-Tokens dort, nicht im .claude/-Ordner). Bind-Mount-Ziel
+# muss als leere Datei existieren, bevor mount --bind draufgeht.
+_auth_mount_file() {
+    local _src_name="$1"   # relativ zu $AUTH_BASE (z.B. "claude.json")
+    local _home_rel="$2"   # relativ zu /home/$SANDBOX_USER (z.B. ".claude.json")
+    local _src="$AUTH_BASE/$_src_name"
+    [ -f "$_src" ] || return 1
+    local _dst="/home/$SANDBOX_USER/$_home_rel"
+    mkdir -p "$(dirname "$_dst")"
+    touch "$_dst" 2>/dev/null || return 1
+    if mount --bind "$_src" "$_dst" 2>/dev/null; then
+        mount -o remount,nosymfollow,nodev "$_dst" 2>/dev/null || true
+        chown "$SANDBOX_USER:$SANDBOX_USER" "$_dst" 2>/dev/null || true
+        echo "[OK] Mount: $_src_name Auth-File ($_home_rel)"
+        return 0
+    fi
+    echo "[WARN] $_src_name Auth-File-Mount fehlgeschlagen — Login wird nicht persistiert"
+    return 1
+}
+
 # Flag fuer den spaeteren SYSTEM_META_PROMPT.md-Kopier-Schritt: unterdrueckt
 # dort das Kopieren von CLAUDE.md, weil die Datei im gemounteten Claude-
 # Ordner bereits liegt und wir die User-Session-History nicht ueberschreiben.
@@ -180,6 +201,10 @@ if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
     if _auth_mount_agent claude ".claude"; then
         CLAUDE_AUTH_PERSISTED=true
     fi
+    # ~/.claude.json ist die eigentliche Login-/OAuth-Datei von Claude Code.
+    # Ohne diesen Mount bleibt der Login trotz gemountetem .claude/-Ordner
+    # nicht erhalten — das war der Grund warum "auf einmal" Re-Auth noetig war.
+    _auth_mount_file claude.json ".claude.json" || true
     _auth_mount_agent codex  ".codex"  || true
     _auth_mount_agent gemini ".gemini" || true
     _auth_mount_agent aider  ".aider"  || true

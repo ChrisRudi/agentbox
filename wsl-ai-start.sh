@@ -647,6 +647,15 @@ if [ -n "$_win_lad" ]; then
         for _aid in $AGENTBOX_AUTH_AGENTS; do
             mkdir -p "$AUTH_BASE/$_aid"
         done
+        # Claude Code speichert OAuth-Tokens + Account-State in ~/.claude.json
+        # (Datei im Home-Root, NICHT im ~/.claude/-Ordner). Ohne Persistenz
+        # dieser Datei muesste der User trotz gemountetem .claude/-Ordner
+        # jedes Mal neu einloggen. Leere Datei als Mount-Source anlegen,
+        # wenn noch keine da ist — mode 0600, weil OAuth-Tokens.
+        if [ ! -e "$AUTH_BASE/claude.json" ]; then
+            : > "$AUTH_BASE/claude.json" 2>/dev/null || true
+            chmod 600 "$AUTH_BASE/claude.json" 2>/dev/null || true
+        fi
         # SYSTEM_META_PROMPT.md als globale Claude-Code-Memory im
         # Claude-Auth-Ordner ablegen (Claude Code laedt ~/.claude/CLAUDE.md
         # automatisch als globalen Kontext). Ueberschreiben ist bewusst:
