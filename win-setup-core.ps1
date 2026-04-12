@@ -17,11 +17,41 @@ Write-Host "=== agentbox Setup ===" -ForegroundColor Cyan
 Write-Host ""
 
 # --- Pfade bestimmen ---
-$sandboxDir = Join-Path $scriptDir "sandbox"
+# Template + Config-Hash leben unter %LOCALAPPDATA%\agentbox\sandbox\ —
+# bewusst nicht unter $scriptDir\sandbox\, weil der Script-Dir ueblicherweise
+# in OneDrive liegt und ein ~1 GB Template dort nichts zu suchen hat
+# (Sync-Kosten, Files-On-Demand-Placeholder, ERROR_PATH_NOT_FOUND bei wsl
+# --import). Gleiche Regel wie fuer auth\ und host-distro\.
+$sandboxDir = Join-Path $env:LOCALAPPDATA "agentbox\sandbox"
+if (-not (Test-Path $sandboxDir)) {
+    New-Item -ItemType Directory -Path $sandboxDir -Force | Out-Null
+}
 $templatePath = Join-Path $sandboxDir "template.tar.gz"
 $tempBase = Join-Path $env:TEMP "agentbox"
 $tempSetup = Join-Path $tempBase "setup"
 $distroName = "agentbox-template-build"
+
+# --- Migration: altes Template aus $scriptDir\sandbox\ raus ---
+# Wer von einer aelteren Version kommt, hat template.tar.gz + .config_hash
+# noch unter $scriptDir\sandbox\. Einmalig ruebermoven und den alten
+# Ordner entsorgen, damit kein verwaister Cloud-Sync-Verkehr mehr entsteht.
+$legacySandboxDir = Join-Path $scriptDir "sandbox"
+if (Test-Path $legacySandboxDir) {
+    Write-Host "[MIGRATE] Altes sandbox/ unter $legacySandboxDir gefunden — verschiebe nach $sandboxDir" -ForegroundColor Yellow
+    foreach ($name in @("template.tar.gz", ".config_hash")) {
+        $legacyFile = Join-Path $legacySandboxDir $name
+        $targetFile = Join-Path $sandboxDir $name
+        if ((Test-Path $legacyFile) -and -not (Test-Path $targetFile)) {
+            try {
+                Move-Item -Path $legacyFile -Destination $targetFile -Force -ErrorAction Stop
+                Write-Host "          moved: $name" -ForegroundColor Gray
+            } catch {
+                Write-Host "          WARN: $name — $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+    }
+    try { Remove-Item -Path $legacySandboxDir -Recurse -Force -ErrorAction Stop } catch { }
+}
 
 # --- config.json laden ---
 $configPath = Join-Path $scriptDir "config.json"

@@ -484,7 +484,9 @@ if ($setupOk) {
     if ($installedDistros.Count -eq 0) {
         Write-Host ""
         Write-Host "Keine WSL-Distro registriert — richte Host-Distro ein..." -ForegroundColor Yellow
-        $hostTemplate = Join-Path $controlDir "sandbox\template.tar.gz"
+        # Template liegt seit der LOCALAPPDATA-Migration nicht mehr unter
+        # $controlDir\sandbox\, sondern unter $env:LOCALAPPDATA\agentbox\sandbox\.
+        $hostTemplate = Join-Path $env:LOCALAPPDATA "agentbox\sandbox\template.tar.gz"
         if (-not (Import-AgentboxHostDistro -TemplatePath $hostTemplate)) {
             $setupOk = $false
         }

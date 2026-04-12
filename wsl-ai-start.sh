@@ -167,10 +167,78 @@ if [ -n "$_base_override" ]; then
     CONTROL_DIR="$AI_PROJECTS_ROOT/$(cfg_get 'control_dir_name' '_control')"
 fi
 
-TEMPLATE_PATH="$CONTROL_DIR/sandbox/template.tar.gz"
+TEMPLATE_PATH_OLD="$CONTROL_DIR/sandbox/template.tar.gz"
 SANDBOX_INIT="$CONTROL_DIR/wsl-sandbox-init.sh"
 TYPE_DEFAULTS="$CONTROL_DIR/type_defaults.json"
 AGENTBOX_CONFIG="$CONTROL_DIR/config.json"
+
+# --- Runtime-State unter %LOCALAPPDATA%\agentbox\ aufloesen ---
+# Template (~1 GB), Paket-Cache, Session-Snapshots und Auth-State gehoeren
+# nicht in den OneDrive-synchronisierten CONTROL_DIR. Gleiche Regel wie
+# fuer ~/.claude/: lokal, user-privat, kein Cloud-Sync. Der Host-Distro-
+# Ordner liegt bereits dort (install.ps1 Import-AgentboxHostDistro).
+_resolve_agentbox_local_root() {
+    local _w _l
+    _w=$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
+    [ -z "$_w" ] && return 1
+    _l=$(wslpath -u "$_w" 2>/dev/null || true)
+    { [ -z "$_l" ] || [ ! -d "$_l" ]; } && return 1
+    echo "$_l/agentbox"
+}
+AGENTBOX_LOCAL_ROOT=$(_resolve_agentbox_local_root || echo "")
+if [ -z "$AGENTBOX_LOCAL_ROOT" ]; then
+    echo "FEHLER: %LOCALAPPDATA% nicht ermittelbar — Runtime-State nicht lokalisierbar."
+    exit 1
+fi
+# Root selbst anlegen; die Unter-Ordner NICHT vorab — sonst schlaegt die
+# Migration unten fehl (mv src_dir existing_empty_dst = "move src INTO dst",
+# nicht "rename src to dst", GNU-Verhalten).
+mkdir -p "$AGENTBOX_LOCAL_ROOT" 2>/dev/null || true
+
+TEMPLATE_PATH="$AGENTBOX_LOCAL_ROOT/sandbox/template.tar.gz"
+CACHE_DIR="$AGENTBOX_LOCAL_ROOT/cache"
+SESSIONS_DIR="$AGENTBOX_LOCAL_ROOT/sessions"
+AUTH_BASE="$AGENTBOX_LOCAL_ROOT/auth"
+
+# --- Einmalige Migration: alte Pfade aus CONTROL_DIR raus ---
+# Wer von einer aelteren Version kommt, hat Template/Cache/Sessions noch
+# unter _control/ (in OneDrive). Beim ersten Start der neuen Version
+# ziehen wir die Dateien einmalig rueber und raeumen die alten Ordner ab.
+_migrate_from_control() {
+    local _old="$1" _new="$2" _label="$3"
+    [ -e "$_old" ] || return 0
+    # Neues Ziel schon vorhanden und nicht leer → alte Daten sind veraltet,
+    # nur loeschen. Leere Zielordner loeschen, damit `mv` den Source an
+    # exact diese Stelle umbenennen kann (statt "INTO existing dir").
+    if [ -e "$_new" ]; then
+        if [ -n "$(ls -A "$_new" 2>/dev/null)" ]; then
+            rm -rf "$_old" 2>/dev/null || true
+            return 0
+        fi
+        rmdir "$_new" 2>/dev/null || true
+    fi
+    mkdir -p "$(dirname "$_new")"
+    if mv "$_old" "$_new" 2>/dev/null; then
+        echo "[MIGRATE] $_label: $_old → $_new"
+    else
+        # mv scheitert z.B. bei OneDrive-Placeholder → cp + rm als Fallback
+        if cp -r "$_old" "$_new" 2>/dev/null; then
+            rm -rf "$_old" 2>/dev/null || true
+            echo "[MIGRATE] $_label (kopiert): $_old → $_new"
+        else
+            echo "[WARN] Migration $_label fehlgeschlagen — bitte manuell pruefen"
+        fi
+    fi
+}
+_migrate_from_control "$CONTROL_DIR/sandbox"  "$AGENTBOX_LOCAL_ROOT/sandbox"  "Template"
+_migrate_from_control "$CONTROL_DIR/cache"    "$AGENTBOX_LOCAL_ROOT/cache"    "Cache"
+_migrate_from_control "$CONTROL_DIR/sessions" "$AGENTBOX_LOCAL_ROOT/sessions" "Sessions"
+
+# Ziel-Unterordner jetzt anlegen — nach Migration, damit leere Shells
+# nicht mit dem Rename-Verhalten kollidieren.
+mkdir -p "$AGENTBOX_LOCAL_ROOT/sandbox" "$AGENTBOX_LOCAL_ROOT/cache/npm" \
+         "$AGENTBOX_LOCAL_ROOT/cache/pip" "$AGENTBOX_LOCAL_ROOT/sessions" \
+         "$AGENTBOX_LOCAL_ROOT/auth" 2>/dev/null || true
 
 # Farben
 RED='\033[0;31m'
@@ -297,8 +365,11 @@ with zipfile.ZipFile('$_tmp_zip') as z:
                             if [ -f "$CONTROL_DIR/config.json" ]; then
                                 _user_cfg=$(cat "$CONTROL_DIR/config.json")
                             fi
-                            # Dateien kopieren (sandbox/ und cache/ nicht ueberschreiben)
-                            find "$_extracted" -maxdepth 1 -mindepth 1 -not -name "sandbox" -not -name "cache" | while read -r item; do
+                            # Alle Dateien kopieren — sandbox/, cache/, sessions/
+                            # liegen inzwischen unter %LOCALAPPDATA%\agentbox\ und
+                            # sind im ZIP gar nicht mehr enthalten, deshalb keine
+                            # Exclude-Liste mehr noetig.
+                            find "$_extracted" -maxdepth 1 -mindepth 1 | while read -r item; do
                                 cp -rf "$item" "$CONTROL_DIR/" 2>/dev/null
                             done
                             # User-config.json wiederherstellen
@@ -316,7 +387,7 @@ with zipfile.ZipFile('$_tmp_zip') as z:
 
                     # Template-Rebuild noetig? Hash-Format MUSS zu
                     # Get-AgentboxConfigHash in win-setup-core.ps1 passen.
-                    _cfg_hash_file="$CONTROL_DIR/sandbox/.config_hash"
+                    _cfg_hash_file="$AGENTBOX_LOCAL_ROOT/sandbox/.config_hash"
                     _current_hash=""
                     if command -v python3 &> /dev/null && [ -f "$AGENTBOX_CONFIG" ]; then
                         _current_hash=$(python3 -c "
@@ -354,7 +425,13 @@ fi
 # --- Template pruefen ---
 if [ ! -f "$TEMPLATE_PATH" ]; then
     log_error "template.tar.gz nicht gefunden: $TEMPLATE_PATH"
-    echo "Bitte zuerst win-setup.ps1 als Admin in PowerShell ausfuehren."
+    if [ -f "$TEMPLATE_PATH_OLD" ]; then
+        echo "       Alte Version gefunden unter $TEMPLATE_PATH_OLD —"
+        echo "       Migration fehlgeschlagen. Bitte manuell nach"
+        echo "       $TEMPLATE_PATH verschieben, oder win-setup.ps1 neu laufen."
+    else
+        echo "Bitte zuerst win-setup.ps1 als Admin in PowerShell ausfuehren."
+    fi
     exit 1
 fi
 
@@ -618,49 +695,24 @@ if [ ! -d "$TASKS_DIR" ]; then
     mkdir -p "$TASKS_DIR"
 fi
 
-# --- Paket-Cache anlegen (persistiert ueber Sessions) ---
-CACHE_DIR="$CONTROL_DIR/cache"
-mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/pip"
-
 # --- Auth-State anlegen (persistiert Agent-Logins ueber Sessions) ---
-# Problem: jede agentbox-Session importiert eine frische Sandbox-Distro
-# und unregistriert sie hinterher. Die Auth-Ordner der Agent-CLIs
-# (~/.claude/, ~/.codex/, ~/.gemini/ etc.) sind damit jedes Mal leer →
-# der User muesste bei jedem Start neu einloggen.
-#
-# Loesung: wir halten den Auth-State auf Host-Seite unter
-# %LOCALAPPDATA%\agentbox\auth\<agent>\ vor und bind-mounten ihn in die
-# Sandbox. Bewusst NICHT unter _control/cache/, weil _control in OneDrive
-# liegt — OAuth-Tokens haben in einem Cloud-synchronisierten Ordner nichts
-# verloren.
-#
-# Agent-IDs dieser Liste muessen zu den Keys in _auth_mount_agent()
+# AUTH_BASE wurde bereits oben aus AGENTBOX_LOCAL_ROOT abgeleitet; hier
+# nur noch die Per-Agent-Unterordner anlegen und die globale CLAUDE.md
+# als Memory einsetzen. Agent-IDs muessen zu den Keys in _auth_mount_agent()
 # in wsl-sandbox-init.sh passen (Home-relative Pfade stehen dort).
 AGENTBOX_AUTH_AGENTS="claude codex gemini aider goose"
-
-AUTH_BASE=""
-_win_lad=$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
-if [ -n "$_win_lad" ]; then
-    _lin_lad=$(wslpath -u "$_win_lad" 2>/dev/null || true)
-    if [ -n "$_lin_lad" ] && [ -d "$_lin_lad" ]; then
-        AUTH_BASE="$_lin_lad/agentbox/auth"
-        for _aid in $AGENTBOX_AUTH_AGENTS; do
-            mkdir -p "$AUTH_BASE/$_aid"
-        done
-        # SYSTEM_META_PROMPT.md als globale Claude-Code-Memory im
-        # Claude-Auth-Ordner ablegen (Claude Code laedt ~/.claude/CLAUDE.md
-        # automatisch als globalen Kontext). Ueberschreiben ist bewusst:
-        # das ist der agentbox-Vertrag, nicht user-editierbar — bei einem
-        # agentbox-Update soll der Agent die neue Version sehen.
-        if [ -f /etc/agentbox/SYSTEM_META_PROMPT.md ]; then
-            cp /etc/agentbox/SYSTEM_META_PROMPT.md "$AUTH_BASE/claude/CLAUDE.md" 2>/dev/null || true
-        fi
-        log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_AGENTS)"
-    fi
+for _aid in $AGENTBOX_AUTH_AGENTS; do
+    mkdir -p "$AUTH_BASE/$_aid"
+done
+# SYSTEM_META_PROMPT.md als globale Claude-Code-Memory im Claude-Auth-
+# Ordner ablegen (Claude Code laedt ~/.claude/CLAUDE.md automatisch als
+# globalen Kontext). Ueberschreiben ist bewusst: das ist der agentbox-
+# Vertrag, nicht user-editierbar — bei einem Update soll der Agent die
+# neue Version sehen.
+if [ -f /etc/agentbox/SYSTEM_META_PROMPT.md ]; then
+    cp /etc/agentbox/SYSTEM_META_PROMPT.md "$AUTH_BASE/claude/CLAUDE.md" 2>/dev/null || true
 fi
-if [ -z "$AUTH_BASE" ]; then
-    log_warn "LOCALAPPDATA nicht ermittelbar — Agent-Logins werden NICHT persistiert"
-fi
+log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_AGENTS)"
 
 # --- Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
@@ -856,7 +908,7 @@ if _wsl_distro_exists "$DISTRO_NAME"; then
 fi
 
 # --- Session-Snapshot erstellen (fuer Replay-Modus) ---
-SESSIONS_DIR="$CONTROL_DIR/sessions"
+# SESSIONS_DIR wurde bereits oben aus AGENTBOX_LOCAL_ROOT abgeleitet.
 SESSION_ID="$(date +%Y%m%d_%H%M%S)_${AGENT_CMD}_${PROJECT_NAME}"
 SESSION_DIR="$SESSIONS_DIR/$SESSION_ID"
 
@@ -945,11 +997,23 @@ fi
 echo "[INFO] Import-Ziel: $WIN_TEMP_DIR"
 echo "[INFO] Template: $WIN_TEMPLATE"
 
-# Alte Sandbox-Distro mit demselben Namen entfernen falls vorhanden
+# Stale Distro-Reste wegraeumen. Zielbezeichnung immer unregistern;
+# zusaetzlich alte Build-Distros (agentbox-template-build*) einer
+# abgebrochenen Setup-Session entfernen — agentbox-host bleibt stehen,
+# die ist persistent als Default-Distro vorgesehen.
 if _wsl_distro_exists "$DISTRO_NAME"; then
     log_info "Entferne alte Sandbox-Distro: $DISTRO_NAME"
     wsl.exe --unregister "$DISTRO_NAME" 2>&1 | tr -d '\000' || true
 fi
+wsl.exe -l -q 2>/dev/null | tr -d '\000\r' | while IFS= read -r _d; do
+    _d="${_d// /}"
+    case "$_d" in
+        agentbox-template-build*)
+            echo "[INFO] Entferne veraltete Build-Distro: $_d"
+            wsl.exe --unregister "$_d" 2>&1 | tr -d '\000' || true
+            ;;
+    esac
+done
 
 # `if !` statt `cmd; if [ $? -ne 0 ]` — letzteres waere unter set -e tot.
 if ! wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1; then
@@ -959,7 +1023,10 @@ fi
 log_ok "Sandbox-Distro importiert: $DISTRO_NAME"
 
 # --- Sandbox-Init-Skript kopieren ---
+# Zielpfad erst leeren, dann neu befuellen — so bleibt garantiert kein
+# veraltetes /sandbox-init.sh aus dem Template zurueck.
 log_info "Kopiere Sandbox-Init-Skript..."
+wsl.exe -d "$DISTRO_NAME" -- rm -f /sandbox-init.sh /tmp/agentbox_*.sh 2>/dev/null
 wsl.exe -d "$DISTRO_NAME" -- bash -c "cat > /sandbox-init.sh" < "$SANDBOX_INIT"
 wsl.exe -d "$DISTRO_NAME" -- chmod +x /sandbox-init.sh
 
