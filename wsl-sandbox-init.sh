@@ -21,12 +21,29 @@ if [ -z "$WIN_PROJECT_PATH" ]; then
     exit 1
 fi
 
-# Windows-Pfade in Linux-Pfade konvertieren
-PROJECT_PATH=$(wslpath -u "$WIN_PROJECT_PATH" 2>/dev/null || echo "$WIN_PROJECT_PATH")
-CACHE_PATH=""
-if [ -n "$WIN_CACHE_PATH" ]; then
-    CACHE_PATH=$(wslpath -u "$WIN_CACHE_PATH" 2>/dev/null || echo "$WIN_CACHE_PATH")
-fi
+# Pfade normalisieren — akzeptiere sowohl Windows- als auch Linux-Pfade
+_to_linux_path() {
+    local _in="$1"
+    if [ -z "$_in" ]; then
+        echo ""
+        return
+    fi
+    # Linux-Pfad (beginnt mit /) → unveraendert lassen
+    if [ "${_in:0:1}" = "/" ]; then
+        echo "$_in"
+        return
+    fi
+    # Windows-Pfad (enthaelt : oder \) → via wslpath konvertieren
+    if [[ "$_in" == *:* ]] || [[ "$_in" == *\\* ]]; then
+        wslpath -u "$_in" 2>/dev/null || echo "$_in"
+        return
+    fi
+    # Fallback
+    echo "$_in"
+}
+
+PROJECT_PATH=$(_to_linux_path "$WIN_PROJECT_PATH")
+CACHE_PATH=$(_to_linux_path "$WIN_CACHE_PATH")
 
 echo "=== agentbox Sandbox-Init ==="
 echo "Projekt: $PROJECT_PATH"
