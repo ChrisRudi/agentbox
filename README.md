@@ -184,13 +184,15 @@ Only agents that are both **enabled** in `config.json` and **installed** in the 
 The agent sees **only**:
 
 ```
-/workspace/
+/workspace/                    ← project root and agent start directory
   src/           (read-write)   Your code
   assets/        (read-only)    Static files
   _tasks/        (read-write)   Task triggers
   CLAUDE.md      (read-write)   Session context
   project.json   (read-only)    Configuration
 ```
+
+The agent starts in `/workspace/`, so the complete project layout is visible on the first `ls`. Projects without a `src/` subfolder get their root bind-mounted as `/workspace/src/`.
 
 The agent does **not** see: `/mnt/c/`, OneDrive, `~/.ssh/`, other projects, `_control/`.
 
