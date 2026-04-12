@@ -57,7 +57,7 @@
   "agent_gemini_name": "Gemini CLI",
   "agent_gemini_command": "gemini",
   "agent_gemini_install": "npm install -g @google/gemini-cli@latest",
-  "agent_gemini_enabled": false,
+  "agent_gemini_enabled": true,
 
   "agent_aider_name": "Aider",
   "agent_aider_command": "aider",
