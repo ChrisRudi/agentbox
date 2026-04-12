@@ -387,11 +387,9 @@ if ! [[ "$AGENT_CMD" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     exit 1
 fi
 
-# Agent als unprivilegierter User starten.
-# Exit-Code ueber `|| EXIT_CODE=$?` einfangen: unter `set -e` wuerde ein
-# Nicht-Null-Exit des Agents den Script abbrechen — und damit genau die
-# Blockierte-Verbindungen-Diagnostik unten ueberspringen, die fuer den
-# "npm/pip install ist an der Firewall gescheitert"-Fall gedacht ist.
+# Agent als unprivilegierter User starten. `|| EXIT_CODE=$?` statt
+# `; EXIT_CODE=$?` — sonst killt set -e den Script vor der
+# Blockierte-Verbindungen-Diagnostik (fuer die sie gerade gedacht ist).
 EXIT_CODE=0
 if command -v "$AGENT_CMD" &> /dev/null; then
     su - "$SANDBOX_USER" -c "cd '$START_DIR' && exec $AGENT_CMD" || EXIT_CODE=$?

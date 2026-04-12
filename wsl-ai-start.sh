@@ -300,31 +300,19 @@ with zipfile.ZipFile('$_tmp_zip') as z:
                 if [ "$_update_ok" = true ]; then
                     echo -e "         ${GREEN}[OK] Update auf Version $_remote_version erfolgreich.${NC}"
 
-                    # Pruefen ob Template-Rebuild noetig (Agent-Config geaendert?).
-                    # Format MUSS mit Get-AgentboxConfigHash in win-setup-core.ps1
-                    # uebereinstimmen — sonst schlaegt der Vergleich immer fehl und
-                    # wir zeigen die Rebuild-Empfehlung nach jedem Update, auch wenn
-                    # sich garnichts geaendert hat.
+                    # Template-Rebuild noetig? Hash-Format MUSS zu
+                    # Get-AgentboxConfigHash in win-setup-core.ps1 passen.
                     _cfg_hash_file="$CONTROL_DIR/sandbox/.config_hash"
                     _current_hash=""
                     if command -v python3 &> /dev/null && [ -f "$AGENTBOX_CONFIG" ]; then
                         _current_hash=$(python3 -c "
 import json, hashlib
-def ps_str(v):
-    # PowerShell interpolation: \$true -> 'True', \$false -> 'False'.
-    if v is True: return 'True'
-    if v is False: return 'False'
-    return str(v)
 try:
-    with open('$AGENTBOX_CONFIG') as f:
-        data = json.load(f)
-    parts = sorted(
-        f'{k}={ps_str(data[k])}'
-        for k in data
-        if k.startswith('agent_') or k in ('ubuntu_image_url','nodejs_setup_url')
-    )
-    combined = '|'.join(parts)
-    print(hashlib.md5(combined.encode('utf-8')).hexdigest())
+    with open('$AGENTBOX_CONFIG') as f: data = json.load(f)
+    ps = lambda v: 'True' if v is True else ('False' if v is False else str(v))
+    parts = sorted(f'{k}={ps(data[k])}' for k in data
+                   if k.startswith('agent_') or k in ('ubuntu_image_url','nodejs_setup_url'))
+    print(hashlib.md5('|'.join(parts).encode('utf-8')).hexdigest())
 except:
     print('')
 " 2>/dev/null)
@@ -957,9 +945,7 @@ if [ -n "$_existing" ]; then
     wsl.exe --unregister "$DISTRO_NAME" 2>&1 | tr -d '\000' || true
 fi
 
-# `if !` umgeht set -e und laesst uns auf Fehler reagieren. Vorher stand hier
-# `wsl.exe --import ...; if [ $? -ne 0 ]; ...` — das war unter set -e toter
-# Code, weil set -e den Script bereits vor dem if beenden wuerde.
+# `if !` statt `cmd; if [ $? -ne 0 ]` — letzteres waere unter set -e tot.
 if ! wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1; then
     log_error "WSL-Import fehlgeschlagen."
     exit 1
@@ -1039,11 +1025,9 @@ if [ ! -f "$AGENTBOX_CONFIG" ]; then
     : "${CFG_REG_PYTHON:=pypi.org files.pythonhosted.org}"
 fi
 
-# Linux-Pfade an sandbox-init.sh uebergeben (Backslashes wuerden beim
-# Argumentpassing durch wsl.exe teilweise verschluckt).
-# Exit-Code ueber `|| EXIT_CODE=$?` einfangen: unter `set -e` wuerde ein
-# Nicht-Null-Exit der Sandbox den Script abbrechen — und damit Watchdog,
-# Session-Diff und Sandbox-Cleanup (Schritte 17-19) ueberspringen.
+# Linux-Pfade (wsl.exe frisst Backslashes beim Argumentpassing).
+# `|| EXIT_CODE=$?` statt `; EXIT_CODE=$?` — sonst killt set -e den
+# Script vor Watchdog/Session-Diff/Sandbox-Cleanup (Schritte 17-19).
 EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \

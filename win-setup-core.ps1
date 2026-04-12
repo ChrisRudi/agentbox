@@ -64,11 +64,8 @@ function Get-AgentboxConfigHash {
     return ($md5.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
 }
 
-# Registriert die Windows Event-Source und den Scheduled Task, den der
-# win-task-runner.ps1 an jedem Login braucht. Wird aus zwei Stellen aufgerufen:
-# 1) wenn der Template-Build uebersprungen wird (Config-Hash unveraendert), und
-# 2) am Ende eines vollstaendigen Builds. Vorher war der Code an beiden Stellen
-# kopiert — mit leicht abweichender Task-Description und damit Drift-Risiko.
+# Registriert Event-Source + Scheduled Task. Wird aus Skip-Build- und Full-
+# Build-Pfad aufgerufen (vorher an beiden Stellen kopiert, mit Drift).
 function Register-AgentboxTaskRunner {
     param($cfg, [Parameter(Mandatory)][string]$ScriptDir)
 
@@ -84,28 +81,18 @@ function Register-AgentboxTaskRunner {
     Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
     $taskName = if ($cfg -and $cfg.scheduled_task_name) { $cfg.scheduled_task_name } else { "agentbox-task-runner" }
     $runnerScript = Join-Path $ScriptDir "win-task-runner.ps1"
-
-    $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false }
-
-    $action = New-ScheduledTaskAction `
-        -Execute "powershell.exe" `
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
         -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once" `
         -WorkingDirectory $ScriptDir
-    $trigger = New-ScheduledTaskTrigger -AtLogon
-    $settings = New-ScheduledTaskSettingsSet `
-        -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries `
-        -StartWhenAvailable
-
-    Register-ScheduledTask `
-        -TaskName $taskName `
-        -Action $action `
-        -Trigger $trigger `
-        -Settings $settings `
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries -StartWhenAvailable
+    Register-ScheduledTask -TaskName $taskName -Action $action `
+        -Trigger (New-ScheduledTaskTrigger -AtLogon) -Settings $settings `
         -Description "agentbox Task Runner — verarbeitet Build/Deploy-Tasks von AI-Agenten" `
         -RunLevel Highest | Out-Null
-
     Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
 }
 
@@ -344,9 +331,7 @@ foreach ($aid in $agentIds) {
     $isEnabled = $false
     if ($config -and (Get-Member -InputObject $config -Name $enabledProp -MemberType NoteProperty)) {
         $isEnabled = $config.$enabledProp
-    } elseif ($aid -in @("claude", "codex", "gemini")) {
-        # Muss mit dem Install-Block oben uebereinstimmen — sonst wuerde ein
-        # Default-enabled Agent zwar installiert, aber nicht verifiziert.
+    } elseif ($aid -in @("claude", "codex", "gemini")) { # muss zu Install-Block passen
         $isEnabled = $true
     }
     if (-not $isEnabled) { continue }
