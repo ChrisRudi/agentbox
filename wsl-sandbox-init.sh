@@ -154,25 +154,43 @@ else
     echo "[INFO] Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
 fi
 
-# --- 4b2. Auth-State fuer Claude bind-mounten (persistiert Logins) ---
-# Claude Code legt OAuth-Tokens, Konfig und globale Memory unter
-# /home/$SANDBOX_USER/.claude/ ab. Ohne Persistierung waere dieser Ordner
-# in jeder ephemeren Sandbox-Distro leer → bei jedem Start neuer Login.
-# Mit dem Bind-Mount bleibt der Stand ueber Sessions erhalten.
-# Flag fuer Schritt 7: unterdruecken dann das Kopieren von CLAUDE.md, weil
-# die Datei bereits im persistenten Ordner liegt (von wsl-ai-start.sh).
-CLAUDE_AUTH_PERSISTED=false
-if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE/claude" ]; then
-    CLAUDE_STATE="/home/$SANDBOX_USER/.claude"
-    mkdir -p "$CLAUDE_STATE"
-    if mount --bind "$AUTH_BASE/claude" "$CLAUDE_STATE" 2>/dev/null; then
-        mount -o remount,nosymfollow,nodev "$CLAUDE_STATE" 2>/dev/null || true
-        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$CLAUDE_STATE" 2>/dev/null || true
-        CLAUDE_AUTH_PERSISTED=true
-        echo "[OK] Mount: Claude Auth-State (persistent — Login bleibt erhalten)"
-    else
-        echo "[WARN] Claude Auth-State konnte nicht gemountet werden — Login wird nicht persistiert"
+# --- 4b2. Auth-State der Agent-CLIs bind-mounten (persistiert Logins) ---
+# Jede Agent-CLI legt OAuth/API-Keys und Konfig in einem eigenen Home-
+# relativen Ordner ab. Ohne Persistierung waere der Ordner in jeder
+# ephemeren Sandbox-Distro leer → bei jedem Start muesste der User neu
+# einloggen. Mit dem Bind-Mount bleibt der Stand ueber Sessions erhalten.
+#
+# Mapping muss zu $AGENTBOX_AUTH_AGENTS in wsl-ai-start.sh passen
+# (gleicher Satz an Agent-IDs, selbe Subdir-Namen unter $AUTH_BASE).
+_auth_mount_agent() {
+    local _agent="$1"
+    local _home_rel="$2"
+    local _src="$AUTH_BASE/$_agent"
+    [ -d "$_src" ] || return 1
+    local _dst="/home/$SANDBOX_USER/$_home_rel"
+    mkdir -p "$_dst"
+    if mount --bind "$_src" "$_dst" 2>/dev/null; then
+        mount -o remount,nosymfollow,nodev "$_dst" 2>/dev/null || true
+        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$_dst" 2>/dev/null || true
+        echo "[OK] Mount: $_agent Auth-State ($_home_rel)"
+        return 0
     fi
+    echo "[WARN] $_agent Auth-Mount fehlgeschlagen — Login wird nicht persistiert"
+    return 1
+}
+
+# Flag fuer Schritt 7: unterdruecken dann das Kopieren von CLAUDE.md,
+# weil die Datei im gemounteten Claude-Ordner bereits liegt und wir die
+# User-Session-History nicht ueberschreiben wollen.
+CLAUDE_AUTH_PERSISTED=false
+if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
+    if _auth_mount_agent claude ".claude"; then
+        CLAUDE_AUTH_PERSISTED=true
+    fi
+    _auth_mount_agent codex  ".codex"  || true
+    _auth_mount_agent gemini ".gemini" || true
+    _auth_mount_agent aider  ".aider"  || true
+    _auth_mount_agent goose  ".config/goose" || true
 fi
 
 # --- 4c. Windows-Laufwerke unmounten (Sandbox-Isolation) ---

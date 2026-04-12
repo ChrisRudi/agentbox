@@ -614,34 +614,42 @@ mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/pip"
 
 # --- 8c. Auth-State anlegen (persistiert Agent-Logins ueber Sessions) ---
 # Problem: jede agentbox-Session importiert eine frische Sandbox-Distro
-# und unregistriert sie hinterher. /home/$SANDBOX_USER/.claude/ (wo Claude
-# Code seine OAuth-Credentials und Konfiguration ablegt) ist damit jedes
-# Mal leer → der User muesste bei jedem Start neu einloggen.
+# und unregistriert sie hinterher. Die Auth-Ordner der Agent-CLIs
+# (~/.claude/, ~/.codex/, ~/.gemini/ etc.) sind damit jedes Mal leer →
+# der User muesste bei jedem Start neu einloggen.
 #
 # Loesung: wir halten den Auth-State auf Host-Seite unter
 # %LOCALAPPDATA%\agentbox\auth\<agent>\ vor und bind-mounten ihn in die
 # Sandbox. Bewusst NICHT unter _control/cache/, weil _control in OneDrive
 # liegt — OAuth-Tokens haben in einem Cloud-synchronisierten Ordner nichts
 # verloren.
+#
+# Agent-IDs dieser Liste muessen zu den Keys in _auth_mount_agent()
+# in wsl-sandbox-init.sh passen (Home-relative Pfade stehen dort).
+AGENTBOX_AUTH_AGENTS="claude codex gemini aider goose"
+
 AUTH_BASE=""
 _win_lad=$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
 if [ -n "$_win_lad" ]; then
     _lin_lad=$(wslpath -u "$_win_lad" 2>/dev/null || true)
     if [ -n "$_lin_lad" ] && [ -d "$_lin_lad" ]; then
         AUTH_BASE="$_lin_lad/agentbox/auth"
-        mkdir -p "$AUTH_BASE/claude"
-        # SYSTEM_META_PROMPT.md als globale Claude-Code-Memory in den
-        # persistenten Ordner schreiben. Ueberschreiben ist bewusst: das
-        # ist der agentbox-Vertrag, nicht user-editierbar — bei einem
-        # agentbox-Update soll der Agent auch die neue Version sehen.
+        for _aid in $AGENTBOX_AUTH_AGENTS; do
+            mkdir -p "$AUTH_BASE/$_aid"
+        done
+        # SYSTEM_META_PROMPT.md als globale Claude-Code-Memory im
+        # Claude-Auth-Ordner ablegen (Claude Code laedt ~/.claude/CLAUDE.md
+        # automatisch als globalen Kontext). Ueberschreiben ist bewusst:
+        # das ist der agentbox-Vertrag, nicht user-editierbar — bei einem
+        # agentbox-Update soll der Agent die neue Version sehen.
         if [ -f /etc/agentbox/SYSTEM_META_PROMPT.md ]; then
             cp /etc/agentbox/SYSTEM_META_PROMPT.md "$AUTH_BASE/claude/CLAUDE.md" 2>/dev/null || true
         fi
-        log_ok "Auth-Cache: $AUTH_BASE (Claude-Login persistiert)"
+        log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_AGENTS)"
     fi
 fi
 if [ -z "$AUTH_BASE" ]; then
-    log_warn "LOCALAPPDATA nicht ermittelbar — Claude-Login wird NICHT persistiert"
+    log_warn "LOCALAPPDATA nicht ermittelbar — Agent-Logins werden NICHT persistiert"
 fi
 
 # --- 9. Alte status_*.json loeschen ---
