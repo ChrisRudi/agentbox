@@ -300,18 +300,31 @@ with zipfile.ZipFile('$_tmp_zip') as z:
                 if [ "$_update_ok" = true ]; then
                     echo -e "         ${GREEN}[OK] Update auf Version $_remote_version erfolgreich.${NC}"
 
-                    # Pruefen ob Template-Rebuild noetig (Agent-Config geaendert?)
+                    # Pruefen ob Template-Rebuild noetig (Agent-Config geaendert?).
+                    # Format MUSS mit Get-AgentboxConfigHash in win-setup-core.ps1
+                    # uebereinstimmen — sonst schlaegt der Vergleich immer fehl und
+                    # wir zeigen die Rebuild-Empfehlung nach jedem Update, auch wenn
+                    # sich garnichts geaendert hat.
                     _cfg_hash_file="$CONTROL_DIR/sandbox/.config_hash"
                     _current_hash=""
                     if command -v python3 &> /dev/null && [ -f "$AGENTBOX_CONFIG" ]; then
                         _current_hash=$(python3 -c "
 import json, hashlib
+def ps_str(v):
+    # PowerShell interpolation: \$true -> 'True', \$false -> 'False'.
+    if v is True: return 'True'
+    if v is False: return 'False'
+    return str(v)
 try:
     with open('$AGENTBOX_CONFIG') as f:
         data = json.load(f)
-    keys = sorted(k for k in data if k.startswith('agent_') or k in ('ubuntu_image_url','nodejs_setup_url'))
-    h = hashlib.md5(json.dumps({k: data[k] for k in keys}).encode()).hexdigest()
-    print(h)
+    parts = sorted(
+        f'{k}={ps_str(data[k])}'
+        for k in data
+        if k.startswith('agent_') or k in ('ubuntu_image_url','nodejs_setup_url')
+    )
+    combined = '|'.join(parts)
+    print(hashlib.md5(combined.encode('utf-8')).hexdigest())
 except:
     print('')
 " 2>/dev/null)

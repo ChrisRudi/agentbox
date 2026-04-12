@@ -64,6 +64,51 @@ function Get-AgentboxConfigHash {
     return ($md5.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
 }
 
+# Registriert die Windows Event-Source und den Scheduled Task, den der
+# win-task-runner.ps1 an jedem Login braucht. Wird aus zwei Stellen aufgerufen:
+# 1) wenn der Template-Build uebersprungen wird (Config-Hash unveraendert), und
+# 2) am Ende eines vollstaendigen Builds. Vorher war der Code an beiden Stellen
+# kopiert — mit leicht abweichender Task-Description und damit Drift-Risiko.
+function Register-AgentboxTaskRunner {
+    param($cfg, [Parameter(Mandatory)][string]$ScriptDir)
+
+    Write-Host "Registriere Windows Event-Source..." -ForegroundColor Cyan
+    $eventSource = if ($cfg -and $cfg.event_log_source) { $cfg.event_log_source } else { "AIProjects" }
+    if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
+        [System.Diagnostics.EventLog]::CreateEventSource($eventSource, "Application")
+        Write-Host "[OK] Event-Source '$eventSource' registriert" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] Event-Source '$eventSource' bereits vorhanden" -ForegroundColor Green
+    }
+
+    Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
+    $taskName = if ($cfg -and $cfg.scheduled_task_name) { $cfg.scheduled_task_name } else { "agentbox-task-runner" }
+    $runnerScript = Join-Path $ScriptDir "win-task-runner.ps1"
+
+    $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false }
+
+    $action = New-ScheduledTaskAction `
+        -Execute "powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once" `
+        -WorkingDirectory $ScriptDir
+    $trigger = New-ScheduledTaskTrigger -AtLogon
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable
+
+    Register-ScheduledTask `
+        -TaskName $taskName `
+        -Action $action `
+        -Trigger $trigger `
+        -Settings $settings `
+        -Description "agentbox Task Runner — verarbeitet Build/Deploy-Tasks von AI-Agenten" `
+        -RunLevel Highest | Out-Null
+
+    Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
+}
+
 $configHashFile = Join-Path $sandboxDir ".config_hash"
 $currentHash = Get-AgentboxConfigHash -cfg $config
 
@@ -80,29 +125,7 @@ if ((Test-Path $templatePath) -and (Test-Path $configHashFile)) {
 
         # --- Direkt zu Event-Source + Scheduled Task springen ---
         Write-Host ""
-        Write-Host "Registriere Windows Event-Source..." -ForegroundColor Cyan
-        $eventSource = if ($config -and $config.event_log_source) { $config.event_log_source } else { "AIProjects" }
-        if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
-            [System.Diagnostics.EventLog]::CreateEventSource($eventSource, "Application")
-            Write-Host "[OK] Event-Source '$eventSource' registriert" -ForegroundColor Green
-        } else {
-            Write-Host "[OK] Event-Source '$eventSource' bereits vorhanden" -ForegroundColor Green
-        }
-
-        Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
-        $taskName = if ($config -and $config.scheduled_task_name) { $config.scheduled_task_name } else { "agentbox-task-runner" }
-        $runnerScript = Join-Path $scriptDir "win-task-runner.ps1"
-        $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-        if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false }
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-            -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once" `
-            -WorkingDirectory $scriptDir
-        $trigger = New-ScheduledTaskTrigger -AtLogon
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-            -DontStopIfGoingOnBatteries -StartWhenAvailable
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-            -Settings $settings -Description "agentbox Task Runner" -RunLevel Highest | Out-Null
-        Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
+        Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
 
         Write-Host ""
         Write-Host "=== Setup abgeschlossen (Template aus Cache) ===" -ForegroundColor Green
@@ -321,7 +344,9 @@ foreach ($aid in $agentIds) {
     $isEnabled = $false
     if ($config -and (Get-Member -InputObject $config -Name $enabledProp -MemberType NoteProperty)) {
         $isEnabled = $config.$enabledProp
-    } elseif ($aid -in @("claude", "codex")) {
+    } elseif ($aid -in @("claude", "codex", "gemini")) {
+        # Muss mit dem Install-Block oben uebereinstimmen — sonst wuerde ein
+        # Default-enabled Agent zwar installiert, aber nicht verifiziert.
         $isEnabled = $true
     }
     if (-not $isEnabled) { continue }
@@ -458,52 +483,9 @@ if (Test-Path $tempSetup) {
 }
 Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 
-# --- 10. Windows Event-Source registrieren ---
+# --- 10. Event-Source + Scheduled Task registrieren ---
 Write-Host ""
-Write-Host "Registriere Windows Event-Source..." -ForegroundColor Cyan
-
-$eventSource = if ($config -and $config.event_log_source) { $config.event_log_source } else { "AIProjects" }
-$eventLog = "Application"
-
-if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
-    [System.Diagnostics.EventLog]::CreateEventSource($eventSource, $eventLog)
-    Write-Host "[OK] Event-Source '$eventSource' registriert" -ForegroundColor Green
-} else {
-    Write-Host "[OK] Event-Source '$eventSource' bereits vorhanden" -ForegroundColor Green
-}
-
-# --- 11. Scheduled Task anlegen ---
-Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
-
-$taskName = if ($config -and $config.scheduled_task_name) { $config.scheduled_task_name } else { "agentbox-task-runner" }
-$runnerScript = Join-Path $scriptDir "win-task-runner.ps1"
-
-$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-if ($existingTask) {
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-}
-
-$action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once" `
-    -WorkingDirectory $scriptDir
-
-$trigger = New-ScheduledTaskTrigger -AtLogon
-
-$settings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable
-
-Register-ScheduledTask `
-    -TaskName $taskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Settings $settings `
-    -Description "agentbox Task Runner — verarbeitet Build/Deploy-Tasks von AI-Agenten" `
-    -RunLevel Highest | Out-Null
-
-Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
+Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
 
 # --- Fertig ---
 Write-Host ""
