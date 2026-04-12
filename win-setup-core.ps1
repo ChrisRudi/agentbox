@@ -39,19 +39,18 @@ try {
 Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 
 # --- 1b. Template-Rebuild noetig? ---
-# Hash aus config.json (agent_*, *_url) + agentbox Version + installierter Ubuntu-URL.
-# Wenn Template + Hash passen, Template-Build ueberspringen.
+# Hash aus config.json (agent_*, *_url). Version absichtlich NICHT enthalten,
+# damit code-only Updates (z.B. wsl-sandbox-init.sh, install.ps1) keinen
+# teuren Template-Rebuild ausloesen. Template muss nur neu wenn sich Pakete
+# oder Agent-Install-Commands aendern → das steht in config.json.
 function Get-AgentboxConfigHash {
-    param($cfg, $versionFile)
+    param($cfg)
     $parts = @()
     if ($cfg) {
         $parts += ($cfg.PSObject.Properties |
             Where-Object { $_.Name -match '^agent_' -or $_.Name -in @('ubuntu_image_url','nodejs_setup_url') } |
             Sort-Object Name |
             ForEach-Object { "$($_.Name)=$($_.Value)" })
-    }
-    if ($versionFile -and (Test-Path $versionFile)) {
-        $parts += "version=" + (Get-Content -Path $versionFile -Raw -ErrorAction SilentlyContinue).Trim()
     }
     $combined = $parts -join "|"
     $md5 = [System.Security.Cryptography.MD5]::Create()
@@ -60,8 +59,7 @@ function Get-AgentboxConfigHash {
 }
 
 $configHashFile = Join-Path $sandboxDir ".config_hash"
-$versionFile = Join-Path $scriptDir ".version"
-$currentHash = Get-AgentboxConfigHash -cfg $config -versionFile $versionFile
+$currentHash = Get-AgentboxConfigHash -cfg $config
 
 if ((Test-Path $templatePath) -and (Test-Path $configHashFile)) {
     $savedHash = ""
