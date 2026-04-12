@@ -227,7 +227,16 @@ if [ "$_auto_update" = "true" ]; then
 
         date +%s > "$_last_check_file"
 
+        # Nur updaten wenn remote tatsaechlich neuer ist (lexikografischer Vergleich
+        # reicht bei semver-artigen Versionen wie 3.4.5)
+        _need_update=false
         if [ -n "$_remote_version" ] && [ -n "$_local_version" ] && [ "$_local_version" != "$_remote_version" ]; then
+            _newer=$(printf '%s\n%s\n' "$_local_version" "$_remote_version" | sort -V | tail -1)
+            if [ "$_newer" = "$_remote_version" ]; then
+                _need_update=true
+            fi
+        fi
+        if [ "$_need_update" = true ]; then
             echo ""
             echo -e "${CYAN}[UPDATE]${NC} Neue agentbox-Version verfuegbar! ($YELLOW$_local_version${NC} → ${GREEN}$_remote_version${NC})"
             echo -n "         Jetzt aktualisieren? [J/n] "
@@ -630,6 +639,14 @@ fi
 
 echo "[INFO] Import-Ziel: $WIN_TEMP_DIR"
 echo "[INFO] Template: $WIN_TEMPLATE"
+
+# Alte Sandbox-Distro mit demselben Namen entfernen falls vorhanden
+_existing=$(wsl.exe -l -q 2>/dev/null | tr -d '\000' | tr -d '\r' | grep -Fx "$DISTRO_NAME" || true)
+if [ -n "$_existing" ]; then
+    log_info "Entferne alte Sandbox-Distro: $DISTRO_NAME"
+    wsl.exe --unregister "$DISTRO_NAME" 2>&1 | tr -d '\000' || true
+fi
+
 wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1
 if [ $? -ne 0 ]; then
     log_error "WSL-Import fehlgeschlagen."
@@ -710,9 +727,10 @@ if [ ! -f "$AGENTBOX_CONFIG" ]; then
     : "${CFG_REG_PYTHON:=pypi.org files.pythonhosted.org}"
 fi
 
-WIN_CACHE_DIR=$(wslpath -w "$CACHE_DIR" 2>/dev/null || echo "$CACHE_DIR")
+# Linux-Pfade an sandbox-init.sh uebergeben (Backslashes wuerden beim
+# Argumentpassing durch wsl.exe teilweise verschluckt)
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
-    "$WIN_PROJECT_DIR" "$AGENT_CMD" "$WIN_CACHE_DIR" \
+    "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
     "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON"
 EXIT_CODE=$?
 
