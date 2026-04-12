@@ -38,6 +38,81 @@ try {
 }
 Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 
+# --- 1b. Template-Rebuild noetig? ---
+# Hash aus config.json (agent_*, *_url) + agentbox Version + installierter Ubuntu-URL.
+# Wenn Template + Hash passen, Template-Build ueberspringen.
+function Get-AgentboxConfigHash {
+    param($cfg, $versionFile)
+    $parts = @()
+    if ($cfg) {
+        $parts += ($cfg.PSObject.Properties |
+            Where-Object { $_.Name -match '^agent_' -or $_.Name -in @('ubuntu_image_url','nodejs_setup_url') } |
+            Sort-Object Name |
+            ForEach-Object { "$($_.Name)=$($_.Value)" })
+    }
+    if ($versionFile -and (Test-Path $versionFile)) {
+        $parts += "version=" + (Get-Content -Path $versionFile -Raw -ErrorAction SilentlyContinue).Trim()
+    }
+    $combined = $parts -join "|"
+    $md5 = [System.Security.Cryptography.MD5]::Create()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($combined)
+    return ($md5.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
+}
+
+$configHashFile = Join-Path $sandboxDir ".config_hash"
+$versionFile = Join-Path $scriptDir ".version"
+$currentHash = Get-AgentboxConfigHash -cfg $config -versionFile $versionFile
+
+if ((Test-Path $templatePath) -and (Test-Path $configHashFile)) {
+    $savedHash = ""
+    try { $savedHash = (Get-Content -Path $configHashFile -Raw -ErrorAction SilentlyContinue).Trim() } catch {}
+    if ($savedHash -eq $currentHash) {
+        $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
+        Write-Host ""
+        Write-Host "[OK] Template bereits aktuell — ueberspringe Build" -ForegroundColor Green
+        Write-Host "     Pfad: $templatePath ($templateSize MB)" -ForegroundColor Gray
+        Write-Host "     Hash: $savedHash" -ForegroundColor Gray
+        Write-Host "     Erzwinge Rebuild: loesche $configHashFile oder aendere config.json" -ForegroundColor Gray
+
+        # --- Direkt zu Event-Source + Scheduled Task springen ---
+        Write-Host ""
+        Write-Host "Registriere Windows Event-Source..." -ForegroundColor Cyan
+        $eventSource = if ($config -and $config.event_log_source) { $config.event_log_source } else { "AIProjects" }
+        if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
+            [System.Diagnostics.EventLog]::CreateEventSource($eventSource, "Application")
+            Write-Host "[OK] Event-Source '$eventSource' registriert" -ForegroundColor Green
+        } else {
+            Write-Host "[OK] Event-Source '$eventSource' bereits vorhanden" -ForegroundColor Green
+        }
+
+        Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
+        $taskName = if ($config -and $config.scheduled_task_name) { $config.scheduled_task_name } else { "agentbox-task-runner" }
+        $runnerScript = Join-Path $scriptDir "win-task-runner.ps1"
+        $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($existingTask) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false }
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once" `
+            -WorkingDirectory $scriptDir
+        $trigger = New-ScheduledTaskTrigger -AtLogon
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries -StartWhenAvailable
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+            -Settings $settings -Description "agentbox Task Runner" -RunLevel Highest | Out-Null
+        Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
+
+        Write-Host ""
+        Write-Host "=== Setup abgeschlossen (Template aus Cache) ===" -ForegroundColor Green
+        Write-Host ""
+        $agentboxSkipBuild = $true
+    } else {
+        Write-Host "[INFO] Config/Version geaendert — Template wird neu gebaut" -ForegroundColor Yellow
+        Write-Host "       Gespeichert: $savedHash" -ForegroundColor Gray
+        Write-Host "       Aktuell:     $currentHash" -ForegroundColor Gray
+    }
+}
+
+if (-not $agentboxSkipBuild) {
+
 # --- 2. Ubuntu-Minimal herunterladen ---
 Write-Host ""
 Write-Host "Lade Ubuntu-Minimal herunter..." -ForegroundColor Cyan
@@ -312,19 +387,9 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Config-Hash speichern (fuer Auto-Update Rebuild-Erkennung)
-$configHashFile = Join-Path $sandboxDir ".config_hash"
+# Config-Hash speichern (fuer naechsten Skip-Check)
 try {
-    if ($config) {
-        $hashKeys = ($config.PSObject.Properties |
-            Where-Object { $_.Name -match '^agent_' -or $_.Name -in @('ubuntu_image_url','nodejs_setup_url') } |
-            Sort-Object Name |
-            ForEach-Object { "$($_.Name)=$($_.Value)" }) -join "|"
-        $md5 = [System.Security.Cryptography.MD5]::Create()
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($hashKeys)
-        $hash = ($md5.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join ""
-        $hash | Out-File -FilePath $configHashFile -Encoding ascii -NoNewline
-    }
+    $currentHash | Out-File -FilePath $configHashFile -Encoding ascii -NoNewline
 } catch { }
 
 $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
@@ -389,3 +454,5 @@ Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
 Write-Host ""
 Write-Host "=== Setup abgeschlossen ===" -ForegroundColor Green
 Write-Host ""
+
+} # end if (-not $agentboxSkipBuild)
