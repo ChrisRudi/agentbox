@@ -170,6 +170,7 @@ fi
 TEMPLATE_PATH="$CONTROL_DIR/sandbox/template.tar.gz"
 SANDBOX_INIT="$CONTROL_DIR/wsl-sandbox-init.sh"
 TYPE_DEFAULTS="$CONTROL_DIR/type_defaults.json"
+AGENTBOX_CONFIG="$CONTROL_DIR/config.json"
 
 # Farben
 RED='\033[0;31m'
@@ -363,29 +364,53 @@ if [ ${#projects[@]} -eq 0 ]; then
     exit 1
 fi
 
-# --- 4. Projekt auswaehlen ---
-echo "Welches Projekt?"
-echo ""
-for i in "${!projects[@]}"; do
-    pname=$(basename "${projects[$i]}")
-    suffix=""
-    if [ "$i" -eq 0 ]; then suffix=" (zuletzt)"; fi
-    echo "  [$((i+1))] $pname$suffix"
+# Hidden-Projekte ausfiltern (.agentbox-hidden marker)
+visible_projects=()
+hidden_projects=()
+for _p in "${projects[@]}"; do
+    if [ -f "$_p/.agentbox-hidden" ]; then
+        hidden_projects+=("$_p")
+    else
+        visible_projects+=("$_p")
+    fi
 done
-echo ""
+projects=("${visible_projects[@]}")
 
-read -r -p "Auswahl [1]: " choice
-choice=${choice:-1}
-
-if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#projects[@]} ]; then
-    log_error "Ungueltige Auswahl."
+if [ ${#projects[@]} -eq 0 ]; then
+    log_warn "Alle Projektordner sind versteckt. Nutze [c] Konfiguration um sie wieder einzublenden."
     exit 1
 fi
 
-PROJECT_DIR="${projects[$((choice-1))]}"
-PROJECT_NAME=$(basename "$PROJECT_DIR")
+# --- 4. Projekt auswaehlen ---
+# Auto-Select wenn nur eine Option vorhanden
+if [ ${#projects[@]} -eq 1 ]; then
+    PROJECT_DIR="${projects[0]}"
+    PROJECT_NAME=$(basename "$PROJECT_DIR")
+    log_ok "Projekt: $PROJECT_NAME (automatisch gewaehlt — einziges Projekt)"
+else
+    echo "Welches Projekt?"
+    echo ""
+    for i in "${!projects[@]}"; do
+        pname=$(basename "${projects[$i]}")
+        suffix=""
+        if [ "$i" -eq 0 ]; then suffix=" (zuletzt)"; fi
+        echo "  [$((i+1))] $pname$suffix"
+    done
+    echo ""
 
-log_ok "Projekt: $PROJECT_NAME"
+    read -r -p "Auswahl [1]: " choice
+    choice=${choice:-1}
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#projects[@]} ]; then
+        log_error "Ungueltige Auswahl."
+        exit 1
+    fi
+
+    PROJECT_DIR="${projects[$((choice-1))]}"
+    PROJECT_NAME=$(basename "$PROJECT_DIR")
+
+    log_ok "Projekt: $PROJECT_NAME"
+fi
 
 # --- 5. project.json pruefen/generieren ---
 PROJECT_JSON="$PROJECT_DIR/project.json"
@@ -482,62 +507,185 @@ mkdir -p "$CACHE_DIR/npm" "$CACHE_DIR/pip"
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
 log_ok "Alte Status-Dateien bereinigt"
 
-# --- 10. Agent auswaehlen ---
+# --- 10. Agent auswaehlen (mit Config-Menue) ---
+# Hilfsfunktion: aktivierte Agents aus config.json laden
+_load_enabled_agents() {
+    agents=()
+    agent_cmds=()
+    if type cfg_get_agents &> /dev/null; then
+        while IFS=: read -r _aid _aname _acmd; do
+            if [ -n "$_acmd" ]; then
+                agents+=("$_aname")
+                agent_cmds+=("$_acmd")
+            fi
+        done < <(cfg_get_agents)
+    fi
+    # Fallback: hardcoded falls config.sh nicht geladen
+    if [ ${#agents[@]} -eq 0 ]; then
+        agents=("Claude Code" "OpenAI Codex")
+        agent_cmds=("claude" "codex")
+    fi
+}
+
+# Config-Untermenue: Agents toggle + Projekte verstecken
+_config_menu() {
+    while true; do
+        echo ""
+        echo -e "${CYAN}=== Konfiguration ===${NC}"
+        echo ""
+        echo "  [1] Agents aktivieren/deaktivieren"
+        echo "  [2] Projekte verstecken/einblenden"
+        echo "  [q] Zurueck"
+        echo ""
+        read -r -p "Auswahl: " _cfg_choice
+        case "$_cfg_choice" in
+            1) _toggle_agents_menu ;;
+            2) _toggle_projects_menu ;;
+            q|Q|"") return ;;
+            *) echo "Ungueltige Auswahl." ;;
+        esac
+    done
+}
+
+_toggle_agents_menu() {
+    echo ""
+    echo -e "${CYAN}--- Agents ---${NC}"
+    echo "Aenderungen werden in config.json gespeichert. Template-Rebuild folgt beim naechsten Start."
+    echo ""
+    local _aids=("claude" "codex" "gemini" "aider" "goose")
+    local _names=("Claude Code" "OpenAI Codex" "Gemini CLI" "Aider" "Goose")
+    for i in "${!_aids[@]}"; do
+        local _aid="${_aids[$i]}"
+        local _name="${_names[$i]}"
+        local _enabled
+        _enabled=$(python3 -c "
+import json
+try:
+    with open('$AGENTBOX_CONFIG') as f: print('on' if json.load(f).get('agent_${_aid}_enabled') else 'off')
+except: print('off')
+" 2>/dev/null)
+        local _mark="[ ]"
+        [ "$_enabled" = "on" ] && _mark="[x]"
+        echo "  [$((i+1))] $_mark $_name"
+    done
+    echo "  [q] Zurueck"
+    echo ""
+    read -r -p "Nummer zum Umschalten: " _ag_choice
+    case "$_ag_choice" in
+        q|Q|"") return ;;
+        *)
+            if [[ "$_ag_choice" =~ ^[0-9]+$ ]] && [ "$_ag_choice" -ge 1 ] && [ "$_ag_choice" -le ${#_aids[@]} ]; then
+                local _aid="${_aids[$((_ag_choice-1))]}"
+                python3 -c "
+import json
+with open('$AGENTBOX_CONFIG') as f: cfg = json.load(f)
+key = 'agent_${_aid}_enabled'
+cfg[key] = not cfg.get(key, False)
+with open('$AGENTBOX_CONFIG', 'w') as f: json.dump(cfg, f, indent=2, ensure_ascii=False)
+print(f'[OK] {key} = {cfg[key]}')
+" 2>&1
+                _toggle_agents_menu
+            fi
+            ;;
+    esac
+}
+
+_toggle_projects_menu() {
+    echo ""
+    echo -e "${CYAN}--- Projekte ---${NC}"
+    echo "[x] = sichtbar, [ ] = versteckt"
+    echo ""
+    local _all=()
+    while IFS= read -r _dir; do
+        [ -n "$_dir" ] && _all+=("$_dir")
+    done < <(find "$AI_PROJECTS_ROOT" -maxdepth 1 -mindepth 1 -type d \
+        -not -name "_control" -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+
+    if [ ${#_all[@]} -eq 0 ]; then
+        echo "Keine Projektordner gefunden."
+        return
+    fi
+
+    for i in "${!_all[@]}"; do
+        local _p="${_all[$i]}"
+        local _pname
+        _pname=$(basename "$_p")
+        local _mark="[x]"
+        [ -f "$_p/.agentbox-hidden" ] && _mark="[ ]"
+        echo "  [$((i+1))] $_mark $_pname"
+    done
+    echo "  [q] Zurueck"
+    echo ""
+    read -r -p "Nummer zum Umschalten: " _proj_choice
+    case "$_proj_choice" in
+        q|Q|"") return ;;
+        *)
+            if [[ "$_proj_choice" =~ ^[0-9]+$ ]] && [ "$_proj_choice" -ge 1 ] && [ "$_proj_choice" -le ${#_all[@]} ]; then
+                local _target="${_all[$((_proj_choice-1))]}"
+                if [ -f "$_target/.agentbox-hidden" ]; then
+                    rm -f "$_target/.agentbox-hidden"
+                    echo "[OK] $(basename "$_target") wieder sichtbar"
+                else
+                    touch "$_target/.agentbox-hidden"
+                    echo "[OK] $(basename "$_target") versteckt"
+                fi
+                _toggle_projects_menu
+            fi
+            ;;
+    esac
+}
+
+# Agent-Auswahl-Loop (mit Config-Menue)
 echo ""
-echo "Welcher Agent?"
-echo ""
+while true; do
+    _load_enabled_agents
 
-agents=()
-agent_cmds=()
-
-# Agents aus config.json laden (nur aktivierte + installierte)
-if type cfg_get_agents &> /dev/null; then
-    while IFS=: read -r _aid _aname _acmd; do
-        if [ -n "$_acmd" ] && command -v "$_acmd" &> /dev/null; then
-            agents+=("$_aname")
-            agent_cmds+=("$_acmd")
-        fi
-    done < <(cfg_get_agents)
-fi
-
-# Fallback: hardcoded Discovery falls config.sh nicht geladen
-if [ ${#agents[@]} -eq 0 ]; then
-    if command -v claude &> /dev/null; then
-        agents+=("Claude Code")
-        agent_cmds+=("claude")
+    if [ ${#agents[@]} -eq 0 ]; then
+        log_error "Kein AI-Agent in config.json aktiviert."
+        echo "Bitte mit [c] in der Konfiguration aktivieren."
+        agents=("(keine)")
+        agent_cmds=("")
     fi
-    if command -v codex &> /dev/null; then
-        agents+=("OpenAI Codex")
-        agent_cmds+=("codex")
-    fi
-    if command -v gemini &> /dev/null; then
-        agents+=("Gemini CLI")
-        agent_cmds+=("gemini")
-    fi
-fi
 
-if [ ${#agents[@]} -eq 0 ]; then
-    log_error "Kein AI-Agent installiert."
-    echo "Bitte zuerst win-setup.ps1 ausfuehren oder Agents in config.json aktivieren."
-    exit 1
-fi
+    # Auto-Select wenn nur ein Agent verfuegbar
+    if [ ${#agents[@]} -eq 1 ] && [ -n "${agent_cmds[0]}" ]; then
+        AGENT_NAME="${agents[0]}"
+        AGENT_CMD="${agent_cmds[0]}"
+        log_ok "Agent: $AGENT_NAME (automatisch gewaehlt — einziger aktiver Agent)"
+        break
+    fi
 
-for i in "${!agents[@]}"; do
-    echo "  [$((i+1))] ${agents[$i]}"
+    echo "Welcher Agent?"
+    echo ""
+    for i in "${!agents[@]}"; do
+        echo "  [$((i+1))] ${agents[$i]}"
+    done
+    echo "  [c] Konfiguration"
+    echo ""
+
+    read -r -p "Auswahl [1]: " agent_choice
+    agent_choice=${agent_choice:-1}
+
+    if [ "$agent_choice" = "c" ] || [ "$agent_choice" = "C" ]; then
+        _config_menu
+        continue
+    fi
+
+    if ! [[ "$agent_choice" =~ ^[0-9]+$ ]] || [ "$agent_choice" -lt 1 ] || [ "$agent_choice" -gt ${#agents[@]} ]; then
+        echo "Ungueltige Auswahl."
+        continue
+    fi
+
+    if [ -z "${agent_cmds[$((agent_choice-1))]}" ]; then
+        echo "Dieser Agent ist nicht aktiv. Bitte [c] Konfiguration nutzen."
+        continue
+    fi
+
+    AGENT_NAME="${agents[$((agent_choice-1))]}"
+    AGENT_CMD="${agent_cmds[$((agent_choice-1))]}"
+    log_ok "Agent: $AGENT_NAME"
+    break
 done
-echo ""
-
-read -r -p "Auswahl [1]: " agent_choice
-agent_choice=${agent_choice:-1}
-
-if ! [[ "$agent_choice" =~ ^[0-9]+$ ]] || [ "$agent_choice" -lt 1 ] || [ "$agent_choice" -gt ${#agents[@]} ]; then
-    log_error "Ungueltige Auswahl."
-    exit 1
-fi
-
-AGENT_CMD="${agent_cmds[$((agent_choice-1))]}"
-AGENT_NAME="${agents[$((agent_choice-1))]}"
-log_ok "Agent: $AGENT_NAME"
 
 # --- 11. Session-Lock pruefen ---
 DISTRO_NAME="agentbox-${PROJECT_NAME}"
