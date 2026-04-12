@@ -18,7 +18,7 @@ AUTH_BASE_IN="${8:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     echo "FEHLER: Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AI_APIS] [REG_NODE] [REG_PYTHON]"
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AI_APIS] [REG_NODE] [REG_PYTHON] [AUTH_BASE]"
     exit 1
 fi
 
@@ -248,7 +248,7 @@ if getent hosts api.anthropic.com >/dev/null 2>&1; then
     echo "[OK] DNS funktioniert (api.anthropic.com aufgeloest)"
 else
     echo "[WARN] DNS-Resolution schlaegt fehl — siehe Log"
-    cat /etc/resolv.conf | sed 's/^/       /'
+    sed 's/^/       /' /etc/resolv.conf
 fi
 
 # --- 5. iptables-Regeln anwenden ---
@@ -387,16 +387,19 @@ if ! [[ "$AGENT_CMD" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     exit 1
 fi
 
-# Agent als unprivilegierter User starten
+# Agent als unprivilegierter User starten.
+# Exit-Code ueber `|| EXIT_CODE=$?` einfangen: unter `set -e` wuerde ein
+# Nicht-Null-Exit des Agents den Script abbrechen — und damit genau die
+# Blockierte-Verbindungen-Diagnostik unten ueberspringen, die fuer den
+# "npm/pip install ist an der Firewall gescheitert"-Fall gedacht ist.
+EXIT_CODE=0
 if command -v "$AGENT_CMD" &> /dev/null; then
-    su - "$SANDBOX_USER" -c "cd '$START_DIR' && exec $AGENT_CMD"
+    su - "$SANDBOX_USER" -c "cd '$START_DIR' && exec $AGENT_CMD" || EXIT_CODE=$?
 else
     echo "FEHLER: Agent '$AGENT_CMD' nicht in der Sandbox installiert."
     echo "Bitte Agent in config.json aktivieren und win-setup.ps1 erneut ausfuehren (Template-Rebuild)."
     exit 1
 fi
-
-EXIT_CODE=$?
 
 # --- 10. Blockierte Verbindungen analysieren ---
 echo ""

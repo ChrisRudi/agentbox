@@ -70,7 +70,7 @@ done
 
 # --- Compare-Modus: Zwei Sessions vergleichen ---
 if [ "$COMPARE_MODE" = true ]; then
-    _sessions_dir="${AI_PROJECTS_ROOT:-$(echo $HOME)}/_control/sessions"
+    _sessions_dir="${AI_PROJECTS_ROOT:-$HOME}/_control/sessions"
     _s1="$_sessions_dir/${COMPARE_SESSIONS[0]}"
     _s2="$_sessions_dir/${COMPARE_SESSIONS[1]}"
 
@@ -228,8 +228,8 @@ if [ "$_auto_update" = "true" ]; then
 
         date +%s > "$_last_check_file"
 
-        # Nur updaten wenn remote tatsaechlich neuer ist (lexikografischer Vergleich
-        # reicht bei semver-artigen Versionen wie 3.4.5)
+        # Nur updaten wenn remote tatsaechlich neuer ist (sort -V = Version-
+        # Vergleich, korrekt fuer semver-artige Versionen wie 3.4.5 vs 3.10.0)
         _need_update=false
         if [ -n "$_remote_version" ] && [ -n "$_local_version" ] && [ "$_local_version" != "$_remote_version" ]; then
             _newer=$(printf '%s\n%s\n' "$_local_version" "$_remote_version" | sort -V | tail -1)
@@ -944,8 +944,10 @@ if [ -n "$_existing" ]; then
     wsl.exe --unregister "$DISTRO_NAME" 2>&1 | tr -d '\000' || true
 fi
 
-wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1
-if [ $? -ne 0 ]; then
+# `if !` umgeht set -e und laesst uns auf Fehler reagieren. Vorher stand hier
+# `wsl.exe --import ...; if [ $? -ne 0 ]; ...` — das war unter set -e toter
+# Code, weil set -e den Script bereits vor dem if beenden wuerde.
+if ! wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1; then
     log_error "WSL-Import fehlgeschlagen."
     exit 1
 fi
@@ -1025,12 +1027,15 @@ if [ ! -f "$AGENTBOX_CONFIG" ]; then
 fi
 
 # Linux-Pfade an sandbox-init.sh uebergeben (Backslashes wuerden beim
-# Argumentpassing durch wsl.exe teilweise verschluckt)
+# Argumentpassing durch wsl.exe teilweise verschluckt).
+# Exit-Code ueber `|| EXIT_CODE=$?` einfangen: unter `set -e` wuerde ein
+# Nicht-Null-Exit der Sandbox den Script abbrechen — und damit Watchdog,
+# Session-Diff und Sandbox-Cleanup (Schritte 17-19) ueberspringen.
+EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
     "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON" \
-    "$AUTH_BASE"
-EXIT_CODE=$?
+    "$AUTH_BASE" || EXIT_CODE=$?
 
 # --- 17. Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then
