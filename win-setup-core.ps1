@@ -6,6 +6,12 @@ if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.P
 
 $ErrorActionPreference = "Continue"
 
+# --- UTF-8 Ausgabe fuer wsl.exe erzwingen (sonst UTF-16LE → Mojibake in PS 5.1) ---
+# Wirkt auch wenn dieses Script direkt (ohne install.ps1) ausgefuehrt wird.
+$env:WSL_UTF8 = "1"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 Write-Host ""
 Write-Host "=== agentbox Setup ===" -ForegroundColor Cyan
 Write-Host ""
@@ -155,9 +161,25 @@ if (Test-Path $tempSetup) {
 }
 New-Item -ItemType Directory -Path $tempSetup -Force | Out-Null
 
-& wsl.exe --import $distroName $tempSetup $downloadPath 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "FEHLER: WSL-Import fehlgeschlagen." -ForegroundColor Red
+# Output erfassen, damit wir HCS-Fehler (= Reboot noetig) erkennen koennen,
+# ohne den Import-Progress-Output zu verlieren.
+$importOutput = & wsl.exe --import $distroName $tempSetup $downloadPath 2>&1
+$importExit = $LASTEXITCODE
+$importOutput | ForEach-Object { Write-Host $_ }
+if ($importExit -ne 0) {
+    $importText = ($importOutput | Out-String)
+    if ($importText -match 'HCS_E_SERVICE_NOT_AVAILABLE' -or $importText -match 'HCS/HCS_') {
+        Write-Host ""
+        Write-Host "FEHLER: Hyper-V Host Compute Service (vmcompute) nicht verfuegbar." -ForegroundColor Red
+        Write-Host "        Das passiert typischerweise direkt nach 'wsl --install'" -ForegroundColor Yellow
+        Write-Host "        auf einem frischen System: Die VM-Features sind aktiviert," -ForegroundColor Yellow
+        Write-Host "        aber der Dienst startet erst nach einem Neustart." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "        Bitte den PC neu starten und install.ps1 erneut ausfuehren:" -ForegroundColor Yellow
+        Write-Host "          irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex" -ForegroundColor White
+    } else {
+        Write-Host "FEHLER: WSL-Import fehlgeschlagen." -ForegroundColor Red
+    }
     exit 1
 }
 Write-Host "[OK] Temporaere Distro importiert" -ForegroundColor Green

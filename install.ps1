@@ -5,6 +5,13 @@ $env:_AGENTBOX_CRLF = $null
 
 $ErrorActionPreference = "Stop"
 
+# --- UTF-8 Ausgabe fuer wsl.exe erzwingen (sonst UTF-16LE → Mojibake in PS 5.1) ---
+# WSL_UTF8=1 ab WSL 0.64.0 (Win10 2004+, Win11). Zusaetzlich Console-Encoding
+# auf UTF-8 setzen, damit Ausgaben nativer Tools korrekt interpretiert werden.
+$env:WSL_UTF8 = "1"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+
 Write-Host ""
 Write-Host "=== agentbox Installer ===" -ForegroundColor Cyan
 Write-Host "Sandboxed AI Agent Runner fuer Windows + WSL2" -ForegroundColor Gray
@@ -88,24 +95,56 @@ if (-not $wslReady) {
             & wsl.exe --set-default-version 2 2>&1 | Out-Null
         }
 
-        # Pruefen ob Neustart noetig
+        # Pruefen ob Neustart noetig.
+        # `wsl --status` sagt nichts darueber aus, ob der Hyper-V Host Compute
+        # Service (vmcompute) wirklich laeuft — auf frischen Systemen ist das
+        # Feature aktiviert, der Dienst startet aber erst nach einem Reboot.
+        # Ohne diesen Dienst schlaegt spaeter `wsl --import` mit
+        # HCS_E_SERVICE_NOT_AVAILABLE fehl. Daher hier explizit pruefen.
+        $needsReboot = $false
+
         try {
             $wslCheck = & wsl.exe --status 2>&1
-            if ($LASTEXITCODE -ne 0) { throw "WSL noch nicht bereit" }
-            Write-Host "[OK] WSL2 erfolgreich eingerichtet" -ForegroundColor Green
-        } catch {
+            if ($LASTEXITCODE -ne 0) { $needsReboot = $true }
+        } catch { $needsReboot = $true }
+
+        if (-not $needsReboot) {
+            $vmcompute = Get-Service -Name vmcompute -ErrorAction SilentlyContinue
+            if (-not $vmcompute) {
+                # Dienst existiert noch nicht — Feature ist erst nach Reboot aktiv
+                $needsReboot = $true
+            } elseif ($vmcompute.Status -ne 'Running') {
+                try {
+                    Start-Service -Name vmcompute -ErrorAction Stop
+                } catch {
+                    $needsReboot = $true
+                }
+            }
+        }
+
+        # Zusaetzlich CBS Pending-Reboot Flag pruefen (gesetzt wenn ein Feature
+        # aktiviert wurde, dessen Aktivierung einen Reboot verlangt).
+        if (-not $needsReboot) {
+            $cbsPending = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
+            if (Test-Path $cbsPending) { $needsReboot = $true }
+        }
+
+        if ($needsReboot) {
             Write-Host ""
             Write-Host "========================================" -ForegroundColor Yellow
             Write-Host " Neustart erforderlich!                 " -ForegroundColor Yellow
             Write-Host "========================================" -ForegroundColor Yellow
             Write-Host ""
-            Write-Host "WSL2-Features wurden aktiviert. Bitte den PC neu starten" -ForegroundColor Yellow
-            Write-Host "und danach install.ps1 erneut ausfuehren:" -ForegroundColor Yellow
+            Write-Host "WSL2-Features wurden aktiviert, aber der Hyper-V Host" -ForegroundColor Yellow
+            Write-Host "Compute Service (vmcompute) laeuft erst nach einem Reboot." -ForegroundColor Yellow
+            Write-Host "Bitte den PC neu starten und install.ps1 erneut ausfuehren:" -ForegroundColor Yellow
             Write-Host ""
             Write-Host "  irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex" -ForegroundColor White
             Write-Host ""
             exit 0
         }
+
+        Write-Host "[OK] WSL2 erfolgreich eingerichtet" -ForegroundColor Green
     }
 } else {
     Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
@@ -323,8 +362,10 @@ Write-Host ""
 Write-Host "Fuehre win-setup.ps1 aus (Template, Event-Source, Task)..." -ForegroundColor Cyan
 Write-Host ""
 
+$setupOk = $true
 & $setupScript
 if ($LASTEXITCODE -ne 0) {
+    $setupOk = $false
     Write-Host "WARNUNG: win-setup.ps1 meldete Fehler. Bitte manuell pruefen." -ForegroundColor Yellow
 }
 
@@ -345,10 +386,20 @@ $conflictPatterns = @(
 )
 $bashrcPath = "~/.bashrc"
 $patternList = $conflictPatterns -join '|'
-$conflictCheck = & wsl.exe bash -c "grep -E '$patternList' $bashrcPath 2>/dev/null | head -1" 2>&1
-if ($conflictCheck -and "$conflictCheck".Trim() -ne "") {
+# Exit-Code-basierte Pruefung statt Output-Capture:
+# - grep -q: exit 0 bei Treffer, 1 sonst
+# - Wenn wsl.exe selbst scheitert (z.B. keine Distros installiert), liefert
+#   es einen Nicht-Null Exit-Code und wir ueberspringen den Cleanup korrekt.
+& wsl.exe bash -c "grep -qE '$patternList' $bashrcPath" 2>$null
+$conflictFound = ($LASTEXITCODE -eq 0)
+$conflictLine = ""
+if ($conflictFound) {
+    $conflictLine = & wsl.exe bash -c "grep -m1 -E '$patternList' $bashrcPath" 2>$null
+    $conflictLine = "$conflictLine".Trim()
+}
+if ($conflictFound) {
     Write-Host "[WARN] Fremder AI-Tool-Starter in ~/.bashrc erkannt:" -ForegroundColor Yellow
-    Write-Host "       $conflictCheck" -ForegroundColor Gray
+    if ($conflictLine) { Write-Host "       $conflictLine" -ForegroundColor Gray }
     Write-Host "[INFO] Entferne Konflikt-Block aus ~/.bashrc (Backup: ~/.bashrc.agentbox-backup)" -ForegroundColor Cyan
     # Backup anlegen und Python-Blockentfernung durchfuehren (robuster als sed)
     & wsl.exe bash -c "cp $bashrcPath ~/.bashrc.agentbox-backup" 2>&1 | Out-Null
@@ -385,8 +436,10 @@ else:
     Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
 }
 
-$checkResult = & wsl.exe bash -c "grep -c '$bashrcMarker' ~/.bashrc 2>/dev/null || echo 0" 2>&1
-$alreadyPresent = ($checkResult.Trim() -ne "0")
+# Exit-Code-basierte Pruefung: grep -q ist zuverlaessiger als Output-Capture,
+# und faengt den Fall ab, dass wsl.exe selbst scheitert (keine Distros).
+& wsl.exe bash -c "grep -qF '$bashrcMarker' ~/.bashrc" 2>$null
+$alreadyPresent = ($LASTEXITCODE -eq 0)
 
 if (-not $alreadyPresent) {
     $wslBasePath = & wsl.exe wslpath -u ($baseDir -replace '\\', '/') 2>&1
@@ -485,14 +538,26 @@ try {
 
 # --- 10. Erfolgsmeldung ---
 Write-Host ""
-Write-Host "========================================" -ForegroundColor Green
-Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "Starten:" -ForegroundColor Cyan
-Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
-Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
-Write-Host ""
+if ($setupOk) {
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Starten:" -ForegroundColor Cyan
+    Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
+    Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
+    Write-Host ""
+} else {
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host " agentbox Installation UNVOLLSTAENDIG   " -ForegroundColor Red
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "win-setup.ps1 ist fehlgeschlagen — Template wurde nicht gebaut." -ForegroundColor Yellow
+    Write-Host "Bitte die Fehlermeldung oben pruefen und install.ps1 erneut ausfuehren." -ForegroundColor Yellow
+    Write-Host "Falls ein Reboot verlangt wurde: zuerst neu starten." -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
 
 # --- 11. Direkt starten? ---
 Write-Host "Jetzt agentbox starten? [J/n] (5s Timeout = ja)" -ForegroundColor Cyan -NoNewline
