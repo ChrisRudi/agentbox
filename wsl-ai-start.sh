@@ -613,8 +613,23 @@ log_info "Importiere Sandbox-Distro..."
 # Windows-Pfad fuer WSL-Import
 WIN_PROJECT_DIR=$(wslpath -w "$PROJECT_DIR" 2>/dev/null || echo "$PROJECT_DIR")
 WIN_TEMPLATE=$(wslpath -w "$TEMPLATE_PATH" 2>/dev/null || echo "$TEMPLATE_PATH")
-WIN_TEMP_DIR="${TEMP:-/mnt/c/Users/$USER/AppData/Local/Temp}/agentbox/${PROJECT_NAME}"
 
+# Windows-Temp-Verzeichnis via cmd.exe ermitteln (USERNAME in WSL != Windows)
+WIN_TEMP_BASE=$(cmd.exe /c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' | tr -d '\000')
+if [ -z "$WIN_TEMP_BASE" ]; then
+    # Fallback: WSL-Pfad via wslpath konvertieren
+    WIN_TEMP_BASE=$(wslpath -w /tmp 2>/dev/null || echo "C:\\Temp")
+fi
+WIN_TEMP_DIR="${WIN_TEMP_BASE}\\agentbox\\${PROJECT_NAME}"
+
+# Zielverzeichnis im Voraus aufraeumen falls existiert
+LINUX_TEMP_DIR=$(wslpath -u "$WIN_TEMP_DIR" 2>/dev/null || echo "")
+if [ -n "$LINUX_TEMP_DIR" ] && [ -d "$LINUX_TEMP_DIR" ]; then
+    rm -rf "$LINUX_TEMP_DIR" 2>/dev/null || true
+fi
+
+echo "[INFO] Import-Ziel: $WIN_TEMP_DIR"
+echo "[INFO] Template: $WIN_TEMPLATE"
 wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1
 if [ $? -ne 0 ]; then
     log_error "WSL-Import fehlgeschlagen."
