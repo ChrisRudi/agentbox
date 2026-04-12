@@ -365,13 +365,14 @@ fi
 chown -R "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE" 2>/dev/null || true
 
 # --- 9. Agent starten als Sandbox-User ---
-# Startverzeichnis: /workspace/src — dort liegt der Projektcode. Claude Code
-# findet CLAUDE.md und project.json per Parent-Directory-Traversal auf
-# /workspace automatisch, also ohne Funktionsverlust.
-START_DIR="$WORKSPACE/src"
-if [ ! -d "$START_DIR" ]; then
-    START_DIR="$WORKSPACE"
-fi
+# Startverzeichnis: /workspace — das ist der sichtbare Projekt-Root. Alle
+# Bind-Mounts (CLAUDE.md, project.json, src/, assets/, _tasks/) haengen
+# direkt dort, damit der Agent beim ersten `ls` das komplette Projekt-
+# Layout sieht. Frueher war das /workspace/src, was bei Projekten ohne
+# eigenen src/-Unterordner dazu fuehrte, dass der Projektcode als
+# "Verzeichnis im Verzeichnis" unter /workspace/src versteckt war und
+# der User ihn vom Startpunkt aus nicht mehr fand.
+START_DIR="$WORKSPACE"
 
 echo ""
 echo "======================================"

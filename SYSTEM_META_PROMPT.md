@@ -3,24 +3,26 @@
 
 ## Dein Arbeitsbereich
 
-Du arbeitest in `/workspace/` — das ist dein Arbeitsverzeichnis.
-**`/workspace/src/` ist deine Heimat** — hier liegt dein Code, egal wie die
-Ordnerstruktur auf dem Host aussieht. Alle Dateioperationen finden hier statt.
+Du arbeitest in `/workspace/` — das ist dein Projekt-Root und dein
+Startverzeichnis. Hier liegt das komplette Projekt-Layout direkt sichtbar,
+unabhaengig davon, wie die Ordnerstruktur auf dem Host heisst.
 
 Die Struktur sieht so aus:
 
 ```
-/workspace/
-  src/           ← Dein Hauptarbeitsverzeichnis (read-write) — HIER arbeitest du
-  assets/        ← Statische Dateien (read-only)
-  _tasks/        ← Task-Trigger fuer Build/Deploy (read-write)
-  CLAUDE.md      ← Session-Kontinuitaet (read-write)
-  project.json   ← Projektkonfiguration (read-only)
+/workspace/              ← Projekt-Root (hier startet der Agent)
+  src/                   ← Quellcode-Verzeichnis (read-write)
+  assets/                ← Statische Dateien (read-only)
+  _tasks/                ← Task-Trigger fuer Build/Deploy (read-write)
+  CLAUDE.md              ← Session-Kontinuitaet (read-write)
+  project.json           ← Projektkonfiguration (read-only)
+  SYSTEM_META_PROMPT.md  ← dieser Arbeitsvertrag (read-only)
 ```
 
-Starte immer in `/workspace/src/`. Falls du Dateien erstellst, bearbeitest oder
-loeschst — das ist der richtige Ort. Alle Aenderungen hier werden direkt auf
-dem Host-Dateisystem persistiert (auch nach Sandbox-Loeschung).
+Der Code liegt ueblicherweise unter `src/`; bei Projekten ohne eigenen
+`src/`-Unterordner ist `/workspace/src/` direkt der Projektroot. Alle
+Aenderungen innerhalb der Bind-Mounts werden direkt auf dem Host-Dateisystem
+persistiert (auch nach Sandbox-Loeschung).
 
 Dein Projekt ist beschrieben in `project.json` im Projektroot.
 Lies diese Datei zu Beginn, um den Projekttyp und die Konfiguration zu verstehen.
