@@ -219,34 +219,26 @@ iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 
-# AI-API-Endpoints (immer erlaubt, aus Config)
-for domain in $AI_API_DOMAINS; do
-    # Domain-Validierung (nur Hostnamen, keine Injection)
-    if [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then
-        for ip in $(dig +short "$domain" 2>/dev/null); do
-            if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT 2>/dev/null || true
-            fi
-        done
-    fi
-done
+# Private Netze blockieren (verhindert Zugriff auf Host/LAN-Services)
+iptables -A OUTPUT -d 10.0.0.0/8      -j DROP 2>/dev/null || true
+iptables -A OUTPUT -d 172.16.0.0/12   -j DROP 2>/dev/null || true
+iptables -A OUTPUT -d 192.168.0.0/16  -j DROP 2>/dev/null || true
+iptables -A OUTPUT -d 169.254.0.0/16  -j DROP 2>/dev/null || true
+iptables -A OUTPUT -d 127.0.0.0/8     -j DROP 2>/dev/null || true
 
-# Paketquellen nur wenn fuer Projekttyp relevant
-if [ -n "$PACKAGE_DOMAINS" ]; then
-    for domain in $PACKAGE_DOMAINS; do
-        for ip in $(dig +short "$domain" 2>/dev/null); do
-            if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT 2>/dev/null || true
-            fi
-        done
-    done
-fi
+# HTTPS (Port 443) zu allen non-privaten Routen erlauben
+# Hostname-basiertes Filtering ist mit reinem iptables nicht zuverlaessig machbar
+# (Cloudflare/CDN rotieren IPs). Sicherheit kommt durch Sandbox-Isolation.
+iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+
+# HTTP (Port 80) nur fuer CA-Cert-Revocation-Checks (OCSP), sonst meistens nicht noetig
+iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
 
 # Alles andere loggen und blockieren
 iptables -A OUTPUT -j LOG --log-prefix "agentbox-blocked: " --log-level 4 2>/dev/null || true
 iptables -A OUTPUT -j DROP 2>/dev/null || true
 
-echo "[OK] Firewall-Regeln angewendet"
+echo "[OK] Firewall-Regeln angewendet (HTTPS erlaubt, private Netze blockiert)"
 
 # --- 6. CLI-Update-Check (schnell, max 10s) ---
 echo ""
