@@ -114,7 +114,7 @@ function Write-StatusFile {
         $statusObj.error = $ErrorMsg
     }
 
-    $statusObj | ConvertTo-Json -Depth 5 | Out-File -FilePath $statusFile -Encoding utf8NoBOM
+    [System.IO.File]::WriteAllText($statusFile, ($statusObj | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
 }
 
 function Move-TaskToHistory {
@@ -138,7 +138,7 @@ function Move-TaskToHistory {
     $historyName = "$(Get-Date -Format 'yyyyMMdd_HHmmss')_$($TaskData.project)_$($TaskData.action).json"
     $historyPath = Join-Path $historyDir $historyName
 
-    $TaskData | ConvertTo-Json -Depth 5 | Out-File -FilePath $historyPath -Encoding utf8NoBOM
+    [System.IO.File]::WriteAllText($historyPath, ($TaskData | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
 
     Remove-Item -Path $TaskFilePath -Force -ErrorAction SilentlyContinue
 }

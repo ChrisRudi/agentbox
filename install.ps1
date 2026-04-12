@@ -251,7 +251,7 @@ if ($isInstalled) {
 
                 # User-config.json wiederherstellen falls vorhanden
                 if ($userConfig) {
-                    $userConfig | Out-File -FilePath $existingConfigPath -Encoding utf8NoBOM -NoNewline
+                    [System.IO.File]::WriteAllText($existingConfigPath, $userConfig, (New-Object System.Text.UTF8Encoding $false))
                 }
 
                 Write-Host "[OK] Update per ZIP abgeschlossen" -ForegroundColor Green
@@ -379,7 +379,7 @@ else:
     print('[OK] Kein Konflikt gefunden')
 "@
     $tmpPy = Join-Path $env:TEMP "agentbox_bashrc_cleanup_$(Get-Random).py"
-    $cleanupScript | Out-File -FilePath $tmpPy -Encoding utf8NoBOM -NoNewline
+    [System.IO.File]::WriteAllText($tmpPy, $cleanupScript, (New-Object System.Text.UTF8Encoding $false))
     $wslPy = & wsl.exe wslpath -u ($tmpPy -replace '\\', '/') 2>&1
     & wsl.exe bash -c "python3 '$($wslPy.Trim())' 2>&1" 2>&1 | Out-Host
     Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
