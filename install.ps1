@@ -334,6 +334,57 @@ Write-Host "Konfiguriere WSL-Integration..." -ForegroundColor Cyan
 
 $bashrcMarker = "# agentbox — AI Agent Sandbox Runner"
 
+# Alte/fremde AI-Tool-Starter in .bashrc erkennen und Backup anbieten.
+# Bekannte Konflikt-Marker die einen Agent direkt (nicht-sandboxed) starten:
+$conflictPatterns = @(
+    'Verfuegbare AI-Tools',
+    'Welches Tool moechten Sie verwenden',
+    'Gewaehltes Tool: Claude Code',
+    'Starte Claude Code\\.\\.\\.',
+    'Claude Code wird gestartet'
+)
+$bashrcPath = "~/.bashrc"
+$patternList = $conflictPatterns -join '|'
+$conflictCheck = & wsl.exe bash -c "grep -E '$patternList' $bashrcPath 2>/dev/null | head -1" 2>&1
+if ($conflictCheck -and "$conflictCheck".Trim() -ne "") {
+    Write-Host "[WARN] Fremder AI-Tool-Starter in ~/.bashrc erkannt:" -ForegroundColor Yellow
+    Write-Host "       $conflictCheck" -ForegroundColor Gray
+    Write-Host "[INFO] Entferne Konflikt-Block aus ~/.bashrc (Backup: ~/.bashrc.agentbox-backup)" -ForegroundColor Cyan
+    # Backup anlegen und Python-Blockentfernung durchfuehren (robuster als sed)
+    & wsl.exe bash -c "cp $bashrcPath ~/.bashrc.agentbox-backup" 2>&1 | Out-Null
+    $cleanupScript = @"
+import re, os
+p = os.path.expanduser('~/.bashrc')
+with open(p) as f: lines = f.readlines()
+# Konflikt-Patterns finden
+patterns = [r'Verfuegbare AI-Tools', r'Welches Tool moechten Sie', r'Gewaehltes Tool: Claude', r'Starte Claude Code\.\.\.', r'Claude Code wird gestartet']
+rx = re.compile('|'.join(patterns))
+# Zeilen entfernen die zu einem Konflikt-Block gehoeren:
+# Strategie: finde die erste Konfliktzeile, gehe rueckwaerts bis leer/Kommentar,
+# gehe vorwaerts bis leer/naechster Marker. Entferne den Bereich.
+conflict_lines = [i for i, l in enumerate(lines) if rx.search(l)]
+if conflict_lines:
+    start = min(conflict_lines)
+    end = max(conflict_lines)
+    # Rueckwaerts bis leere Zeile oder agentbox-Marker
+    while start > 0 and lines[start-1].strip() != '' and '# agentbox' not in lines[start-1]:
+        start -= 1
+    # Vorwaerts bis leere Zeile oder agentbox-Marker
+    while end < len(lines) - 1 and lines[end+1].strip() != '' and '# agentbox' not in lines[end+1]:
+        end += 1
+    del lines[start:end+1]
+    with open(p, 'w') as f: f.writelines(lines)
+    print(f'[OK] Konflikt-Block entfernt (Zeilen {start+1}-{end+1})')
+else:
+    print('[OK] Kein Konflikt gefunden')
+"@
+    $tmpPy = Join-Path $env:TEMP "agentbox_bashrc_cleanup_$(Get-Random).py"
+    $cleanupScript | Out-File -FilePath $tmpPy -Encoding utf8NoBOM -NoNewline
+    $wslPy = & wsl.exe wslpath -u ($tmpPy -replace '\\', '/') 2>&1
+    & wsl.exe bash -c "python3 '$($wslPy.Trim())' 2>&1" 2>&1 | Out-Host
+    Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
+}
+
 $checkResult = & wsl.exe bash -c "grep -c '$bashrcMarker' ~/.bashrc 2>/dev/null || echo 0" 2>&1
 $alreadyPresent = ($checkResult.Trim() -ne "0")
 
