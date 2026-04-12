@@ -78,23 +78,31 @@ mkdir -p "$WORKSPACE/assets"
 mkdir -p "$WORKSPACE/_tasks"
 
 # --- Bind-Mounts mit nosymfollow ---
+#
+# Wichtig zur remount-Syntax: das `bind` keyword im remount ist
+# notwendig, sonst versucht Linux den UNDERLYING-Filesystem zu
+# remounten (statt den bind-mount selbst), was bei DrvFs/9P im besten
+# Fall ein No-Op und im schlechtesten Fall einen read-only-Downgrade
+# triggert. Plus: `rw` muss explizit gesetzt sein — ohne wird der
+# bind-mount mit Default-Flags neu aufgesetzt, und die Defaults
+# enthalten je nach Kernel-Version kein rw.
 
 # src/ (read-write)
 if [ -d "$PROJECT_PATH/src" ]; then
     mount --bind "$PROJECT_PATH/src" "$WORKSPACE/src"
-    mount -o remount,nosymfollow,nodev "$WORKSPACE/src"
+    mount -o remount,bind,rw,nosymfollow,nodev "$WORKSPACE/src"
     echo "[OK] Mount: src/ (read-write, nosymfollow, nodev)"
 else
     # Falls kein src/ Ordner existiert, Projektroot mounten
     mount --bind "$PROJECT_PATH" "$WORKSPACE/src"
-    mount -o remount,nosymfollow,nodev "$WORKSPACE/src"
+    mount -o remount,bind,rw,nosymfollow,nodev "$WORKSPACE/src"
     echo "[OK] Mount: Projektroot -> src/ (read-write, nosymfollow, nodev)"
 fi
 
 # assets/ (read-only)
 if [ -d "$PROJECT_PATH/assets" ]; then
     mount --bind "$PROJECT_PATH/assets" "$WORKSPACE/assets"
-    mount -o remount,ro,nosymfollow,nodev "$WORKSPACE/assets"
+    mount -o remount,bind,ro,nosymfollow,nodev "$WORKSPACE/assets"
     echo "[OK] Mount: assets/ (read-only, nosymfollow, nodev)"
 else
     echo "[INFO] Kein assets/ Ordner — ueberspringe Mount"
@@ -103,7 +111,7 @@ fi
 # _tasks/ (read-write)
 if [ -d "$PROJECT_PATH/_tasks" ]; then
     mount --bind "$PROJECT_PATH/_tasks" "$WORKSPACE/_tasks"
-    mount -o remount,nosymfollow,nodev "$WORKSPACE/_tasks"
+    mount -o remount,bind,rw,nosymfollow,nodev "$WORKSPACE/_tasks"
     echo "[OK] Mount: _tasks/ (read-write, nosymfollow, nodev)"
 fi
 
@@ -111,6 +119,7 @@ fi
 if [ -f "$PROJECT_PATH/CLAUDE.md" ]; then
     touch "$WORKSPACE/CLAUDE.md"
     mount --bind "$PROJECT_PATH/CLAUDE.md" "$WORKSPACE/CLAUDE.md"
+    mount -o remount,bind,rw "$WORKSPACE/CLAUDE.md" 2>/dev/null || true
     echo "[OK] Mount: CLAUDE.md (read-write)"
 fi
 
@@ -118,8 +127,23 @@ fi
 if [ -f "$PROJECT_PATH/project.json" ]; then
     touch "$WORKSPACE/project.json"
     mount --bind "$PROJECT_PATH/project.json" "$WORKSPACE/project.json"
-    mount -o remount,ro "$WORKSPACE/project.json"
+    mount -o remount,bind,ro "$WORKSPACE/project.json"
     echo "[OK] Mount: project.json (read-only)"
+fi
+
+# Sanity-Check: kann in /workspace/src tatsaechlich geschrieben werden?
+# Wenn dieser Test fehlschlaegt, ist der bind-mount-Pfad kaputt — der
+# Agent wuerde sonst spaeter mit "Read-only file system" auflaufen, ohne
+# dass die Ursache offensichtlich ist (der [OK] Mount-Output oben sagt
+# nichts ueber die tatsaechliche Beschreibbarkeit aus).
+_ws_test="$WORKSPACE/src/.workspace_write_test_$$"
+if (echo agentbox-test > "$_ws_test") 2>/dev/null; then
+    echo "[OK] Workspace-Write-Test: src/ ist beschreibbar"
+    rm -f "$_ws_test" 2>/dev/null
+else
+    echo "[FEHLER] Workspace-Write-Test: src/ ist nicht beschreibbar (Read-only filesystem?)"
+    echo "         mount-Ausgabe fuer /workspace/src:"
+    mount | grep -F "$WORKSPACE/src" | sed 's/^/           /'
 fi
 
 # --- Paket-Cache mounten (persistiert ueber Sessions) ---
@@ -243,23 +267,24 @@ else
     echo "  .credentials.json: FEHLT → erster Login erforderlich"
 fi
 
-# --- Windows-Laufwerke unmounten (Sandbox-Isolation) ---
-# WSL mountet /mnt/c u.U. automatisch wieder — daher am Ende tmpfs ueber /mnt.
-# Bewusst LAZY unmount (-l), nicht force (-f): /mnt/c ist ein DrvFs/9P-Mount
-# zum Windows-Host, und unsere vorher gemachten Projekt-Bind-Mounts in
-# /workspace (CLAUDE.md, project.json, src/, _tasks/) referenzieren genau
-# dessen Superblock. Force-Unmount killt den 9P-Channel, danach geben alle
-# Reads ueber die Bind-Mounts EIO (I/O-Error in Claude Code's File-Listing).
-# Lazy unmount entfernt den Mount nur aus dem Namespace und laesst den
-# Superblock leben, solange noch Bind-Refs existieren — exakt unser Fall.
+# --- Windows-Laufwerke isolieren (Sandbox-Isolation) ---
+#
+# Strategie: tmpfs als OVERMOUNT direkt ueber /mnt legen, OHNE die
+# darunter liegenden /mnt/c, /mnt/wsl etc. erst zu unmounten. Linux
+# erlaubt covered mounts — die Submounts bleiben im Mount-Tree am Leben
+# (refcounts +1, DrvFs-9P-Channel intakt, unsere Bind-Mounts in
+# /workspace voll funktionsfaehig), sind aber im Filesystem-Namespace
+# nicht mehr ueber /mnt/c... erreichbar, weil das tmpfs den Pfad
+# verdeckt. Sandbox-Isolation ist also identisch zum vorherigen
+# unmount-Pfad, ohne den DrvFs in irgendeinen "going away"-Zustand
+# zu zwingen, der writes mit EROFS abweist.
+#
+# Frueherer Versuch mit `umount -f` killte den 9P-Channel und brach
+# alle Bind-Mounts mit EIO. `umount -l` (lazy) liess Reads zwar leben,
+# aber WSL2's DrvFs-Implementation triggerte beim drained-Zustand
+# read-only auf neue writes. Overmount umgeht beide Probleme.
 echo ""
 echo "Isoliere Sandbox von Windows-Dateisystem..."
-# Alle /mnt Unterverzeichnisse unmounten (WSL DrvFs Automounts)
-for _mnt in /mnt/*/; do
-    umount -l "$_mnt" 2>/dev/null || true
-    rmdir "$_mnt" 2>/dev/null || true
-done
-# tmpfs ueber /mnt — blockiert jeglichen Zugriff und verhindert WSL-Re-Mount
 mount -t tmpfs tmpfs_sandbox /mnt -o size=1k,mode=000,nosuid,nodev,noexec 2>/dev/null || true
 # Verifizieren
 if [ -e /mnt/c/Users ] 2>/dev/null; then
