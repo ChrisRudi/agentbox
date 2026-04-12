@@ -186,6 +186,20 @@ log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
 
+# Alle Projektordner unter AI_PROJECTS_ROOT (ohne _control), sortiert
+# nach letzter Aenderung (neueste zuerst).
+_list_projects_sorted() {
+    find "$AI_PROJECTS_ROOT" -maxdepth 1 -mindepth 1 -type d \
+        -not -name "_control" -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | cut -d' ' -f2-
+}
+
+# Prueft ob eine WSL-Distro mit dem gegebenen Namen registriert ist.
+# wsl.exe -l -q liefert UTF-16LE mit NUL-Bytes + CR — beides saeubern.
+_wsl_distro_exists() {
+    wsl.exe -l -q 2>/dev/null | tr -d '\000\r' | grep -Fxq "$1"
+}
+
 # --- 1. Auto-Update pruefen ---
 _auto_update=$(cfg_get "auto_update" "true")
 _update_interval=$(cfg_get "auto_update_interval_hours" "24")
@@ -349,15 +363,10 @@ echo ""
 echo -e "${CYAN}=== agentbox ===${NC}"
 echo ""
 
-# Alle Projektordner (ohne _control), sortiert nach letzter Aenderung
 projects=()
 while IFS= read -r dir; do
-    dirname=$(basename "$dir")
-    if [ "$dirname" != "_control" ] && [ -d "$dir" ]; then
-        projects+=("$dir")
-    fi
-done < <(find "$AI_PROJECTS_ROOT" -maxdepth 1 -mindepth 1 -type d \
-    -not -name "_control" -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+    [ -d "$dir" ] && projects+=("$dir")
+done < <(_list_projects_sorted)
 
 if [ ${#projects[@]} -eq 0 ]; then
     log_warn "Keine Projektordner gefunden in $AI_PROJECTS_ROOT"
@@ -748,8 +757,7 @@ _toggle_projects_menu() {
     local _all=()
     while IFS= read -r _dir; do
         [ -n "$_dir" ] && _all+=("$_dir")
-    done < <(find "$AI_PROJECTS_ROOT" -maxdepth 1 -mindepth 1 -type d \
-        -not -name "_control" -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+    done < <(_list_projects_sorted)
 
     if [ ${#_all[@]} -eq 0 ]; then
         echo "Keine Projektordner gefunden."
@@ -840,8 +848,7 @@ done
 # --- 11. Session-Lock pruefen ---
 DISTRO_NAME="agentbox-${PROJECT_NAME}"
 
-existing=$(wsl.exe -l -q 2>/dev/null | tr -d '\r' | grep -c "^${DISTRO_NAME}$" || true)
-if [ "$existing" -gt 0 ]; then
+if _wsl_distro_exists "$DISTRO_NAME"; then
     log_error "Session laeuft bereits: $DISTRO_NAME"
     echo "Es kann nur eine Session pro Projekt gleichzeitig laufen."
     echo "Beende die bestehende Session zuerst oder warte bis sie fertig ist."
@@ -939,8 +946,7 @@ echo "[INFO] Import-Ziel: $WIN_TEMP_DIR"
 echo "[INFO] Template: $WIN_TEMPLATE"
 
 # Alte Sandbox-Distro mit demselben Namen entfernen falls vorhanden
-_existing=$(wsl.exe -l -q 2>/dev/null | tr -d '\000' | tr -d '\r' | grep -Fx "$DISTRO_NAME" || true)
-if [ -n "$_existing" ]; then
+if _wsl_distro_exists "$DISTRO_NAME"; then
     log_info "Entferne alte Sandbox-Distro: $DISTRO_NAME"
     wsl.exe --unregister "$DISTRO_NAME" 2>&1 | tr -d '\000' || true
 fi

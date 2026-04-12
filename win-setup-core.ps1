@@ -358,61 +358,9 @@ if ($missingAgents.Count -gt 0) {
     exit 1
 }
 
-# --- 5. iptables-Regeln hinterlegen ---
-Write-Host ""
-Write-Host "Hinterlege Firewall-Regeln..." -ForegroundColor Cyan
-
-$fwAiApis = if ($config -and $config.firewall_ai_apis) {
-    ($config.firewall_ai_apis -join " ")
-} else { "api.anthropic.com api.openai.com generativelanguage.googleapis.com" }
-
-$fwRegistries = @()
-if ($config -and $config.firewall_registries_node)   { $fwRegistries += $config.firewall_registries_node }
-if ($config -and $config.firewall_registries_python)  { $fwRegistries += $config.firewall_registries_python }
-$fwPkgDomains = if ($fwRegistries.Count -gt 0) { $fwRegistries -join " " } else { "registry.npmjs.org pypi.org files.pythonhosted.org" }
-
-$firewallScript = @'
-#!/bin/bash
-# firewall.sh — agentbox Netzwerk-Isolation
-set -e
-
-iptables -F OUTPUT 2>/dev/null || true
-iptables -A OUTPUT -o lo -j ACCEPT
-iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-
-for domain in __FW_AI_APIS__; do
-    for ip in $(dig +short "$domain" 2>/dev/null); do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
-        fi
-    done
-done
-
-for domain in __FW_PKG_DOMAINS__; do
-    for ip in $(dig +short "$domain" 2>/dev/null); do
-        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            iptables -A OUTPUT -p tcp --dport 443 -d "$ip" -j ACCEPT
-        fi
-    done
-done
-
-iptables -A OUTPUT -j DROP
-echo "Firewall-Regeln angewendet."
-'@
-$firewallScript = $firewallScript.Replace('__FW_AI_APIS__', $fwAiApis).Replace('__FW_PKG_DOMAINS__', $fwPkgDomains)
-
-$firewallScript = $firewallScript.Replace("`r", "")
-$fwB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($firewallScript))
-$setupFirewall = "mkdir -p /etc/agentbox && echo $fwB64 | base64 -d > /etc/agentbox/firewall.sh && chmod +x /etc/agentbox/firewall.sh"
-# Stringify + Out-Null: Commands die keine nuetzliche Ausgabe produzieren werden
-# geschluckt, damit PS 5.1 nicht aus einer harmlosen stderr-Zeile einen
-# NativeCommandError-Record macht (rote Error-Kaestchen im Log).
-& wsl.exe -d $distroName -- bash -c $setupFirewall 2>&1 | ForEach-Object { "$_" } | Out-Null
-Write-Host "[OK] Firewall-Regeln hinterlegt" -ForegroundColor Green
-
-# --- 6. Sysctl-Hardening ---
+# --- 5. Sysctl-Hardening ---
+# (Kein Template-Firewall mehr: die iptables-Regeln baut wsl-sandbox-init.sh
+# fresh pro Session aus den Config-Parametern — siehe dortigen Abschnitt 5.)
 Write-Host "Setze Sysctl-Hardening..." -ForegroundColor Cyan
 
 $sysctlContent = "# agentbox — Hardlink- und Symlink-Schutz`nfs.protected_hardlinks = 1`nfs.protected_symlinks = 1"
@@ -421,7 +369,7 @@ $sysctlCmd = "echo $sysctlB64 | base64 -d >> /etc/sysctl.conf && sysctl -p > /de
 & wsl.exe -d $distroName -- bash -c $sysctlCmd 2>&1 | ForEach-Object { "$_" } | Out-Null
 Write-Host "[OK] Sysctl-Hardening gesetzt" -ForegroundColor Green
 
-# --- 7. SYSTEM_META_PROMPT.md in Distro kopieren ---
+# --- 6. SYSTEM_META_PROMPT.md in Distro kopieren ---
 Write-Host "Kopiere SYSTEM_META_PROMPT.md..." -ForegroundColor Cyan
 
 $metaPromptSrc = Join-Path $scriptDir "SYSTEM_META_PROMPT.md"
@@ -435,7 +383,7 @@ if (Test-Path $metaPromptSrc) {
     Write-Host "WARNUNG: SYSTEM_META_PROMPT.md nicht gefunden in $scriptDir" -ForegroundColor Yellow
 }
 
-# --- 8. Template exportieren ---
+# --- 7. Template exportieren ---
 Write-Host ""
 Write-Host "Exportiere Template..." -ForegroundColor Cyan
 
@@ -460,7 +408,7 @@ try {
 $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
 Write-Host "[OK] Template exportiert: $templatePath ($templateSize MB)" -ForegroundColor Green
 
-# --- 9. Temporaere Distro entfernen ---
+# --- 8. Temporaere Distro entfernen ---
 Write-Host "Entferne temporaere Build-Distro..." -ForegroundColor Cyan
 & wsl.exe --unregister $distroName 2>&1 | Out-Null
 if (Test-Path $tempSetup) {
@@ -468,7 +416,7 @@ if (Test-Path $tempSetup) {
 }
 Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 
-# --- 10. Event-Source + Scheduled Task registrieren ---
+# --- 9. Event-Source + Scheduled Task registrieren ---
 Write-Host ""
 Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
 
