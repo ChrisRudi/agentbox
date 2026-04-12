@@ -237,6 +237,29 @@ if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
     _auth_mount_agent goose  ".config/goose" || true
 fi
 
+# --- ~/.claude.json aus Backup wiederherstellen ---
+# Claude Code speichert seine Settings (Theme, UserID, Feature-Flags,
+# gesehene Tipps — KEINE Credentials) in /home/<user>/.claude.json,
+# einer Single-File eine Ebene UEBER dem persistierten .claude/-Mount.
+# Die Datei selbst ist deshalb in jeder neuen Sandbox-Distro initial weg.
+# Claude Code legt aber automatisch ein Backup unter
+# .claude/backups/.claude.json.backup.<timestamp> ab — und das landet
+# durch unseren Auth-Mount im persistenten Auth-Cache. Beim naechsten
+# Sandbox-Start kopieren wir das neueste Backup zurueck, damit Theme +
+# Settings + UI-State ueber Sessions erhalten bleiben und die
+# "configuration file not found" Warnungs-Flut beim Start verschwindet.
+_CLAUDE_JSON="/home/$SANDBOX_USER/.claude.json"
+_CLAUDE_BACKUPS="/home/$SANDBOX_USER/.claude/backups"
+if [ ! -f "$_CLAUDE_JSON" ] && [ -d "$_CLAUDE_BACKUPS" ]; then
+    _newest_backup=$(ls -t "$_CLAUDE_BACKUPS"/.claude.json.backup.* 2>/dev/null | head -1)
+    if [ -n "$_newest_backup" ] && [ -f "$_newest_backup" ]; then
+        cp "$_newest_backup" "$_CLAUDE_JSON" 2>/dev/null || true
+        chown "$SANDBOX_USER:$SANDBOX_USER" "$_CLAUDE_JSON" 2>/dev/null || true
+        chmod 600 "$_CLAUDE_JSON" 2>/dev/null || true
+        echo "[OK] .claude.json aus Backup wiederhergestellt: $(basename "$_newest_backup")"
+    fi
+fi
+
 # --- Auth-Diagnostik (Claude Code .credentials.json) ---
 # Claude Code speichert OAuth-Tokens im plaintext-Backend unter
 # ~/.claude/.credentials.json (via writeFileSync + chmod 0o600). Dieser
