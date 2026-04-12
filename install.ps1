@@ -493,3 +493,27 @@ Write-Host "Starten:" -ForegroundColor Cyan
 Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
 Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
 Write-Host ""
+
+# --- 11. Direkt starten? ---
+Write-Host "Jetzt agentbox starten? [J/n] (5s Timeout = ja)" -ForegroundColor Cyan -NoNewline
+$startNow = $true
+$timeoutSec = 5
+$startTime = Get-Date
+while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
+    if ([Console]::KeyAvailable) {
+        $key = [Console]::ReadKey($true)
+        if ($key.Key -eq 'N') { $startNow = $false; break }
+        if ($key.Key -eq 'Enter' -or $key.Key -eq 'J' -or $key.Key -eq 'Y') { break }
+    }
+    Start-Sleep -Milliseconds 100
+}
+Write-Host ""
+
+if ($startNow) {
+    Write-Host ""
+    Write-Host "Starte agentbox in WSL..." -ForegroundColor Green
+    Write-Host ""
+    & wsl.exe -e bash -li -c "agentbox"
+} else {
+    Write-Host "OK — manuell starten via Desktop-Shortcut oder 'wsl' + 'agentbox'." -ForegroundColor Gray
+}
