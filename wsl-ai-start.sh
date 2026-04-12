@@ -268,6 +268,15 @@ _wsl_distro_exists() {
     wsl.exe -l -q 2>/dev/null | tr -d '\000\r' | grep -Fxq "$1"
 }
 
+# Prueft ob eine WSL-Distro tatsaechlich laeuft (nicht nur registriert).
+# Wichtig fuer den Session-Lock: ein abgebrochener wsl --import kann eine
+# leere Distro zurueck lassen, die als "exists" zaehlt aber nicht running
+# ist — die wollen wir vom Stale-Cleanup aufraeumen lassen, nicht als
+# laufende Session interpretieren.
+_wsl_distro_running() {
+    wsl.exe -l -q --running 2>/dev/null | tr -d '\000\r' | grep -Fxq "$1"
+}
+
 # --- Auto-Update pruefen ---
 _auto_update=$(cfg_get "auto_update" "true")
 _update_interval=$(cfg_get "auto_update_interval_hours" "24")
@@ -898,12 +907,19 @@ while true; do
 done
 
 # --- Session-Lock pruefen ---
+# Bewusst _running statt _exists: ein abgebrochener wsl --import (z.B.
+# weil das Import-Ziel-Verzeichnis fehlt) hinterlaesst eine registrierte
+# aber nicht laufende Distro. Die wollen wir NICHT als "Session laeuft"
+# missinterpretieren — sonst klemmt der naechste Start an einem stale
+# Lock fest und der Stale-Cleanup unten wird nie erreicht. Wirklich
+# laufende Sessions blockieren uns weiter wie gehabt.
 DISTRO_NAME="agentbox-${PROJECT_NAME}"
 
-if _wsl_distro_exists "$DISTRO_NAME"; then
+if _wsl_distro_running "$DISTRO_NAME"; then
     log_error "Session laeuft bereits: $DISTRO_NAME"
     echo "Es kann nur eine Session pro Projekt gleichzeitig laufen."
     echo "Beende die bestehende Session zuerst oder warte bis sie fertig ist."
+    echo "Notfall-Stop: wsl.exe --terminate $DISTRO_NAME"
     exit 1
 fi
 
