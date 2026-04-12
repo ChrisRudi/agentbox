@@ -161,13 +161,15 @@ if (Test-Path $tempSetup) {
 }
 New-Item -ItemType Directory -Path $tempSetup -Force | Out-Null
 
-# Output erfassen, damit wir HCS-Fehler (= Reboot noetig) erkennen koennen,
-# ohne den Import-Progress-Output zu verlieren.
-$importOutput = & wsl.exe --import $distroName $tempSetup $downloadPath 2>&1
+# Output als String-Array einsammeln (nicht live ausgeben):
+# - Stderr-Zeilen werden stringifiziert → kein NativeCommandError
+# - Success-Zeile 'Der Vorgang wurde erfolgreich beendet.' wird nicht gezeigt
+# - Fehler-Output bleibt fuer HCS-Detection + Log-Anzeige erhalten
+$importOutput = @(& wsl.exe --import $distroName $tempSetup $downloadPath 2>&1 | ForEach-Object { "$_" })
 $importExit = $LASTEXITCODE
-$importOutput | ForEach-Object { Write-Host $_ }
 if ($importExit -ne 0) {
-    $importText = ($importOutput | Out-String)
+    $importText = ($importOutput -join "`n")
+    foreach ($line in $importOutput) { Write-Host "       $line" -ForegroundColor DarkGray }
     if ($importText -match 'HCS_E_SERVICE_NOT_AVAILABLE' -or $importText -match 'HCS/HCS_') {
         Write-Host ""
         Write-Host "FEHLER: Hyper-V Host Compute Service (vmcompute) nicht verfuegbar." -ForegroundColor Red
@@ -224,7 +226,11 @@ foreach ($aid in $agentIds) {
         }
 
         if ($installCmd) {
-            $agentInstallLines += ($installCmd + ' 2>/dev/null || echo "WARNUNG: ' + $agentName + ' Installation fehlgeschlagen"')
+            # Jede Agent-Install-Zeile: erst Step-Marker auf fd 3 (Konsole),
+            # dann der Install-Command (stdout/stderr → Log-Datei), Fallback
+            # als Warning ebenfalls auf fd 3.
+            $agentInstallLines += "step '       - $agentName'"
+            $agentInstallLines += "$installCmd || echo 'WARNUNG: $agentName Installation fehlgeschlagen' >&3"
         }
     }
 }
@@ -232,35 +238,51 @@ foreach ($aid in $agentIds) {
 $agentInstallBlock = $agentInstallLines -join "`n"
 $nodejsUrl = if ($config -and $config.nodejs_setup_url) { $config.nodejs_setup_url } else { "https://deb.nodesource.com/setup_20.x" }
 
+# Install-Skript: alle verbose apt/npm/pip-Ausgaben gehen in eine Log-Datei
+# innerhalb der Sandbox. Nur saubere Step-Marker werden ueber fd 3 auf die
+# Host-Konsole durchgereicht. Damit verschwinden sowohl die endlosen Reading-
+# database-Zeilen als auch der 'debconf: delaying package configuration'-
+# NativeCommandError, den PS 5.1 aus dem Stderr baut.
 $installScript = @'
 #!/bin/bash
 set -e
 
 export DEBIAN_FRONTEND=noninteractive
 
-echo "[1/5] System-Update..."
-apt-get update
-apt-get install -y -qq bash curl wget git iptables ca-certificates dnsutils
+LOG=/var/log/agentbox-install.log
+mkdir -p /var/log
+: > "$LOG"
 
-echo "[2/5] Node.js installieren..."
+# fd 3 = original stdout (Host-Konsole), 1/2 -> Log
+exec 3>&1
+exec >>"$LOG" 2>&1
+step() { echo "$1" >&3; }
+
+step "       [1/5] System-Update..."
+apt-get update
+# apt-utils zuerst, damit debconf keine 'delaying package configuration'-
+# Warnung mehr auf stderr schreibt (die PS 5.1 als Fehler interpretiert).
+apt-get install -y -qq --no-install-recommends apt-utils
+apt-get install -y -qq --no-install-recommends bash curl wget git iptables ca-certificates dnsutils
+
+step "       [2/5] Node.js installieren..."
 curl -fsSL __NODEJS_URL__ -o /tmp/nodesource_setup.sh
 bash /tmp/nodesource_setup.sh
-apt-get install -y -qq nodejs
-node --version
-npm --version
+apt-get install -y -qq --no-install-recommends nodejs
+step "              node $(node --version), npm $(npm --version)"
 
-echo "[3/5] Python3 installieren..."
-apt-get install -y -qq python3 python3-pip python3-venv
-python3 --version
+step "       [3/5] Python3 installieren..."
+apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
+step "              $(python3 --version)"
 
-echo "[4/5] AI CLI-Tools installieren..."
+step "       [4/5] AI CLI-Tools installieren..."
 __AGENT_INSTALL_BLOCK__
 
-echo "[5/5] Aufraumen..."
+step "       [5/5] Aufraumen..."
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-echo "Pakete fertig installiert."
+step "       Pakete fertig installiert."
 '@
 $installScript = $installScript.Replace('__NODEJS_URL__', $nodejsUrl).Replace('__AGENT_INSTALL_BLOCK__', $agentInstallBlock)
 $installScript = $installScript.Replace("`r", "")
@@ -269,7 +291,11 @@ $installScript = $installScript.Replace("`r", "")
 # Exit-Code in /tmp/install.rc schreiben, weil PS 5.1's 2>&1 | Out-Host $LASTEXITCODE verwaschen kann
 $installB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($installScript))
 $runInstall = "echo $installB64 | base64 -d > /tmp/install.sh; bash /tmp/install.sh; echo `$? > /tmp/install.rc; rm -f /tmp/install.sh"
-& wsl.exe -d $distroName -- bash -c $runInstall 2>&1 | Out-Host
+
+# Output durch ForEach stringifizieren → verhindert dass PS Stderr-Zeilen
+# als ErrorRecord-Objekte in den Pipe-Stream wirft (rote Error-Kaestchen).
+$installOutput = @(& wsl.exe -d $distroName -- bash -c $runInstall 2>&1 | ForEach-Object { "$_" })
+foreach ($line in $installOutput) { Write-Host $line -ForegroundColor Gray }
 
 # Exit-Code aus der Sandbox lesen (zuverlaessiger als $LASTEXITCODE nach Pipe)
 $installRc = & wsl.exe -d $distroName -- cat /tmp/install.rc 2>&1
@@ -277,7 +303,9 @@ $installRc = "$installRc".Trim() -replace '\D',''
 & wsl.exe -d $distroName -- rm -f /tmp/install.rc 2>&1 | Out-Null
 if ([string]::IsNullOrEmpty($installRc) -or $installRc -ne "0") {
     Write-Host "FEHLER: Paket-Installation fehlgeschlagen (Exit $installRc)." -ForegroundColor Red
-    Write-Host "        Pruefe die apt-Ausgabe oben. Moegliche Ursache: Netzwerk-Ausfall." -ForegroundColor Yellow
+    Write-Host "        Letzte 80 Zeilen aus /var/log/agentbox-install.log:" -ForegroundColor Yellow
+    $logTail = @(& wsl.exe -d $distroName -- tail -n 80 /var/log/agentbox-install.log 2>&1 | ForEach-Object { "$_" })
+    foreach ($line in $logTail) { Write-Host "        $line" -ForegroundColor DarkGray }
     & wsl.exe --unregister $distroName 2>&1 | Out-Null
     exit 1
 }
@@ -368,7 +396,10 @@ $firewallScript = $firewallScript.Replace('__FW_AI_APIS__', $fwAiApis).Replace('
 $firewallScript = $firewallScript.Replace("`r", "")
 $fwB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($firewallScript))
 $setupFirewall = "mkdir -p /etc/agentbox && echo $fwB64 | base64 -d > /etc/agentbox/firewall.sh && chmod +x /etc/agentbox/firewall.sh"
-& wsl.exe -d $distroName -- bash -c $setupFirewall 2>&1 | Out-Host
+# Stringify + Out-Null: Commands die keine nuetzliche Ausgabe produzieren werden
+# geschluckt, damit PS 5.1 nicht aus einer harmlosen stderr-Zeile einen
+# NativeCommandError-Record macht (rote Error-Kaestchen im Log).
+& wsl.exe -d $distroName -- bash -c $setupFirewall 2>&1 | ForEach-Object { "$_" } | Out-Null
 Write-Host "[OK] Firewall-Regeln hinterlegt" -ForegroundColor Green
 
 # --- 6. Sysctl-Hardening ---
@@ -377,7 +408,7 @@ Write-Host "Setze Sysctl-Hardening..." -ForegroundColor Cyan
 $sysctlContent = "# agentbox — Hardlink- und Symlink-Schutz`nfs.protected_hardlinks = 1`nfs.protected_symlinks = 1"
 $sysctlB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($sysctlContent))
 $sysctlCmd = "echo $sysctlB64 | base64 -d >> /etc/sysctl.conf && sysctl -p > /dev/null 2>&1 || true"
-& wsl.exe -d $distroName -- bash -c $sysctlCmd 2>&1 | Out-Host
+& wsl.exe -d $distroName -- bash -c $sysctlCmd 2>&1 | ForEach-Object { "$_" } | Out-Null
 Write-Host "[OK] Sysctl-Hardening gesetzt" -ForegroundColor Green
 
 # --- 7. SYSTEM_META_PROMPT.md in Distro kopieren ---
@@ -385,8 +416,10 @@ Write-Host "Kopiere SYSTEM_META_PROMPT.md..." -ForegroundColor Cyan
 
 $metaPromptSrc = Join-Path $scriptDir "SYSTEM_META_PROMPT.md"
 if (Test-Path $metaPromptSrc) {
-    $wslMetaPath = & wsl.exe -d $distroName -- wslpath -u ($metaPromptSrc -replace '\\', '/') 2>&1
-    & wsl.exe -d $distroName -- bash -c "mkdir -p /etc/agentbox && cp '$($wslMetaPath.Trim())' /etc/agentbox/SYSTEM_META_PROMPT.md" 2>&1 | Out-Host
+    # wslpath hier im Template-Distro-Kontext ist OK (die Distro existiert),
+    # Stderr trotzdem stringifizieren fuer einheitliches Verhalten.
+    $wslMetaPath = (& wsl.exe -d $distroName -- wslpath -u ($metaPromptSrc -replace '\\', '/') 2>&1 | ForEach-Object { "$_" }) -join ""
+    & wsl.exe -d $distroName -- bash -c "mkdir -p /etc/agentbox && cp '$($wslMetaPath.Trim())' /etc/agentbox/SYSTEM_META_PROMPT.md" 2>&1 | ForEach-Object { "$_" } | Out-Null
     Write-Host "[OK] SYSTEM_META_PROMPT.md kopiert" -ForegroundColor Green
 } else {
     Write-Host "WARNUNG: SYSTEM_META_PROMPT.md nicht gefunden in $scriptDir" -ForegroundColor Yellow
@@ -400,7 +433,9 @@ if (-not (Test-Path $sandboxDir)) {
     New-Item -ItemType Directory -Path $sandboxDir -Force | Out-Null
 }
 
-& wsl.exe --export $distroName $templatePath 2>&1 | Out-Host
+# Export-Output schlucken (wsl schreibt "Der Vorgang wurde erfolgreich beendet."
+# auf stderr — fuer sich harmlos, aber inkonsistent im Installer-Feed).
+& wsl.exe --export $distroName $templatePath 2>&1 | ForEach-Object { "$_" } | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "FEHLER: Template-Export fehlgeschlagen." -ForegroundColor Red
     & wsl.exe --unregister $distroName 2>&1 | Out-Null

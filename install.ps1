@@ -12,6 +12,27 @@ $env:WSL_UTF8 = "1"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
+# --- Pure-PS Windows → WSL Pfad-Konvertierung ---
+# Ersatz fuer `wsl.exe wslpath -u`. Laeuft OHNE laufende Default-Distro,
+# was wichtig ist: nach dem Template-Build hat agentbox die
+# `agentbox-template-build`-Distro wieder entfernt, und falls der User
+# sonst keine Default-Distro hat, schlaegt `wsl wslpath` fehl. Ausserdem
+# stolpert wslpath auf manchen Systemen ueber OneDrive-Reparse-Points
+# (Files-On-Demand) und gibt dann eine fehlerhafte Stderr-Zeile aus, die
+# PS 5.1 als NativeCommandError aufschnappt und — bei
+# $ErrorActionPreference='Stop' — den Installer killt.
+function ConvertTo-WslPath {
+    param([Parameter(Mandatory)][string]$WindowsPath)
+    $p = $WindowsPath -replace '\\', '/'
+    if ($p -match '^([A-Za-z]):(/?.*)$') {
+        $drive = $matches[1].ToLower()
+        $rest  = $matches[2]
+        if (-not $rest.StartsWith('/')) { $rest = '/' + $rest }
+        return "/mnt/$drive$rest"
+    }
+    return $p
+}
+
 Write-Host ""
 Write-Host "=== agentbox Installer ===" -ForegroundColor Cyan
 Write-Host "Sandboxed AI Agent Runner fuer Windows + WSL2" -ForegroundColor Gray
@@ -431,8 +452,8 @@ else:
 "@
     $tmpPy = Join-Path $env:TEMP "agentbox_bashrc_cleanup_$(Get-Random).py"
     [System.IO.File]::WriteAllText($tmpPy, $cleanupScript, (New-Object System.Text.UTF8Encoding $false))
-    $wslPy = & wsl.exe wslpath -u ($tmpPy -replace '\\', '/') 2>&1
-    & wsl.exe bash -c "python3 '$($wslPy.Trim())' 2>&1" 2>&1 | Out-Host
+    $wslPy = ConvertTo-WslPath $tmpPy
+    & wsl.exe bash -c "python3 '$wslPy' 2>&1" 2>&1 | Out-Host
     Remove-Item -Path $tmpPy -Force -ErrorAction SilentlyContinue
 }
 
@@ -442,8 +463,7 @@ else:
 $alreadyPresent = ($LASTEXITCODE -eq 0)
 
 if (-not $alreadyPresent) {
-    $wslBasePath = & wsl.exe wslpath -u ($baseDir -replace '\\', '/') 2>&1
-    $wslBasePath = $wslBasePath.Trim()
+    $wslBasePath = ConvertTo-WslPath $baseDir
 
     $bashrcBlock = @"
 
@@ -459,8 +479,8 @@ fi
     # Schreibe den Block sicher ueber eine temporaere Datei
     $tempBashrc = Join-Path $env:TEMP "agentbox_bashrc_$(Get-Random).tmp"
     $bashrcBlock | Out-File -FilePath $tempBashrc -Encoding ascii -NoNewline
-    $wslTempPath = & wsl.exe wslpath -u ($tempBashrc -replace '\\', '/') 2>&1
-    & wsl.exe bash -c "cat '$($wslTempPath.Trim())' >> ~/.bashrc" 2>&1
+    $wslTempPath = ConvertTo-WslPath $tempBashrc
+    & wsl.exe bash -c "cat '$wslTempPath' >> ~/.bashrc" 2>&1
     Remove-Item -Path $tempBashrc -Force -ErrorAction SilentlyContinue
 
     Write-Host "[OK] .bashrc-Eintrag gesetzt" -ForegroundColor Green
