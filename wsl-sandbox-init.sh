@@ -162,10 +162,37 @@ _auth_mount_agent() {
     [ -d "$_src" ] || return 1
     local _dst="/home/$SANDBOX_USER/$_home_rel"
     mkdir -p "$_dst"
+    chown "$SANDBOX_USER:$SANDBOX_USER" "$_dst" 2>/dev/null || true
+
+    # Direkter DrvFs-Mount mit explizitem uid/gid + metadata-Flag.
+    # Bewusst NICHT mount --bind, weil das die DrvFs-Mount-Properties des
+    # /mnt/c-Parent erbt — der ist in importierten Distros normalerweise
+    # OHNE metadata gemounted. Dann sind chown/chmod stille No-Ops, der
+    # bind-Mount bleibt effektiv root-owned und Claude Code's
+    # writeFileSync auf .credentials.json scheitert mit EACCES → Login
+    # wird nie persistiert ("Not logged in" direkt nach erfolgreichem
+    # OAuth-Flow). Eigener drvfs-Mount mit metadata + uid des Sandbox-
+    # Users umgeht das vollstaendig.
+    local _uid _gid _win_src
+    _uid=$(id -u "$SANDBOX_USER" 2>/dev/null || echo 1000)
+    _gid=$(id -g "$SANDBOX_USER" 2>/dev/null || echo 1000)
+    _win_src=$(wslpath -w "$_src" 2>/dev/null || echo "")
+
+    if [ -n "$_win_src" ] && \
+       mount -t drvfs "$_win_src" "$_dst" \
+             -o "metadata,uid=$_uid,gid=$_gid,umask=077" 2>/dev/null; then
+        echo "[OK] Mount: $_agent Auth-State ($_home_rel) [drvfs uid=$_uid]"
+        return 0
+    fi
+
+    # Fallback: bind-mount + chown. Behalten als Sicherheitsnetz fuer
+    # Setups, auf denen drvfs metadata aus irgendeinem Grund nicht greift.
+    # Wenn der Bind aktiv ist aber chown silent failt, wird der Login
+    # nicht persistieren — die erweiterte Diagnostik unten zeigt das.
     if mount --bind "$_src" "$_dst" 2>/dev/null; then
         mount -o remount,nosymfollow,nodev "$_dst" 2>/dev/null || true
         chown -R "$SANDBOX_USER:$SANDBOX_USER" "$_dst" 2>/dev/null || true
-        echo "[OK] Mount: $_agent Auth-State ($_home_rel)"
+        echo "[WARN] Mount: $_agent Auth-State ($_home_rel) [bind-Fallback — Permissions ggf. broken]"
         return 0
     fi
     echo "[WARN] $_agent Auth-Mount fehlgeschlagen — Login wird nicht persistiert"
@@ -194,9 +221,22 @@ fi
 # Block den Zustand beim Sandbox-Start — damit wir beim Debugging sehen,
 # ob die Datei da ist, wem sie gehoert und welche Permissions sie hat.
 _CLAUDE_CREDS="/home/$SANDBOX_USER/.claude/.credentials.json"
+_CLAUDE_DIR="/home/$SANDBOX_USER/.claude"
 echo ""
 echo "Claude-Auth-Diagnostik (Start):"
-echo "  Mount: $(mountpoint -q "/home/$SANDBOX_USER/.claude" && echo "ja" || echo "NEIN") → $AUTH_BASE/claude"
+echo "  Mount: $(mountpoint -q "$_CLAUDE_DIR" && echo "ja" || echo "NEIN") → $AUTH_BASE/claude"
+echo "  Mount-Owner: $(stat -c '%U:%G mode=%a' "$_CLAUDE_DIR" 2>/dev/null || echo 'stat fehlgeschlagen')"
+# Echter Write-Test als Sandbox-User: deckt auf, ob das gemountete
+# Verzeichnis tatsaechlich von dem User beschreibbar ist, der gleich
+# Claude Code laeuft. Wenn das hier FEHLGESCHLAGEN sagt, scheitert
+# auch jeder /login-Versuch danach mit "Not logged in".
+_perm_test="$_CLAUDE_DIR/.permission_test_$$"
+if su - "$SANDBOX_USER" -c "echo agentbox-test > '$_perm_test'" 2>/dev/null; then
+    echo "  Write-Test als $SANDBOX_USER: OK"
+    rm -f "$_perm_test" 2>/dev/null
+else
+    echo "  Write-Test als $SANDBOX_USER: FEHLGESCHLAGEN — Login wird nicht persistieren"
+fi
 if [ -e "$_CLAUDE_CREDS" ]; then
     echo "  .credentials.json: vorhanden ($(stat -c '%s bytes, mode=%a, owner=%U:%G' "$_CLAUDE_CREDS" 2>/dev/null || echo 'stat fehlgeschlagen'))"
 else
