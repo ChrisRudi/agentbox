@@ -144,15 +144,19 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 
 echo "[1/5] System-Update..."
-apt-get update -qq
-apt-get install -y -qq bash curl wget git iptables > /dev/null 2>&1
+apt-get update
+apt-get install -y -qq bash curl wget git iptables ca-certificates
 
 echo "[2/5] Node.js installieren..."
-curl -fsSL __NODEJS_URL__ | bash - > /dev/null 2>&1
-apt-get install -y -qq nodejs > /dev/null 2>&1
+curl -fsSL __NODEJS_URL__ -o /tmp/nodesource_setup.sh
+bash /tmp/nodesource_setup.sh
+apt-get install -y -qq nodejs
+node --version
+npm --version
 
 echo "[3/5] Python3 installieren..."
-apt-get install -y -qq python3 python3-pip python3-venv > /dev/null 2>&1
+apt-get install -y -qq python3 python3-pip python3-venv
+python3 --version
 
 echo "[4/5] AI CLI-Tools installieren..."
 __AGENT_INSTALL_BLOCK__
@@ -164,13 +168,50 @@ rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 echo "Pakete fertig installiert."
 '@
 $installScript = $installScript.Replace('__NODEJS_URL__', $nodejsUrl).Replace('__AGENT_INSTALL_BLOCK__', $agentInstallBlock)
-
 $installScript = $installScript.Replace("`r", "")
-& wsl.exe -d $distroName -- bash -c $installScript 2>&1 | Out-Host
+
+# Als Base64 ueber Datei in die Distro schieben (umgeht bash -c Quoting-Probleme)
+$installB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($installScript))
+$runInstall = "echo $installB64 | base64 -d > /tmp/install.sh && bash /tmp/install.sh; rc=`$?; rm -f /tmp/install.sh; exit `$rc"
+& wsl.exe -d $distroName -- bash -c $runInstall 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "WARNUNG: Einige Pakete konnten nicht installiert werden." -ForegroundColor Yellow
+    Write-Host "FEHLER: Paket-Installation fehlgeschlagen (Exit $LASTEXITCODE)." -ForegroundColor Red
+    & wsl.exe --unregister $distroName 2>&1 | Out-Null
+    exit 1
 }
 Write-Host "[OK] Pakete installiert" -ForegroundColor Green
+
+# --- 4b. Agent-Binaries verifizieren ---
+Write-Host ""
+Write-Host "Verifiziere Agent-Binaries..." -ForegroundColor Cyan
+$missingAgents = @()
+foreach ($aid in $agentIds) {
+    $enabledProp = "agent_${aid}_enabled"
+    $cmdProp = "agent_${aid}_command"
+    $isEnabled = $false
+    if ($config -and (Get-Member -InputObject $config -Name $enabledProp -MemberType NoteProperty)) {
+        $isEnabled = $config.$enabledProp
+    } elseif ($aid -in @("claude", "codex", "gemini")) {
+        $isEnabled = $true
+    }
+    if (-not $isEnabled) { continue }
+    $agentCmd = $aid
+    if ($config -and (Get-Member -InputObject $config -Name $cmdProp -MemberType NoteProperty)) {
+        $agentCmd = $config.$cmdProp
+    }
+    $check = & wsl.exe -d $distroName -- bash -lc "command -v $agentCmd >/dev/null 2>&1 && echo OK || echo MISSING" 2>&1
+    $check = "$check".Trim()
+    if ($check -eq "OK") {
+        Write-Host "  [OK] $agentCmd" -ForegroundColor Green
+    } else {
+        Write-Host "  [FEHLT] $agentCmd" -ForegroundColor Yellow
+        $missingAgents += $agentCmd
+    }
+}
+if ($missingAgents.Count -gt 0) {
+    Write-Host "WARNUNG: Folgende Agents wurden nicht installiert: $($missingAgents -join ', ')" -ForegroundColor Yellow
+    Write-Host "         Deaktiviere sie in config.json oder pruefe die Install-Commands." -ForegroundColor Yellow
+}
 
 # --- 5. iptables-Regeln hinterlegen ---
 Write-Host ""
