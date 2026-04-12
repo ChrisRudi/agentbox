@@ -412,6 +412,115 @@ else
     log_ok "Projekt: $PROJECT_NAME"
 fi
 
+# --- 4b. OneDrive Files-On-Demand: Projektordner lokal pinnen + hydrieren ---
+# Wenn das Projekt unter OneDrive liegt, sind Dateien haeufig nur als Cloud-
+# Only-Placeholder vorhanden (Reparse-Points mit RECALL_ON_DATA_ACCESS). Die
+# spaeteren bind-Mounts in die Sandbox-Distro koennen solche Placeholder
+# NICHT zuverlaessig hydrieren → der Agent sieht "Input/output error" auf
+# CLAUDE.md, project.json, src/. Wir forcen hier "Immer auf diesem Geraet
+# behalten" (attrib +P) und triggern danach einen synchronen Read-Pass
+# ueber PowerShell, damit OneDrive alles vor dem Sandbox-Start herunterlaedt.
+_hydrate_onedrive_project() {
+    local _linux_path="$1"
+    local _win_path
+    _win_path=$(wslpath -w "$_linux_path" 2>/dev/null)
+    if [ -z "$_win_path" ]; then
+        log_warn "OneDrive-Hydration: Windows-Pfad nicht ermittelbar"
+        return 2
+    fi
+
+    echo ""
+    log_info "Projekt liegt in OneDrive — setze 'Immer auf diesem Geraet behalten'..."
+    echo "       Pfad: $_win_path"
+
+    # Schritt 1: Pinnen via attrib.exe (+P = Always keep on this device)
+    # /s = rekursiv, /d = inkl. Verzeichnisse. OneDrive beginnt dann asynchron
+    # mit dem Download; Schritt 2 erzwingt danach die synchrone Vollendung.
+    cmd.exe /c "attrib.exe +P /s /d \"${_win_path}\\*\"" >/dev/null 2>&1 || true
+
+    # Schritt 2: Synchrone Hydration via PowerShell File.OpenRead.
+    # Script als Quoted-Heredoc (bash expandiert nichts), danach den Pfad
+    # per Platzhalter-Substitution einsetzen — verhindert Bash-$-Konflikte
+    # mit PowerShell-$-Variablen.
+    local _ps_template
+    _ps_template=$(cat <<'PSEOF'
+$ErrorActionPreference = 'SilentlyContinue'
+$Dir = '@@WIN_PATH@@'
+$total = 0
+$hydrated = 0
+$failed = 0
+$failList = New-Object System.Collections.ArrayList
+Get-ChildItem -Path $Dir -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
+    $total++
+    $a = [int]$_.Attributes
+    # 0x400000 = FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    # 0x001000 = FILE_ATTRIBUTE_OFFLINE
+    if (($a -band 0x400000) -or ($a -band 0x1000)) {
+        try {
+            $fs = [System.IO.File]::OpenRead($_.FullName)
+            $null = $fs.ReadByte()
+            $fs.Close()
+            $hydrated++
+        } catch {
+            $failed++
+            if ($failList.Count -lt 5) { [void]$failList.Add($_.FullName) }
+        }
+    }
+}
+Write-Host "[HYDRATE] gesamt=$total hydriert=$hydrated fehlgeschlagen=$failed"
+foreach ($f in $failList) { Write-Host "         FAIL: $f" }
+if ($failed -gt 0) { exit 1 } else { exit 0 }
+PSEOF
+)
+    # Pfad einsetzen (Single-Quote escapen für PS-String-Literal)
+    local _win_path_ps="${_win_path//\'/\'\'}"
+    local _ps_final="${_ps_template//@@WIN_PATH@@/$_win_path_ps}"
+
+    local _tmp_ps="/tmp/agentbox_hydrate_$$.ps1"
+    printf '%s\n' "$_ps_final" > "$_tmp_ps"
+
+    local _win_tmp
+    _win_tmp=$(wslpath -w "$_tmp_ps" 2>/dev/null)
+    if [ -z "$_win_tmp" ]; then
+        rm -f "$_tmp_ps"
+        log_warn "OneDrive-Hydration: wslpath fuer Temp-Skript fehlgeschlagen"
+        return 2
+    fi
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$_win_tmp" 2>&1 | \
+        while IFS= read -r _line; do echo "       ${_line%$'\r'}"; done
+    local _rc="${PIPESTATUS[0]}"
+    rm -f "$_tmp_ps"
+    return "$_rc"
+}
+
+_pd_lower="${PROJECT_DIR,,}"
+# Matched: /OneDrive/ (persoenlich) oder /OneDrive - Company/ (Business-Tenant).
+# Nicht gematcht: /OneDrive_backup/ (Unterstrich) oder Dateinamen wie onedrive.md.
+if [[ "$_pd_lower" == */onedrive/* ]] || [[ "$_pd_lower" == */onedrive\ * ]]; then
+    _hydrate_onedrive_project "$PROJECT_DIR"
+    _h_rc=$?
+    case "$_h_rc" in
+        0) log_ok "OneDrive-Dateien hydriert und lokal gepinnt" ;;
+        2) log_warn "OneDrive-Hydration uebersprungen — Voraussetzungen fehlen" ;;
+        *)
+            echo ""
+            log_warn "OneDrive-Hydration unvollstaendig — einige Dateien konnten"
+            log_warn "nicht synchronisiert werden. In der Sandbox erscheinen sie"
+            log_warn "als 'Input/output error'. Typische Ursachen:"
+            log_warn "  - OneDrive offline oder Sync pausiert"
+            log_warn "  - Sync-Konflikt auf einzelnen Dateien"
+            log_warn "  - Keine Netzwerkverbindung"
+            echo -n "       Trotzdem fortfahren? [J/n] "
+            if read -r _h_ans; then
+                case "$_h_ans" in
+                    n|N|nein|Nein) exit 1 ;;
+                esac
+            fi
+            ;;
+    esac
+fi
+
 # --- 5. project.json pruefen/generieren ---
 PROJECT_JSON="$PROJECT_DIR/project.json"
 

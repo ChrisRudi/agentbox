@@ -304,19 +304,37 @@ META_PROMPT="/etc/agentbox/SYSTEM_META_PROMPT.md"
 if [ -f "$META_PROMPT" ]; then
     cp "$META_PROMPT" "$WORKSPACE/SYSTEM_META_PROMPT.md"
     chown "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE/SYSTEM_META_PROMPT.md"
+
+    # Zusaetzlich als globale Claude-Code-Memory ablegen, damit der Agent
+    # den Sandbox-Vertrag (keine Netzwerk-Recherche, /workspace-Layout,
+    # _tasks/-Protokoll) beim Start automatisch im Kontext hat, ohne dass
+    # der User in der CLAUDE.md darauf verweisen muss. Claude Code laedt
+    # ~/.claude/CLAUDE.md als globale User-Memory vor der Projekt-Memory.
+    CLAUDE_HOME="/home/$SANDBOX_USER/.claude"
+    mkdir -p "$CLAUDE_HOME"
+    cp "$META_PROMPT" "$CLAUDE_HOME/CLAUDE.md"
+    chown -R "$SANDBOX_USER:$SANDBOX_USER" "$CLAUDE_HOME"
 fi
 
 # --- 8. Workspace-Berechtigungen setzen ---
 chown -R "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE" 2>/dev/null || true
 
 # --- 9. Agent starten als Sandbox-User ---
+# Startverzeichnis: /workspace/src — dort liegt der Projektcode. Claude Code
+# findet CLAUDE.md und project.json per Parent-Directory-Traversal auf
+# /workspace automatisch, also ohne Funktionsverlust.
+START_DIR="$WORKSPACE/src"
+if [ ! -d "$START_DIR" ]; then
+    START_DIR="$WORKSPACE"
+fi
+
 echo ""
 echo "======================================"
-echo " Starte $AGENT_CMD in /workspace"
+echo " Starte $AGENT_CMD in $START_DIR"
 echo "======================================"
 echo ""
 
-cd "$WORKSPACE"
+cd "$START_DIR"
 
 # Agent-Kommando validieren (nur alphanumerisch + Bindestrich, keine Sonderzeichen)
 if ! [[ "$AGENT_CMD" =~ ^[a-zA-Z0-9_-]+$ ]]; then
@@ -326,7 +344,7 @@ fi
 
 # Agent als unprivilegierter User starten
 if command -v "$AGENT_CMD" &> /dev/null; then
-    su - "$SANDBOX_USER" -c "cd /workspace && exec $AGENT_CMD"
+    su - "$SANDBOX_USER" -c "cd '$START_DIR' && exec $AGENT_CMD"
 else
     echo "FEHLER: Agent '$AGENT_CMD' nicht in der Sandbox installiert."
     echo "Bitte Agent in config.json aktivieren und win-setup.ps1 erneut ausfuehren (Template-Rebuild)."
