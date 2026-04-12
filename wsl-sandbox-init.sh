@@ -245,11 +245,18 @@ fi
 
 # --- Windows-Laufwerke unmounten (Sandbox-Isolation) ---
 # WSL mountet /mnt/c u.U. automatisch wieder — daher am Ende tmpfs ueber /mnt.
+# Bewusst LAZY unmount (-l), nicht force (-f): /mnt/c ist ein DrvFs/9P-Mount
+# zum Windows-Host, und unsere vorher gemachten Projekt-Bind-Mounts in
+# /workspace (CLAUDE.md, project.json, src/, _tasks/) referenzieren genau
+# dessen Superblock. Force-Unmount killt den 9P-Channel, danach geben alle
+# Reads ueber die Bind-Mounts EIO (I/O-Error in Claude Code's File-Listing).
+# Lazy unmount entfernt den Mount nur aus dem Namespace und laesst den
+# Superblock leben, solange noch Bind-Refs existieren — exakt unser Fall.
 echo ""
 echo "Isoliere Sandbox von Windows-Dateisystem..."
 # Alle /mnt Unterverzeichnisse unmounten (WSL DrvFs Automounts)
 for _mnt in /mnt/*/; do
-    umount -f "$_mnt" 2>/dev/null || umount -l "$_mnt" 2>/dev/null || true
+    umount -l "$_mnt" 2>/dev/null || true
     rmdir "$_mnt" 2>/dev/null || true
 done
 # tmpfs ueber /mnt — blockiert jeglichen Zugriff und verhindert WSL-Re-Mount
