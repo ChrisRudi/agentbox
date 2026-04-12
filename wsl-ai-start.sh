@@ -277,6 +277,28 @@ _wsl_distro_running() {
     wsl.exe -l -q --running 2>/dev/null | tr -d '\000\r' | grep -Fxq "$1"
 }
 
+# Trap-Cleanup: garantiert, dass die ephemere Sandbox-Distro auf JEDEM
+# Exit-Pfad terminiert + unregistered wird — auch wenn der User das
+# Terminal hart schliesst (Strg+C, X-Klick, kill -9), der watchdog
+# stirbt, oder wsl-sandbox-init.sh mit non-zero exit endet. Ohne Trap
+# bleibt die Distro im "running"-Zustand stehen und der Session-Lock
+# beim naechsten Start interpretiert sie als laufende Session.
+# Idempotent: prueft selbst, ob es etwas zu tun gibt, und schluckt alle
+# Fehler. Lebt nur, sobald DISTRO_NAME gesetzt ist (vorher No-Op).
+_agentbox_cleanup() {
+    local _ec=$?
+    if [ -n "${WATCHDOG_PID:-}" ]; then
+        kill "$WATCHDOG_PID" 2>/dev/null || true
+        wait "$WATCHDOG_PID" 2>/dev/null || true
+        WATCHDOG_PID=""
+    fi
+    if [ -n "${DISTRO_NAME:-}" ] && _wsl_distro_exists "$DISTRO_NAME"; then
+        wsl.exe --terminate "$DISTRO_NAME" >/dev/null 2>&1 || true
+        wsl.exe --unregister "$DISTRO_NAME" >/dev/null 2>&1 || true
+    fi
+    return $_ec
+}
+
 # --- Auto-Update pruefen ---
 _auto_update=$(cfg_get "auto_update" "true")
 _update_interval=$(cfg_get "auto_update_interval_hours" "24")
@@ -922,6 +944,13 @@ if _wsl_distro_running "$DISTRO_NAME"; then
     echo "Notfall-Stop: wsl.exe --terminate $DISTRO_NAME"
     exit 1
 fi
+
+# Cleanup-Trap aktivieren, sobald DISTRO_NAME steht und der Lock-Check
+# passiert ist. Faengt jeden Exit-Pfad ab — Strg+C im Agent, Terminal-
+# Close, partiell gescheiterter wsl --import, watchdog-OOM, etc. — und
+# raeumt die Distro garantiert weg, sodass der naechste Start nicht an
+# einem stale-running-Zustand klemmt.
+trap _agentbox_cleanup EXIT INT TERM HUP
 
 # --- Session-Snapshot erstellen (fuer Replay-Modus) ---
 # SESSIONS_DIR wurde bereits oben aus AGENTBOX_LOCAL_ROOT abgeleitet.
