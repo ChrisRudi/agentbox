@@ -492,12 +492,27 @@ if ! [[ "$AGENT_CMD" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     exit 1
 fi
 
+# --- Per-Agent Auto-Approve-Flags ---
+# Claude/Codex/Goose regeln Auto-Approve ueber ihre persistenten
+# Config-Files (in wsl-ai-start.sh geseedet), brauchen hier nichts.
+# Gemini und Aider dagegen akzeptieren "alles erlauben" nur per CLI-Flag:
+#   - Gemini: settings.json kann laut Docs kein YOLO, nur --approval-mode=yolo
+#   - Aider:  ~/.aider.conf.yml liegt ausserhalb des gemounteten .aider/-
+#             Ordners und wuerde beim Seeden nicht persistieren
+# Hardcoded -> kein Injection-Risiko (AGENT_CMD ist oben alphanumerisch
+# validiert, AGENT_FLAGS-Werte sind hier fest verdrahtet).
+AGENT_FLAGS=""
+case "$AGENT_CMD" in
+    gemini) AGENT_FLAGS="--approval-mode=yolo" ;;
+    aider)  AGENT_FLAGS="--yes-always" ;;
+esac
+
 # Agent als unprivilegierter User starten. `|| EXIT_CODE=$?` statt
 # `; EXIT_CODE=$?` — sonst killt set -e den Script vor der
 # Blockierte-Verbindungen-Diagnostik (fuer die sie gerade gedacht ist).
 EXIT_CODE=0
 if command -v "$AGENT_CMD" &> /dev/null; then
-    su - "$SANDBOX_USER" -c "cd '$START_DIR' && exec $AGENT_CMD" || EXIT_CODE=$?
+    su - "$SANDBOX_USER" -c "cd '$START_DIR' && exec $AGENT_CMD $AGENT_FLAGS" || EXIT_CODE=$?
 else
     echo "FEHLER: Agent '$AGENT_CMD' nicht in der Sandbox installiert."
     echo "Bitte Agent in config.json aktivieren und win-setup.ps1 erneut ausfuehren (Template-Rebuild)."

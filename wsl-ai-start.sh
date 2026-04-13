@@ -743,6 +743,57 @@ done
 if [ -f /etc/agentbox/SYSTEM_META_PROMPT.md ]; then
     cp /etc/agentbox/SYSTEM_META_PROMPT.md "$AUTH_BASE/claude/CLAUDE.md" 2>/dev/null || true
 fi
+
+# --- Auto-Approve-Defaults je Agent seeden ---
+# Die Sandbox selbst ist die Vertrauensgrenze (kein Host-FS, kein LAN,
+# Firewall default-deny). Innerhalb davon ist das staendige "Darf ich X
+# ausfuehren?" reine Reibung. Wir seeden deshalb pro Agent die jeweilige
+# Config-Datei mit "ja zu allem" — aber NUR if-not-exists, damit User
+# die Datei danach editieren und eigene Policies setzen koennen.
+#
+# Nicht alle Agenten lassen sich ueber ihre Config-Datei voll entsperren:
+# - Gemini CLI: YOLO-Mode laesst sich laut Docs nur per CLI-Flag aktivieren
+# - Aider: Config liegt in ~/.aider.conf.yml, NICHT im gemounteten .aider/-
+#   Ordner — Seeding hier wuerde nichts bringen
+# Fuer diese beiden setzen wir den Flag in wsl-sandbox-init.sh beim Launch.
+
+# Claude Code — ~/.claude/settings.json
+# permissions.defaultMode=bypassPermissions: keine Approval-Prompts mehr.
+# .git/, .claude/ (ausser commands|skills|agents), .vscode/, .idea/,
+# .husky/ fragen trotzdem noch — das ist in Claude Code fest eingebaut.
+if [ ! -f "$AUTH_BASE/claude/settings.json" ]; then
+    cat > "$AUTH_BASE/claude/settings.json" << 'JSONEOF'
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  }
+}
+JSONEOF
+fi
+
+# OpenAI Codex CLI — ~/.codex/config.toml
+# approval_policy=never + sandbox_mode=danger-full-access entspricht
+# exakt --dangerously-bypass-approvals-and-sandbox. Beide Keys sind
+# Teil des offiziellen Config-Schemas (codex-rs/core/config.schema.json).
+if [ ! -f "$AUTH_BASE/codex/config.toml" ]; then
+    cat > "$AUTH_BASE/codex/config.toml" << 'TOMLEOF'
+# agentbox-Default: Sandbox ist die Vertrauensgrenze, kein Approval-Prompting.
+approval_policy = "never"
+sandbox_mode    = "danger-full-access"
+TOMLEOF
+fi
+
+# Goose — ~/.config/goose/config.yaml
+# GOOSE_MODE=auto: "Completely Autonomous, no approval required"
+# (siehe goose docs/guides/goose-permissions). Alternativ via env var,
+# aber die yaml-Variante persistiert ueber Sessions.
+if [ ! -f "$AUTH_BASE/goose/config.yaml" ]; then
+    cat > "$AUTH_BASE/goose/config.yaml" << 'YAMLEOF'
+# agentbox-Default: fully autonomous mode, keine Tool-/File-/Extension-Approvals.
+GOOSE_MODE: auto
+YAMLEOF
+fi
+
 log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_AGENTS)"
 
 # --- Alte status_*.json loeschen ---
