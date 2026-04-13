@@ -1,10 +1,10 @@
 <p align="center">
   <h1 align="center">agentbox</h1>
   <p align="center">
-    <strong>AI-Coding-Agenten haben vollen Zugriff auf dein Dateisystem.<br>agentbox aendert das.</strong>
+    <strong>AI-Coding-Agenten haben vollen Zugriff auf dein Dateisystem.<br>agentbox ändert das.</strong>
   </p>
   <p align="center">
-    <a href="#installation">Installation</a> · <a href="#unterstuetzte-agenten">Agenten</a> · <a href="#taegliche-nutzung">Nutzung</a> · <a href="#sicherheitsmodell">Sicherheit</a> · <a href="#konfiguration">Config</a>
+    <a href="#installation">Installation</a> · <a href="#unterstützte-agenten">Agenten</a> · <a href="#tägliche-nutzung">Nutzung</a> · <a href="#sicherheitsmodell">Sicherheit</a> · <a href="#konfiguration">Config</a>
   </p>
   <p align="center">
     🌍 <a href="../README.md">English</a>
@@ -13,23 +13,23 @@
 
 ---
 
-**KI-Coding-Agenten loesen Probleme — und zerstoeren dabei dein System:**
+**KI-Coding-Agenten lösen Probleme — und zerstören dabei dein System:**
 
 - Sie machen deinen Rechner lahm — fressen RAM und CPU ohne Limit
 - Sie ruinieren dein OS — Caches, Reste, irgendwann startet Windows nicht mehr sauber
-- Sie stehlen deine Secrets — SSH-Keys, `.env`-Dateien, Passwoerter
+- Sie stehlen deine Secrets — SSH-Keys, `.env`-Dateien, Passwörter
 - Sie liegen offen im Netzwerk — dein Host und LAN sind erreichbar
 - Sie vergessen alles — nach der Session ist der Kontext weg
-- Sie fragen staendig nach — weil dein System auf dem Spiel steht
+- Sie fragen ständig nach — weil dein System auf dem Spiel steht
 
 **In einer Sandbox nicht.**
 
 Ein Befehl. Saubere Umgebung. Volle Kontrolle.
 Windows nativ. Kein Docker. Kein Kubernetes.
 
-**agentbox** startet KI-Coding-Agenten in **wegwerfbaren WSL2-Distributionen** mit echter Dateisystem- und Netzwerkisolation — und gibt dir die Produktivitaet von KI-Agenten **ohne das Risiko**.
+**agentbox** startet KI-Coding-Agenten in **wegwerfbaren WSL2-Distributionen** mit echter Dateisystem- und Netzwerkisolation — und gibt dir die Produktivität von KI-Agenten **ohne das Risiko**.
 
-## Unterstuetzte Agenten
+## Unterstützte Agenten
 
 | Agent | Standard | Paketmanager | Aktivieren |
 |-------|----------|-------------|------------|
@@ -39,7 +39,7 @@ Windows nativ. Kein Docker. Kein Kubernetes.
 | **Aider** | Deaktiviert | pip | `agent_aider_enabled` in `config.json` auf `true` setzen |
 | **Goose** (Block) | Deaktiviert | pip | `agent_goose_enabled` in `config.json` auf `true` setzen |
 
-Zusaetzliche Agenten aktivieren → `config.json` editieren → `install.ps1` erneut ausfuehren (Template-Rebuild).
+Zusätzliche Agenten aktivieren → `config.json` editieren → `install.ps1` erneut ausführen (Template-Rebuild).
 
 ## Installation
 
@@ -49,7 +49,7 @@ Ein Befehl in einer Admin-PowerShell:
 irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
 ```
 
-Das wars. WSL-Terminal oeffnen — agentbox startet automatisch.
+Das wars. WSL-Terminal öffnen — agentbox startet automatisch.
 
 ### Update
 
@@ -63,14 +63,14 @@ Gleicher Befehl. Wenn agentbox bereits installiert ist, wird die neueste Version
 3. Windows Event-Source und Scheduled Task werden angelegt
 4. WSL `.bashrc` wird konfiguriert (Auto-Start)
 5. Desktop-Shortcut `agentbox.lnk` wird erstellt
-6. `.wslconfig` mit Ressourcen-Limits gesetzt (konfigurierbar ueber `config.json`)
+6. `.wslconfig` mit Ressourcen-Limits gesetzt (konfigurierbar über `config.json`)
 
 Dauer: ca. 3-5 Minuten, einmalig. Updates sind schneller.
 </details>
 
 ### Speicherort
 
-Standardmaessig nutzt agentbox `OneDrive\AI_Projects_Source\`. Du kannst **jeden beliebigen Ordner** verwenden:
+Standardmäßig nutzt agentbox `OneDrive\AI_Projects_Source\`. Du kannst **jeden beliebigen Ordner** verwenden:
 
 | Speicher | Konfiguration |
 |----------|--------------|
@@ -140,7 +140,7 @@ Falls dein Projekt keinen `src/`-Ordner hat, wird stattdessen der Projekt-Root a
 | `build.output_dir` | Nein | Build-Ausgabeverzeichnis (Standard: `build_out`) |
 | `deploy.target` | Nein | `local` oder `github` (muss in der Deploy-Whitelist stehen) |
 | `agent.working_dir` | Nein | Arbeitsverzeichnis im Projekt (Standard: `src`) |
-| `agent.entry_point` | Nein | Hauptdatei (informativ, fuer den Agenten) |
+| `agent.entry_point` | Nein | Hauptdatei (informativ, für den Agenten) |
 
 Automatisch erkannte Typen und ihre Defaults:
 
@@ -152,9 +152,9 @@ Automatisch erkannte Typen und ihre Defaults:
 | `*.html` | `html` | — |
 | (nichts davon) | `generic` | — |
 
-## Taegliche Nutzung
+## Tägliche Nutzung
 
-WSL-Terminal oeffnen (oder Doppelklick auf den Desktop-Shortcut):
+WSL-Terminal öffnen (oder Doppelklick auf den Desktop-Shortcut):
 
 ```
 agentbox starten? [J/n] (automatisch in 5s)
@@ -172,10 +172,10 @@ Welcher Agent?
   [3] Gemini CLI
 Auswahl [1]: 1
 
-=== Starte Claude Code fuer MeinProjekt ===
+=== Starte Claude Code für MeinProjekt ===
 ```
 
-> **Agent arbeitet → Session endet → Sandbox wird geloescht → Code bleibt.**
+> **Agent arbeitet → Session endet → Sandbox wird gelöscht → Code bleibt.**
 
 Es werden nur Agenten angezeigt, die in `config.json` **aktiviert** und im Template **installiert** sind.
 
@@ -200,9 +200,9 @@ Der Agent sieht **nicht**: `/mnt/c/`, OneDrive, `~/.ssh/`, andere Projekte, `_co
 
 Verzeichnis-Mounts: `nosymfollow` + `nodev`; Hardlink-Schutz via `sysctl`.
 
-### Netzwerk-Isolation — Was tatsaechlich passiert
+### Netzwerk-Isolation — Was tatsächlich passiert
 
-**agentbox schuetzt deine Maschine vor dem Agent, nicht das Internet vor dem Agent.**
+**agentbox schützt deine Maschine vor dem Agent, nicht das Internet vor dem Agent.**
 
 Die iptables-Regeln in der Sandbox setzen durch:
 
@@ -213,34 +213,34 @@ Die iptables-Regeln in der Sandbox setzen durch:
 
 Das Wichtige sind die DROPs auf private Netze: sie verhindern, dass der Agent deinen Windows-Host, LAN-Dienste, Metadata-Endpoints oder andere WSL-Distros erreicht. Das ist das Client-Protection-Threat-Model.
 
-**Was agentbox NICHT macht:** Per-Domain-Egress-Filtering. iptables kann Hostnamen nicht zuverlaessig matchen (CDNs rotieren IPs mitten im Request), also gibt es kein tatsaechlich durchgesetztes Whitelist. Ein Agent mit Netzwerk-Zugriff *kann* waehrend einer Session jeden oeffentlichen HTTPS-Endpunkt erreichen. Wer das im Threat-Model hat, braucht einen Egress-Proxy — agentbox liefert keinen mit.
+**Was agentbox NICHT macht:** Per-Domain-Egress-Filtering. iptables kann Hostnamen nicht zuverlässig matchen (CDNs rotieren IPs mitten im Request), also gibt es kein tatsächlich durchgesetztes Whitelist. Ein Agent mit Netzwerk-Zugriff *kann* während einer Session jeden öffentlichen HTTPS-Endpunkt erreichen. Wer das im Threat-Model hat, braucht einen Egress-Proxy — agentbox liefert keinen mit.
 
-Die Keys `firewall_ai_apis` / `firewall_registries_node` / `firewall_registries_python` in der `config.json` sind **Altlasten aus einem frueheren Design** und haben **keinen Runtime-Effekt**. Sie bleiben im Schema nur um bestehende Configs nicht zu brechen — behandle sie als ungenutzt.
+Die Keys `firewall_ai_apis` / `firewall_registries_node` / `firewall_registries_python` in der `config.json` sind **Altlasten aus einem früheren Design** und haben **keinen Runtime-Effekt**. Sie bleiben im Schema nur um bestehende Configs nicht zu brechen — behandle sie als ungenutzt.
 
 ### Ressourcen-Limits
 
-- `.wslconfig`: konfigurierbar ueber `config.json` (Standard: 4 GB RAM, 2 CPUs, 1 GB Swap)
-- **RAM-Watchdog**: Warnt per Windows-Dialog wenn Sandbox Schwellwert ueberschreitet (Standard: 90%)
+- `.wslconfig`: konfigurierbar über `config.json` (Standard: 4 GB RAM, 2 CPUs, 1 GB Swap)
+- **RAM-Watchdog**: Warnt per Windows-Dialog wenn Sandbox Schwellwert überschreitet (Standard: 90%)
 - Schutz vor Endlosschleifen die den Host lahmlegen
 
 ### Build/Deploy-Kontrolle
 
-Der Agent kann **nichts selbst ausfuehren**. Er schreibt eine Task-Datei, ein Windows-Runner prueft:
+Der Agent kann **nichts selbst ausführen**. Er schreibt eine Task-Datei, ein Windows-Runner prüft:
 
-- Build-Kommando in Whitelist? → Ausfuehren
-- Deploy-Target in Whitelist? → Ausfuehren
+- Build-Kommando in Whitelist? → Ausführen
+- Deploy-Target in Whitelist? → Ausführen
 - Alles andere → **Abgelehnt. Kein Wildcard, kein Prefix-Match.**
 
 Beide Whitelists sind konfigurierbar in `config.json`.
 
-### Was ueber Sessions hinweg persistiert
+### Was über Sessions hinweg persistiert
 
-Die Sandbox-Distro selbst ist wegwerfbar, aber zwei Schichten auf der Windows-Seite ueberleben Session-Grenzen und werden in jede neue Sandbox gebind-mountet:
+Die Sandbox-Distro selbst ist wegwerfbar, aber zwei Schichten auf der Windows-Seite überleben Session-Grenzen und werden in jede neue Sandbox gebind-mountet:
 
-- **Paket-Caches**: `_control/cache/npm` und `_control/cache/pip` — damit `npm install` / `pip install` zwischen Sessions nicht neu laden. Trade-off: ein Agent koennte den Cache theoretisch fuer eine spaetere Session vergiften.
-- **Agent-Auth-Ordner**: `%LOCALAPPDATA%\agentbox\auth\{claude,codex,gemini,aider,goose}` — damit du dich nicht bei jeder Session neu einloggen musst. Jeder Agent hat seinen eigenen Unterordner; waehrend einer Session wird nur der des aktiven Agents gemountet, sie sehen sich also gegenseitig nicht.
+- **Paket-Caches**: `_control/cache/npm` und `_control/cache/pip` — damit `npm install` / `pip install` zwischen Sessions nicht neu laden. Trade-off: ein Agent könnte den Cache theoretisch für eine spätere Session vergiften.
+- **Agent-Auth-Ordner**: `%LOCALAPPDATA%\agentbox\auth\{claude,codex,gemini,aider,goose}` — damit du dich nicht bei jeder Session neu einloggen musst. Jeder Agent hat seinen eigenen Unterordner; während einer Session wird nur der des aktiven Agents gemountet, sie sehen sich also gegenseitig nicht.
 
-Loesche einen der beiden Trees auf der Windows-Seite fuer einen komplett frischen Start.
+Lösche einen der beiden Trees auf der Windows-Seite für einen komplett frischen Start.
 
 ## Konfiguration
 
@@ -254,9 +254,9 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 | `sandbox_user` | `agent` | Unprivilegierter User in der Sandbox |
 | `resources_memory` | `4GB` | WSL2-Speicherlimit |
 | `resources_processors` | `2` | WSL2-CPU-Kerne |
-| `resources_swap` | `1GB` | WSL2-Swap-Groesse |
+| `resources_swap` | `1GB` | WSL2-Swap-Größe |
 | `resources_ram_warn_percent` | `90` | RAM-Watchdog-Schwelle (%) |
-| `resources_watchdog_interval` | `30` | Watchdog-Pruefintervall (Sekunden) |
+| `resources_watchdog_interval` | `30` | Watchdog-Prüfintervall (Sekunden) |
 | `build_whitelist` | 8 Kommandos | Erlaubte Build-Befehle |
 | `deploy_whitelist` | `local`, `github` | Erlaubte Deploy-Ziele |
 | `firewall_ai_apis` | 3 Endpoints | Altlast, kein Runtime-Effekt (siehe Netzwerk-Isolation) |
@@ -269,7 +269,7 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 | `event_log_source` | `AIProjects` | Windows Event-Log-Quellname |
 | `scheduled_task_name` | `agentbox-task-runner` | Windows Scheduled-Task-Name |
 
-Siehe [`config.json`](../config.json) fuer die vollstaendige Liste mit allen Defaults.
+Siehe [`config.json`](../config.json) für die vollständige Liste mit allen Defaults.
 
 ## Vergleich
 
@@ -278,33 +278,33 @@ Siehe [`config.json`](../config.json) fuer die vollstaendige Liste mit allen Def
 | Braucht Docker           | Ja                  | Nein (Cloud)      | **Nein**     |
 | One-Liner Install        | Nein                | Nein              | **Ja**       |
 | Agent-Isolation          | Manuell             | Teilweise         | **Automatisch** |
-| Netzwerk-Beschraenkung   | Manuell             | Nein              | **Automatisch** |
+| Netzwerk-Beschränkung    | Manuell             | Nein              | **Automatisch** |
 | Build/Deploy-Whitelist   | Nein                | Nein              | **Ja**       |
 | Session wegwerfbar       | Manuell             | Nein              | **Automatisch** |
 | Funktioniert offline     | Ja                  | Nein              | **Ja**       |
 | Kosten                   | Gratis              | Ab $0/Monat       | **Gratis**   |
 | Setup-Zeit               | 10-30 Min           | 5 Min             | **3-5 Min**  |
 
-## Session-Kontinuitaet
+## Session-Kontinuität
 
 Agenten lesen `CLAUDE.md` zu Beginn und aktualisieren sie am Ende jeder Session. Kein Kontext geht verloren. Vor jeder Session wird automatisch ein Backup (`CLAUDE.md.bak`) erstellt.
 
 ## Replay-Modus: Agenten-Vergleich
 
-Fuehre die gleiche Aufgabe mit verschiedenen Agenten aus und vergleiche die Ergebnisse — deterministisch.
+Führe die gleiche Aufgabe mit verschiedenen Agenten aus und vergleiche die Ergebnisse — deterministisch.
 
 ### So funktioniert es
 
-Jede Session erstellt automatisch einen **Snapshot** (Code + CLAUDE.md vor Agent-Start) und einen **Diff** (alle Aenderungen des Agenten). Das ermoeglicht:
+Jede Session erstellt automatisch einen **Snapshot** (Code + CLAUDE.md vor Agent-Start) und einen **Diff** (alle Änderungen des Agenten). Das ermöglicht:
 
 ```bash
-# 1. Aufgabe mit Claude Code ausfuehren
+# 1. Aufgabe mit Claude Code ausführen
 agentbox
 #    → Session-ID: 20260411_143000_claude_MeinProjekt
 
 # 2. Gleichen Ausgangszustand mit anderem Agent wiederholen
 agentbox --replay 20260411_143000_claude_MeinProjekt
-#    → Anderen Agent waehlen (z.B. Codex oder Aider)
+#    → Anderen Agent wählen (z.B. Codex oder Aider)
 #    → Session-ID: 20260411_150000_codex_MeinProjekt
 
 # 3. Vergleichen was jeder Agent gemacht hat
@@ -316,16 +316,16 @@ agentbox --compare 20260411_143000_claude_MeinProjekt 20260411_150000_codex_Mein
 | Befehl | Beschreibung |
 |--------|-------------|
 | `agentbox --list-sessions` | Alle aufgezeichneten Sessions auflisten |
-| `agentbox --replay <session-id>` | Snapshot wiederherstellen, mit anderem Agent ausfuehren |
+| `agentbox --replay <session-id>` | Snapshot wiederherstellen, mit anderem Agent ausführen |
 | `agentbox --compare <id1> <id2>` | Zwei Sessions nebeneinander vergleichen |
 
 ### Was verglichen wird
 
-- **Code-Aenderungen**: Vollstaendiger Unified-Diff aller geaenderten Dateien
-- **CLAUDE.md-Aenderungen**: Wie jeder Agent seine Arbeit dokumentiert hat
+- **Code-Änderungen**: Vollständiger Unified-Diff aller geänderten Dateien
+- **CLAUDE.md-Änderungen**: Wie jeder Agent seine Arbeit dokumentiert hat
 - **Session-Metadaten**: Agent-Name, Zeitstempel, Projekt
 
-Nuetzlich um zu evaluieren, welcher Agent bestimmte Aufgaben besser loest, oder um zu verifizieren, dass ein Refactoring bei verschiedenen Agenten aequivalente Ergebnisse liefert.
+Nützlich um zu evaluieren, welcher Agent bestimmte Aufgaben besser löst, oder um zu verifizieren, dass ein Refactoring bei verschiedenen Agenten äquivalente Ergebnisse liefert.
 
 ## Post-Session-Diagnostik
 
@@ -339,7 +339,7 @@ Nach jeder Session listet agentbox die Verbindungsversuche, die von den Host-Pro
   [BLOCKED] 203.0.113.42
 ```
 
-Typische Eintraege: der Agent hat versucht, deinen Windows-Host (`172.x`, `127.0.0.1`), dein LAN (`192.168.x`) oder einen Nicht-Web-Port zu erreichen. Wenn du einen Treffer auf eine Domain siehst, die du wirklich brauchst — z.B. ein privater Artifact-Mirror — dann hat der aktuelle Build von agentbox keinen per-Host-Whitelist-Knopf; die iptables-Regeln in `wsl-sandbox-init.sh` musst du dann selber aufweichen.
+Typische Einträge: der Agent hat versucht, deinen Windows-Host (`172.x`, `127.0.0.1`), dein LAN (`192.168.x`) oder einen Nicht-Web-Port zu erreichen. Wenn du einen Treffer auf eine Domain siehst, die du wirklich brauchst — z.B. ein privater Artifact-Mirror — dann hat der aktuelle Build von agentbox keinen per-Host-Whitelist-Knopf; die iptables-Regeln in `wsl-sandbox-init.sh` musst du dann selber aufweichen.
 
 ## Dateistruktur
 
@@ -353,7 +353,7 @@ AI_Projects_Source\                (oder eigener Pfad)
 |   +-- wsl-ai-start.sh            # Projekt/Agent-Auswahl
 |   +-- wsl-sandbox-init.sh        # Sandbox-Initialisierung
 |   +-- type_defaults.json         # Typ-Erkennung + Defaults
-|   +-- SYSTEM_META_PROMPT.md      # Arbeitsvertrag fuer Agenten
+|   +-- SYSTEM_META_PROMPT.md      # Arbeitsvertrag für Agenten
 |   +-- lib\
 |   |   +-- config.sh              # Bash-Config-Helper
 |   +-- sandbox\
@@ -374,16 +374,16 @@ AI_Projects_Source\                (oder eigener Pfad)
 
 - Windows 10 (2004+) oder Windows 11 + WSL2 (wird automatisch installiert falls nicht vorhanden)
 - Admin-Rechte (nur einmalig)
-- Git (optional — wird fuer schnellere Updates genutzt, nicht zwingend erforderlich)
+- Git (optional — wird für schnellere Updates genutzt, nicht zwingend erforderlich)
 - **Kein Docker. Kein Kubernetes. Keine Cloud.**
 
 ## Ehrlichkeit
 
-### Was agentbox NICHT schuetzt
+### Was agentbox NICHT schützt
 
 - WSL2-Kernel-Exploits (Microsoft-Verantwortung)
-- Boesartiger Code im Projektordner (Agent hat dort r/w — das ist beabsichtigt)
-- DNS-Tunneling (theoretisch moeglich, praktisch irrelevant)
+- Bösartiger Code im Projektordner (Agent hat dort r/w — das ist beabsichtigt)
+- DNS-Tunneling (theoretisch möglich, praktisch irrelevant)
 - Kein Multi-User-System (ein Entwickler, ein Rechner)
 
-Wir dokumentieren das, weil Sicherheitsversprechen nur zaehlen, wenn man ehrlich sagt wo die Grenzen sind.
+Wir dokumentieren das, weil Sicherheitsversprechen nur zählen, wenn man ehrlich sagt wo die Grenzen sind.
