@@ -422,10 +422,14 @@ $installScript = $installScript.Replace("`r", "")
 $installB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($installScript))
 $runInstall = "echo $installB64 | base64 -d > /tmp/install.sh; bash /tmp/install.sh; echo `$? > /tmp/install.rc; rm -f /tmp/install.sh"
 
-# Output durch ForEach stringifizieren → verhindert dass PS Stderr-Zeilen
+# Streaming statt Buffer: Output direkt durch ForEach nach Write-Host pipen,
+# damit der User die Step-Marker ('[1/5] System-Update...', '[2/5] Node.js...')
+# LIVE waehrend des Installs sieht. Vorher wurde mit @(...) alles in ein Array
+# geschrieben und erst nach Exit des wsl-Calls angezeigt — das sah 3-5 Minuten
+# lang wie ein Hang aus, obwohl intern fleissig installiert wurde.
+# Die "$_"-Stringifizierung bleibt wichtig: verhindert dass PS Stderr-Zeilen
 # als ErrorRecord-Objekte in den Pipe-Stream wirft (rote Error-Kaestchen).
-$installOutput = @(& wsl.exe -d $distroName -- bash -c $runInstall 2>&1 | ForEach-Object { "$_" })
-foreach ($line in $installOutput) { Write-Host $line -ForegroundColor Gray }
+& wsl.exe -d $distroName -- bash -c $runInstall 2>&1 | ForEach-Object { Write-Host "$_" -ForegroundColor Gray }
 
 # Exit-Code aus der Sandbox lesen (zuverlaessiger als $LASTEXITCODE nach Pipe)
 $installRc = & wsl.exe -d $distroName -- cat /tmp/install.rc 2>&1

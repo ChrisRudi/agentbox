@@ -5,6 +5,36 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-04-13
+
+### Added
+
+- Auto-approve defaults for all five agents so the sandbox stops
+  prompting on every tool call. The sandbox itself is the trust
+  boundary; inside it, the permission prompts are pure friction.
+  - Claude Code: `~/.claude/settings.json` with
+    `permissions.defaultMode = "bypassPermissions"`
+  - OpenAI Codex: `~/.codex/config.toml` with
+    `approval_policy = "never"` + `sandbox_mode = "danger-full-access"`
+  - Goose: `~/.config/goose/config.yaml` with `GOOSE_MODE: auto`
+  - Gemini CLI: launched with `--approval-mode=yolo`
+  - Aider: launched with `--yes-always`
+- Config files are seeded under `%LOCALAPPDATA%\agentbox\auth\<agent>\`
+  at install time (`win-setup-core.ps1`) and re-seeded at every
+  session start (`wsl-ai-start.sh`), both with if-not-exists so user
+  edits stick.
+
+### Fixed
+
+- Package-install phase (`win-setup-core.ps1`) streams the Linux
+  install script's step markers live to the console instead of
+  buffering the whole 3–5 minute output into an array that only
+  printed once the install finished. Previously the installer
+  looked hung between "Installiere Pakete in der Template-Distro..."
+  and the next `[OK]` line.
+- `docs/README.de.md` now uses real umlauts (ä/ö/ü/ß) instead of
+  the ASCII transliterations (ae/oe/ue/ss) that had crept in.
+
 ## [1.0.0] - 2026-04-12
 
 First stable release.
