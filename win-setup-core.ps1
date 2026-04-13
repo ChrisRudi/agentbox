@@ -137,6 +137,85 @@ function Register-AgentboxTaskRunner {
     Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
 }
 
+# Seed-Helper: schreibt Datei nur wenn sie noch nicht existiert. UTF8 ohne
+# BOM, LF-Line-Endings — Content wird in der Sandbox von Linux-Parsern
+# (Python/Node/Rust-TOML) gelesen, CRLF wuerde bei naiver Verwendung bloss
+# als unerwartetes Whitespace durchkommen. Rueckgabe: $true wenn neu
+# geschrieben, $false wenn schon da.
+function Write-AgentboxSeedIfMissing {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string[]]$Lines
+    )
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    if (Test-Path $Path) {
+        return $false
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $content = ($Lines -join "`n") + "`n"
+    [IO.File]::WriteAllText($Path, $content, $utf8NoBom)
+    return $true
+}
+
+# Auto-Approve-Defaults fuer alle fuenf Agents in %LOCALAPPDATA%\agentbox\auth\
+# anlegen. wsl-ai-start.sh macht beim Session-Start dasselbe nochmal — das ist
+# eine defensive Doppelung fuer User, die agentbox per git pull aktualisieren
+# statt per install.ps1. Die if-not-exists-Logik macht beide Aufrufe idempotent.
+#
+# Warum hier im Installer *zusaetzlich* zum Session-Start-Seeding: nach einer
+# frischen Installation will man die Config-Dateien sofort unter
+# %LOCALAPPDATA%\agentbox\auth\<agent>\ sehen koennen — vor dem ersten Session-
+# Start, damit man eigene Policies setzen kann bevor der erste Agent hochfaehrt.
+#
+# Drei Agents koennen ueber ihre Config-Datei voll entsperrt werden. Gemini
+# und Aider brauchen CLI-Flags — die setzt wsl-sandbox-init.sh beim Launch.
+function Initialize-AgentboxAutoApproveDefaults {
+    $authBase = Join-Path $env:LOCALAPPDATA "agentbox\auth"
+    $created = 0
+
+    # Claude Code — ~/.claude/settings.json
+    if (Write-AgentboxSeedIfMissing `
+            -Path (Join-Path $authBase "claude\settings.json") `
+            -Lines @(
+                '{',
+                '  "permissions": {',
+                '    "defaultMode": "bypassPermissions"',
+                '  }',
+                '}'
+            )) { $created++ }
+
+    # OpenAI Codex CLI — ~/.codex/config.toml
+    # Entspricht --dangerously-bypass-approvals-and-sandbox
+    if (Write-AgentboxSeedIfMissing `
+            -Path (Join-Path $authBase "codex\config.toml") `
+            -Lines @(
+                '# agentbox-Default: Sandbox ist die Vertrauensgrenze, kein Approval-Prompting.',
+                'approval_policy = "never"',
+                'sandbox_mode    = "danger-full-access"'
+            )) { $created++ }
+
+    # Goose — ~/.config/goose/config.yaml
+    if (Write-AgentboxSeedIfMissing `
+            -Path (Join-Path $authBase "goose\config.yaml") `
+            -Lines @(
+                '# agentbox-Default: fully autonomous mode, keine Tool-/File-/Extension-Approvals.',
+                'GOOSE_MODE: auto'
+            )) { $created++ }
+
+    if ($created -gt 0) {
+        Write-Host "[OK] Auto-Approve-Defaults geseedet ($created neu) unter $authBase" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] Auto-Approve-Defaults bereits vorhanden unter $authBase" -ForegroundColor Green
+    }
+}
+
+# Unbedingt VOR dem Skip-Build-Check aufrufen, damit Updates ohne Template-
+# Rebuild (gleicher Config-Hash) trotzdem neue Seeds nachziehen koennen.
+Initialize-AgentboxAutoApproveDefaults
+
 $configHashFile = Join-Path $sandboxDir ".config_hash"
 $currentHash = Get-AgentboxConfigHash -cfg $config
 
