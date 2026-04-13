@@ -748,51 +748,130 @@ fi
 # Die Sandbox selbst ist die Vertrauensgrenze (kein Host-FS, kein LAN,
 # Firewall default-deny). Innerhalb davon ist das staendige "Darf ich X
 # ausfuehren?" reine Reibung. Wir seeden deshalb pro Agent die jeweilige
-# Config-Datei mit "ja zu allem" — aber NUR if-not-exists, damit User
-# die Datei danach editieren und eigene Policies setzen koennen.
+# Config-Datei mit "ja zu allem".
 #
-# Nicht alle Agenten lassen sich ueber ihre Config-Datei voll entsperren:
-# - Gemini CLI: YOLO-Mode laesst sich laut Docs nur per CLI-Flag aktivieren
-# - Aider: Config liegt in ~/.aider.conf.yml, NICHT im gemounteten .aider/-
-#   Ordner — Seeding hier wuerde nichts bringen
-# Fuer diese beiden setzen wir den Flag in wsl-sandbox-init.sh beim Launch.
+# Smart-Merge statt naivem if-not-exists, weil manche Agents (z.B. Claude
+# Code) beim ersten Start ihre settings.json selbst als leeres {} anlegen —
+# ein reines if-not-exists wuerde dann bei spaeteren Starts die leere Datei
+# sehen, skippen, und der User bekaeme trotz Seed keine Policies.
+#
+# Logik pro Agent:
+# - Datei fehlt         -> neu schreiben
+# - Datei existiert leer -> neu schreiben
+# - Datei existiert mit Content:
+#     * Claude (JSON):   permissions.defaultMode ergaenzen wenn fehlend,
+#                        andere Keys unberuehrt lassen. Kaputtes JSON: warnen.
+#     * Codex (TOML):    nicht anfassen (User hat was gesetzt)
+#     * Goose (YAML):    nicht anfassen (User hat was gesetzt)
+#
+# Gemini CLI: YOLO-Mode laesst sich laut Docs nur per CLI-Flag aktivieren.
+# Aider: Config liegt in ~/.aider.conf.yml, NICHT im gemounteten .aider/-
+# Ordner — Seeding hier wuerde nichts bringen. Fuer beide setzt
+# wsl-sandbox-init.sh beim Launch den CLI-Flag.
+
+# Helper: schreibt $2 nach $1, wenn Datei fehlt oder nur whitespace enthaelt.
+# Gibt auf stdout "created"/"replaced-empty"/"kept" fuer Logging.
+_seed_if_empty() {
+    local _path="$1"
+    local _content="$2"
+    mkdir -p "$(dirname "$_path")"
+    if [ ! -f "$_path" ]; then
+        printf '%s\n' "$_content" > "$_path"
+        echo "created"
+        return
+    fi
+    if [ ! -s "$_path" ] || [ -z "$(tr -d '[:space:]' < "$_path" 2>/dev/null)" ]; then
+        printf '%s\n' "$_content" > "$_path"
+        echo "replaced-empty"
+        return
+    fi
+    echo "kept"
+}
 
 # Claude Code — ~/.claude/settings.json
 # permissions.defaultMode=bypassPermissions: keine Approval-Prompts mehr.
 # .git/, .claude/ (ausser commands|skills|agents), .vscode/, .idea/,
 # .husky/ fragen trotzdem noch — das ist in Claude Code fest eingebaut.
-if [ ! -f "$AUTH_BASE/claude/settings.json" ]; then
-    cat > "$AUTH_BASE/claude/settings.json" << 'JSONEOF'
-{
+_seed_claude_settings() {
+    local _path="$AUTH_BASE/claude/settings.json"
+    local _default='{
   "permissions": {
     "defaultMode": "bypassPermissions"
   }
+}'
+    mkdir -p "$(dirname "$_path")"
+
+    # Fehlt oder leer → komplett neu
+    if [ ! -f "$_path" ] || [ ! -s "$_path" ] \
+       || [ -z "$(tr -d '[:space:]' < "$_path" 2>/dev/null)" ]; then
+        printf '%s\n' "$_default" > "$_path"
+        echo "created"
+        return
+    fi
+
+    # Trivial {} (Claude Code legt beim ersten Start eine leere an) → ersetzen
+    local _trimmed
+    _trimmed="$(tr -d '[:space:]' < "$_path" 2>/dev/null)"
+    if [ "$_trimmed" = "{}" ]; then
+        printf '%s\n' "$_default" > "$_path"
+        echo "replaced-empty"
+        return
+    fi
+
+    # Sonst: JSON parsen, defaultMode ergaenzen wenn fehlt, User-Keys behalten.
+    # python3 ist im Template garantiert (siehe win-setup-core.ps1 Step [3/5]).
+    local _py_result
+    _py_result=$(python3 - "$_path" << 'PYEOF' 2>/dev/null
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding='utf-8') as f:
+        data = json.load(f)
+except Exception:
+    print("invalid")
+    sys.exit(0)
+
+if not isinstance(data, dict):
+    print("not-object")
+    sys.exit(0)
+
+perms = data.get("permissions")
+if isinstance(perms, dict) and "defaultMode" in perms:
+    print("already-set")
+    sys.exit(0)
+
+if not isinstance(perms, dict):
+    data["permissions"] = {"defaultMode": "bypassPermissions"}
+else:
+    data["permissions"]["defaultMode"] = "bypassPermissions"
+
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+print("merged")
+PYEOF
+)
+    echo "${_py_result:-error}"
 }
-JSONEOF
-fi
+_claude_status=$(_seed_claude_settings)
 
 # OpenAI Codex CLI — ~/.codex/config.toml
 # approval_policy=never + sandbox_mode=danger-full-access entspricht
 # exakt --dangerously-bypass-approvals-and-sandbox. Beide Keys sind
 # Teil des offiziellen Config-Schemas (codex-rs/core/config.schema.json).
-if [ ! -f "$AUTH_BASE/codex/config.toml" ]; then
-    cat > "$AUTH_BASE/codex/config.toml" << 'TOMLEOF'
-# agentbox-Default: Sandbox ist die Vertrauensgrenze, kein Approval-Prompting.
+_codex_default='# agentbox-Default: Sandbox ist die Vertrauensgrenze, kein Approval-Prompting.
 approval_policy = "never"
-sandbox_mode    = "danger-full-access"
-TOMLEOF
-fi
+sandbox_mode    = "danger-full-access"'
+_codex_status=$(_seed_if_empty "$AUTH_BASE/codex/config.toml" "$_codex_default")
 
 # Goose — ~/.config/goose/config.yaml
 # GOOSE_MODE=auto: "Completely Autonomous, no approval required"
-# (siehe goose docs/guides/goose-permissions). Alternativ via env var,
-# aber die yaml-Variante persistiert ueber Sessions.
-if [ ! -f "$AUTH_BASE/goose/config.yaml" ]; then
-    cat > "$AUTH_BASE/goose/config.yaml" << 'YAMLEOF'
-# agentbox-Default: fully autonomous mode, keine Tool-/File-/Extension-Approvals.
-GOOSE_MODE: auto
-YAMLEOF
-fi
+# (siehe goose docs/guides/goose-permissions).
+_goose_default='# agentbox-Default: fully autonomous mode, keine Tool-/File-/Extension-Approvals.
+GOOSE_MODE: auto'
+_goose_status=$(_seed_if_empty "$AUTH_BASE/goose/config.yaml" "$_goose_default")
+
+log_ok "Auto-Approve-Seeds: claude=$_claude_status codex=$_codex_status goose=$_goose_status"
 
 log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_AGENTS)"
 

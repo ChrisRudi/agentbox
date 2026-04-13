@@ -137,12 +137,13 @@ function Register-AgentboxTaskRunner {
     Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
 }
 
-# Seed-Helper: schreibt Datei nur wenn sie noch nicht existiert. UTF8 ohne
-# BOM, LF-Line-Endings — Content wird in der Sandbox von Linux-Parsern
-# (Python/Node/Rust-TOML) gelesen, CRLF wuerde bei naiver Verwendung bloss
-# als unerwartetes Whitespace durchkommen. Rueckgabe: $true wenn neu
-# geschrieben, $false wenn schon da.
-function Write-AgentboxSeedIfMissing {
+# Seed-Helper: schreibt Datei nur wenn sie fehlt ODER leer/whitespace-only ist.
+# Letzteres ist wichtig, weil manche Agents beim ersten Start ihre Config-Datei
+# selbst als leere Huelle anlegen (z.B. Claude Code legt ein leeres {} an) —
+# ein naives Test-Path reicht dann nicht mehr, wir wuerden beim naechsten Start
+# die leere Datei sehen und skippen. UTF8-noBOM + LF, PS-5.1-kompatibel.
+# Rueckgabe (als String ueber Write-Output): "created"/"replaced-empty"/"kept".
+function Write-AgentboxSeedIfEmpty {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)][string[]]$Lines
@@ -151,19 +152,109 @@ function Write-AgentboxSeedIfMissing {
     if (-not (Test-Path $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
-    if (Test-Path $Path) {
-        return $false
-    }
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $content = ($Lines -join "`n") + "`n"
-    [IO.File]::WriteAllText($Path, $content, $utf8NoBom)
-    return $true
+
+    if (-not (Test-Path $Path)) {
+        [IO.File]::WriteAllText($Path, $content, $utf8NoBom)
+        return "created"
+    }
+
+    $raw = ""
+    try { $raw = [IO.File]::ReadAllText($Path) } catch { return "read-error" }
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        [IO.File]::WriteAllText($Path, $content, $utf8NoBom)
+        return "replaced-empty"
+    }
+    return "kept"
+}
+
+# Claude-spezifischer Smart-Merge: JSON parsen und nur permissions.defaultMode
+# ergaenzen wenn fehlend. User-eigene Keys bleiben unberuehrt. Deckt den
+# Haeufigkeitsfall ab, dass Claude Code beim ersten Launch ein leeres {}
+# anlegt (dann wollen wir den Default schreiben), und ebenso den Fall,
+# dass der User schon eigene Allow/Deny-Regeln hat (dann nur mergen).
+function Merge-AgentboxClaudeSettings {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $defaultLines = @(
+        '{',
+        '  "permissions": {',
+        '    "defaultMode": "bypassPermissions"',
+        '  }',
+        '}'
+    )
+    $defaultContent = ($defaultLines -join "`n") + "`n"
+
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+
+    # Fehlt oder leer/whitespace → Default schreiben
+    if (-not (Test-Path $Path)) {
+        [IO.File]::WriteAllText($Path, $defaultContent, $utf8NoBom)
+        return "created"
+    }
+    $raw = ""
+    try { $raw = [IO.File]::ReadAllText($Path) } catch { return "read-error" }
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        [IO.File]::WriteAllText($Path, $defaultContent, $utf8NoBom)
+        return "replaced-empty"
+    }
+    # Trivial {} (genau das, was Claude Code initial schreibt)
+    if ($raw.Trim() -eq "{}") {
+        [IO.File]::WriteAllText($Path, $defaultContent, $utf8NoBom)
+        return "replaced-empty"
+    }
+
+    # Content existiert — JSON parsen und mergen
+    $parsed = $null
+    try {
+        $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Write-Host "[WARN] $Path ist kein valides JSON — bleibt unberuehrt" -ForegroundColor Yellow
+        return "invalid-json"
+    }
+
+    # ConvertFrom-Json liefert PSCustomObject. Rekursiv pruefen ob
+    # permissions.defaultMode schon gesetzt ist.
+    if ($parsed -and $parsed.PSObject.Properties['permissions']) {
+        $perms = $parsed.permissions
+        if ($perms -and ($perms -is [PSCustomObject]) -and $perms.PSObject.Properties['defaultMode']) {
+            return "already-set"
+        }
+        # permissions-Objekt existiert, defaultMode fehlt
+        if ($null -eq $perms -or -not ($perms -is [PSCustomObject])) {
+            $newPerms = New-Object PSObject
+            $newPerms | Add-Member -NotePropertyName defaultMode -NotePropertyValue "bypassPermissions"
+            $parsed.permissions = $newPerms
+        } else {
+            $perms | Add-Member -NotePropertyName defaultMode -NotePropertyValue "bypassPermissions" -Force
+        }
+    } else {
+        $newPerms = New-Object PSObject
+        $newPerms | Add-Member -NotePropertyName defaultMode -NotePropertyValue "bypassPermissions"
+        if ($null -eq $parsed) {
+            $parsed = New-Object PSObject
+        }
+        $parsed | Add-Member -NotePropertyName permissions -NotePropertyValue $newPerms -Force
+    }
+
+    # Zurueck als JSON, CRLF -> LF, abschliessender Newline
+    $newJson = $parsed | ConvertTo-Json -Depth 20
+    $newJson = $newJson -replace "`r`n", "`n" -replace "`r", "`n"
+    if (-not $newJson.EndsWith("`n")) { $newJson += "`n" }
+    [IO.File]::WriteAllText($Path, $newJson, $utf8NoBom)
+    return "merged"
 }
 
 # Auto-Approve-Defaults fuer alle fuenf Agents in %LOCALAPPDATA%\agentbox\auth\
 # anlegen. wsl-ai-start.sh macht beim Session-Start dasselbe nochmal — das ist
 # eine defensive Doppelung fuer User, die agentbox per git pull aktualisieren
-# statt per install.ps1. Die if-not-exists-Logik macht beide Aufrufe idempotent.
+# statt per install.ps1. Beide Aufrufe sind durch Smart-Merge + Empty-Check
+# idempotent und respektieren existierende User-Edits.
 #
 # Warum hier im Installer *zusaetzlich* zum Session-Start-Seeding: nach einer
 # frischen Installation will man die Config-Dateien sofort unter
@@ -174,42 +265,31 @@ function Write-AgentboxSeedIfMissing {
 # und Aider brauchen CLI-Flags — die setzt wsl-sandbox-init.sh beim Launch.
 function Initialize-AgentboxAutoApproveDefaults {
     $authBase = Join-Path $env:LOCALAPPDATA "agentbox\auth"
-    $created = 0
 
-    # Claude Code — ~/.claude/settings.json
-    if (Write-AgentboxSeedIfMissing `
-            -Path (Join-Path $authBase "claude\settings.json") `
-            -Lines @(
-                '{',
-                '  "permissions": {',
-                '    "defaultMode": "bypassPermissions"',
-                '  }',
-                '}'
-            )) { $created++ }
+    # Claude Code — Smart-Merge (JSON), weil Claude Code selbst ein leeres
+    # {} anlegt und naives if-not-exists dann wirkungslos ist.
+    $claudeStatus = Merge-AgentboxClaudeSettings `
+        -Path (Join-Path $authBase "claude\settings.json")
 
-    # OpenAI Codex CLI — ~/.codex/config.toml
-    # Entspricht --dangerously-bypass-approvals-and-sandbox
-    if (Write-AgentboxSeedIfMissing `
-            -Path (Join-Path $authBase "codex\config.toml") `
-            -Lines @(
-                '# agentbox-Default: Sandbox ist die Vertrauensgrenze, kein Approval-Prompting.',
-                'approval_policy = "never"',
-                'sandbox_mode    = "danger-full-access"'
-            )) { $created++ }
+    # OpenAI Codex CLI — Empty-Check reicht. TOML/YAML-Parsing in PS 5.1
+    # waere scope creep; wenn User bewusst was reingeschrieben hat, respektieren.
+    $codexStatus = Write-AgentboxSeedIfEmpty `
+        -Path (Join-Path $authBase "codex\config.toml") `
+        -Lines @(
+            '# agentbox-Default: Sandbox ist die Vertrauensgrenze, kein Approval-Prompting.',
+            'approval_policy = "never"',
+            'sandbox_mode    = "danger-full-access"'
+        )
 
-    # Goose — ~/.config/goose/config.yaml
-    if (Write-AgentboxSeedIfMissing `
-            -Path (Join-Path $authBase "goose\config.yaml") `
-            -Lines @(
-                '# agentbox-Default: fully autonomous mode, keine Tool-/File-/Extension-Approvals.',
-                'GOOSE_MODE: auto'
-            )) { $created++ }
+    # Goose — ebenso Empty-Check.
+    $gooseStatus = Write-AgentboxSeedIfEmpty `
+        -Path (Join-Path $authBase "goose\config.yaml") `
+        -Lines @(
+            '# agentbox-Default: fully autonomous mode, keine Tool-/File-/Extension-Approvals.',
+            'GOOSE_MODE: auto'
+        )
 
-    if ($created -gt 0) {
-        Write-Host "[OK] Auto-Approve-Defaults geseedet ($created neu) unter $authBase" -ForegroundColor Green
-    } else {
-        Write-Host "[OK] Auto-Approve-Defaults bereits vorhanden unter $authBase" -ForegroundColor Green
-    }
+    Write-Host "[OK] Auto-Approve-Seeds: claude=$claudeStatus codex=$codexStatus goose=$gooseStatus" -ForegroundColor Green
 }
 
 # Unbedingt VOR dem Skip-Build-Check aufrufen, damit Updates ohne Template-

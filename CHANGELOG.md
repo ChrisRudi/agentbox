@@ -5,6 +5,28 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-04-13
+
+### Fixed
+
+- Auto-approve seed for Claude Code now handles the case where Claude
+  Code itself wrote an empty `{}` to `~/.claude/settings.json` on first
+  start. The previous if-not-exists logic saw the file, skipped the
+  seed, and left the user with permission prompts despite 1.0.1. The
+  seed is now a smart merge:
+  - Missing or empty/whitespace-only → write the default
+  - Trivial `{}` → replace with the default
+  - Other content → JSON-parse, add `permissions.defaultMode` only if
+    absent, preserve every other user key (including existing
+    `permissions.allow`/`permissions.deny` lists)
+  - Invalid JSON → leave the file alone and warn
+- Codex `config.toml` and Goose `config.yaml` seeds now also replace
+  empty/whitespace-only files (simple empty-check, no TOML/YAML
+  parser).
+- Implemented in both `win-setup-core.ps1` (install time, PS 5.1 +
+  `ConvertFrom-Json`/`ConvertTo-Json`) and `wsl-ai-start.sh` (session
+  start, bash + `python3` for the JSON merge).
+
 ## [1.0.1] - 2026-04-13
 
 ### Added
