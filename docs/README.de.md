@@ -39,7 +39,7 @@ Windows nativ. Kein Docker. Kein Kubernetes.
 | **Aider** | Deaktiviert | pip | `agent_aider_enabled` in `config.json` auf `true` setzen |
 | **Goose** (Block) | Deaktiviert | pip | `agent_goose_enabled` in `config.json` auf `true` setzen |
 
-Zusätzliche Agenten aktivieren → `config.json` editieren → `install.ps1` erneut ausführen (Template-Rebuild).
+Zusätzliche Agenten aktivieren: beim Start im Agent-Auswahl-Menü **`[c] Konfiguration`** drücken und den gewünschten Agent umschalten — das schreibt direkt in `config.json`. Danach einmal `install.ps1` in einer Admin-PowerShell neu laufen lassen, damit das Template mit den neuen Agent-Binaries gebaut wird (`irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex`).
 
 ## Installation
 

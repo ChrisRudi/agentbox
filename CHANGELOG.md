@@ -5,6 +5,31 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-04-13
+
+### Fixed
+
+- Auto-start prompt (`agentbox starten? [J/n]`) now actually honors
+  `n` when entered from a Windows terminal. `read -r` strips LF but
+  not CR, so CRLF-terminated input came through as `"n\r"` and
+  missed the case pattern — the script then started agentbox anyway
+  against the user's wish. Trailing CR and surrounding whitespace
+  are now stripped before the comparison, and the match accepts
+  `n`, `N`, `nein`, `no` in all common cases.
+- `_toggle_agents_menu` no longer claims "Template-Rebuild folgt
+  beim nächsten Start" — that was a lie, wsl-ai-start.sh runs as an
+  unprivileged user inside WSL and cannot rebuild the template. The
+  menu now tells the user to re-run `install.ps1` in an admin
+  PowerShell instead.
+
+### Changed
+
+- Both READMEs (`README.md`, `docs/README.de.md`) now point at the
+  in-app `[c] Konfiguration` menu for enabling/disabling agents
+  instead of telling users to hand-edit `config.json`. The
+  template-rebuild step via `install.ps1` is still required and is
+  still documented.
+
 ## [1.0.2] - 2026-04-13
 
 ### Fixed

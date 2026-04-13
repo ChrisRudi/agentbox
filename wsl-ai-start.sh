@@ -130,8 +130,19 @@ except:
     echo ""
     echo -e "\033[0;36magentbox starten? [J/n]\033[0m (automatisch in ${_auto_timeout}s)"
     if read -r -t "$_auto_timeout" answer; then
+        # Windows-Terminals schicken gern CRLF; `read -r` strippt nur LF,
+        # das CR bleibt und macht aus "n" ein "n\r" → matchte vorher kein
+        # case-Pattern, und der User landete entgegen seiner Eingabe im
+        # agentbox-Start. Trailing CR und Whitespace wegraeumen, dann
+        # case-insensitiv vergleichen.
+        answer="${answer%$'\r'}"
+        answer="${answer#"${answer%%[![:space:]]*}"}"
+        answer="${answer%"${answer##*[![:space:]]}"}"
         case "$answer" in
-            n|N|nein|Nein) echo "OK — normales Terminal."; exit 0 ;;
+            n|N|nein|Nein|NEIN|no|No|NO)
+                echo "OK — normales Terminal."
+                exit 0
+                ;;
         esac
     fi
     echo ""
@@ -922,7 +933,10 @@ _config_menu() {
 _toggle_agents_menu() {
     echo ""
     echo -e "${CYAN}--- Agents ---${NC}"
-    echo "Aenderungen werden in config.json gespeichert. Template-Rebuild folgt beim naechsten Start."
+    echo "Aenderungen werden in config.json gespeichert."
+    echo "Fuer neue Agent-Binaries muss install.ps1 in einer Admin-PowerShell"
+    echo "neu ausgefuehrt werden (Template-Rebuild):"
+    echo "  irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex"
     echo ""
     local _aids=("claude" "codex" "gemini" "aider" "goose")
     local _names=("Claude Code" "OpenAI Codex" "Gemini CLI" "Aider" "Goose")
