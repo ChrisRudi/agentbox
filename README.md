@@ -13,19 +13,21 @@
 
 ---
 
-**agentbox** runs AI coding agents in **disposable WSL2 distributions** with real filesystem and network isolation.
+**AI coding agents solve problems — and wreck your system doing it:**
 
-One command. No Docker. No Kubernetes. Just Windows + WSL2.
+- They grind your machine to a halt — eating RAM and CPU without limits
+- They trash your OS — caches, leftovers, until Windows won't boot clean anymore
+- They steal your secrets — SSH keys, `.env` files, passwords
+- They sit exposed on the network — your host and LAN are reachable
+- They forget everything — once the session ends, the context is gone
+- They keep pestering you for confirmation — because your system is on the line
 
-## Why?
+**Not in a sandbox.**
 
-AI coding agents are powerful — but they run with full privileges on your system. They can:
+One command. Clean environment. Full control.
+Windows native. No Docker. No Kubernetes.
 
-- Read and modify any file (SSH keys, browser profiles, other projects)
-- Spawn arbitrary processes and open network connections
-- Leave behind build artifacts, caches, and temp files that bloat WSL
-
-agentbox gives you the productivity of AI agents **without the risk**.
+**agentbox** runs AI coding agents in **disposable WSL2 distributions** with real filesystem and network isolation — giving you the productivity of AI agents **without the risk**.
 
 ## Supported Agents
 

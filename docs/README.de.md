@@ -13,17 +13,21 @@
 
 ---
 
-**agentbox** startet AI-Coding-Agenten in **wegwerfbaren WSL2-Distributionen** mit echter Dateisystem- und Netzwerkisolation.
+**KI-Coding-Agenten loesen Probleme — und zerstoeren dabei dein System:**
 
-Ein Befehl. Kein Docker. Kein Kubernetes. Nur Windows + WSL2.
+- Sie machen deinen Rechner lahm — fressen RAM und CPU ohne Limit
+- Sie ruinieren dein OS — Caches, Reste, irgendwann startet Windows nicht mehr sauber
+- Sie stehlen deine Secrets — SSH-Keys, `.env`-Dateien, Passwoerter
+- Sie liegen offen im Netzwerk — dein Host und LAN sind erreichbar
+- Sie vergessen alles — nach der Session ist der Kontext weg
+- Sie fragen staendig nach — weil dein System auf dem Spiel steht
 
-## Warum?
+**In einer Sandbox nicht.**
 
-AI-Coding-Agenten sind maechtig — aber sie laufen mit vollen Rechten auf deinem System. Sie koennen:
+Ein Befehl. Saubere Umgebung. Volle Kontrolle.
+Windows nativ. Kein Docker. Kein Kubernetes.
 
-- Jede Datei lesen und aendern (SSH-Keys, Browser-Profile, andere Projekte)
-- Beliebige Prozesse starten und Netzwerkverbindungen oeffnen
-- Build-Artefakte, Caches und temporaere Dateien hinterlassen, die WSL aufblaehenagentbox gibt dir die Produktivitaet von AI-Agenten **ohne das Risiko**.
+**agentbox** startet KI-Coding-Agenten in **wegwerfbaren WSL2-Distributionen** mit echter Dateisystem- und Netzwerkisolation — und gibt dir die Produktivitaet von KI-Agenten **ohne das Risiko**.
 
 ## Unterstuetzte Agenten
 
