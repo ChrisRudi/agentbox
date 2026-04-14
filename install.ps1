@@ -12,6 +12,31 @@ $env:WSL_UTF8 = "1"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
+# --- Helper: Native-Tool-Calls gegen NativeCommandError schuetzen ---
+# Hintergrund: PS 5.1 + $ErrorActionPreference='Stop' macht aus jeder stderr-
+# Zeile eines nativen Tools (wsl.exe, git.exe, etc.) einen ErrorRecord, AUCH
+# mit `2>&1`. Symptom war u.a. der "WSL beendet ein Upgrade..."-Crash beim
+# `wsl --version` waehrend eines aktiven WSL-Updates (1.0.7), aber dieselbe
+# Falle existiert latent fuer alle wsl-Calls.
+#
+# Nutzung:
+#   $rc = Invoke-Native { & wsl.exe --import $name $dir $tar 2>&1 | ... }
+# Der Block laeuft mit ErrorActionPreference='Continue', danach wird der
+# vorherige Wert wiederhergestellt. Genuine Exceptions werden trotzdem
+# gefangen (try/catch um das & block).
+function Invoke-Native {
+    param([Parameter(Mandatory)][scriptblock]$Block)
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Block
+    } catch {
+        # NativeCommandError swallow — der Caller prueft $LASTEXITCODE.
+    } finally {
+        $ErrorActionPreference = $prevErr
+    }
+}
+
 # --- Pure-PS Windows → WSL Pfad-Konvertierung ---
 # Ersatz fuer `wsl.exe wslpath -u`. Laeuft OHNE laufende Default-Distro,
 # was wichtig ist: nach dem Template-Build hat agentbox die
@@ -89,13 +114,15 @@ function Import-AgentboxHostDistro {
     }
     # Falls eine alte $DistroName-Registrierung herumliegt (vorheriger Lauf),
     # zuerst abmelden — wsl --import scheitert sonst mit "already exists".
-    $existing = & wsl.exe -l -q 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() } | Where-Object { $_ }
+    # Alle wsl-Calls hier ueber Invoke-Native, weil sie unter Stop-Mode an
+    # stderr-Output des nativen Tools crashen wuerden (siehe 1.0.7-Fix).
+    $existing = @(Invoke-Native { & wsl.exe -l -q 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() } | Where-Object { $_ } })
     if ($existing -contains $DistroName) {
-        & wsl.exe --unregister $DistroName 2>&1 | Out-Null
+        Invoke-Native { & wsl.exe --unregister $DistroName 2>&1 | Out-Null }
     }
     Write-Host "Importiere Host-Distro '$DistroName' aus Template..." -ForegroundColor Cyan
     Write-Host "       Ziel: $hostDir" -ForegroundColor Gray
-    $importOutput = @(& wsl.exe --import $DistroName $hostDir $TemplatePath 2>&1 | ForEach-Object { "$_" })
+    $importOutput = @(Invoke-Native { & wsl.exe --import $DistroName $hostDir $TemplatePath 2>&1 | ForEach-Object { "$_" } })
     if ($LASTEXITCODE -ne 0) {
         foreach ($l in $importOutput) { Write-Host "       $l" -ForegroundColor DarkGray }
         Write-Host "FEHLER: Import der Host-Distro fehlgeschlagen." -ForegroundColor Red
@@ -155,8 +182,10 @@ if (-not $wslReady) {
 
     if ($osBuild -ge 19041) {
         # Methode 1: wsl --install (funktioniert ab Win10 2004 mit neueren Updates + Win11)
+        # Invoke-Native, weil wsl --install Status auf stderr schreibt — sonst
+        # crasht der Installer am NativeCommandError unter Stop-Mode.
         Write-Host "Versuche: wsl --install --no-distribution ..." -ForegroundColor Cyan
-        $installResult = & wsl.exe --install --no-distribution 2>&1
+        $installResult = Invoke-Native { & wsl.exe --install --no-distribution 2>&1 }
         $installSuccess = ($LASTEXITCODE -eq 0)
 
         if (-not $installSuccess) {
@@ -179,8 +208,8 @@ if (-not $wslReady) {
                 }
             }
 
-            # WSL2 als Standard setzen
-            & wsl.exe --set-default-version 2 2>&1 | Out-Null
+            # WSL2 als Standard setzen (Invoke-Native gegen stderr-NativeCommandError)
+            Invoke-Native { & wsl.exe --set-default-version 2 2>&1 | Out-Null }
 
             # WSL-Kernel-Update herunterladen und installieren
             Write-Host "  Lade WSL2-Kernel-Update herunter..." -ForegroundColor Gray
@@ -194,7 +223,7 @@ if (-not $wslReady) {
             }
             Write-Host "  [OK] WSL2-Kernel-Update installiert" -ForegroundColor Green
 
-            & wsl.exe --set-default-version 2 2>&1 | Out-Null
+            Invoke-Native { & wsl.exe --set-default-version 2 2>&1 | Out-Null }
         }
 
         # Pruefen ob Neustart noetig.
@@ -697,6 +726,15 @@ if (-not $setupOk) {
 Write-Host ""
 Write-Host "Konfiguriere WSL-Integration..." -ForegroundColor Cyan
 
+# Die gesamte .bashrc-Phase ruft `wsl -d agentbox-host bash -c ...` mehrfach
+# auf (grep, cp, python, base64-Append). Jeder dieser Calls KANN unter
+# PS 5.1 + $ErrorActionPreference='Stop' an stderr-Output crashen — z.B. wenn
+# bash eine Warning ausgibt oder grep auf ein nicht-existierendes File trifft.
+# Statt 7 einzelne Invoke-Native-Wrapper schalten wir die ganze Phase auf
+# 'Continue' um. Am Ende der Phase wird der vorherige Wert wiederhergestellt.
+$prevErrBashrcPhase = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
 $bashrcMarker = "# agentbox — AI Agent Sandbox Runner"
 
 # Alte/fremde AI-Tool-Starter in .bashrc erkennen und Backup anbieten.
@@ -867,6 +905,9 @@ fi
     Write-Host "[OK] .bashrc-Eintrag bereits vorhanden" -ForegroundColor Green
 }
 
+# Ende der .bashrc-Phase — ErrorActionPreference wiederherstellen.
+$ErrorActionPreference = $prevErrBashrcPhase
+
 # --- WSL Ressourcen-Limits (.wslconfig) ---
 Write-Host ""
 Write-Host "Pruefe WSL Ressourcen-Limits..." -ForegroundColor Cyan
@@ -998,7 +1039,10 @@ if ($startNow) {
     Write-Host ""
     Write-Host "Starte agentbox in WSL..." -ForegroundColor Green
     Write-Host ""
-    & wsl.exe -d agentbox-host -e bash -li -c "agentbox"
+    # Invoke-Native, weil agentbox / wsl-ai-start.sh stderr schreiben kann
+    # (Logs, Warnungen, Trap-Output) — sonst wuerde der Installer am Ende mit
+    # NativeCommandError raus statt mit einem sauberen Exit.
+    Invoke-Native { & wsl.exe -d agentbox-host -e bash -li -c "agentbox" }
 } else {
     Write-Host "OK — manuell starten via Desktop-Shortcut oder 'wsl -d agentbox-host' + 'agentbox'." -ForegroundColor Gray
 }

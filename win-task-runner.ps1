@@ -28,8 +28,8 @@ $controlDir = Join-Path $baseDir "_control"
 $configPath = Join-Path $controlDir "config.json"
 $config = $null
 try {
-    if (Test-Path $configPath) {
-        $config = Get-Content -Path $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    if (Test-Path -LiteralPath $configPath) {
+        $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
     }
 } catch {
     Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
@@ -125,8 +125,8 @@ function Move-TaskToHistory {
         [string]$ErrorMsg = ""
     )
 
-    if (-not (Test-Path $historyDir)) {
-        New-Item -ItemType Directory -Path $historyDir -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $historyDir)) {
+        New-Item -ItemType Directory -LiteralPath $historyDir -Force | Out-Null
     }
 
     $TaskData.status = $Status
@@ -140,21 +140,21 @@ function Move-TaskToHistory {
 
     [System.IO.File]::WriteAllText($historyPath, ($TaskData | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
 
-    Remove-Item -Path $TaskFilePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $TaskFilePath -Force -ErrorAction SilentlyContinue
 }
 
 # --- Teil 1: Fehleranzeige ---
 
 function Show-FailedTasks {
-    if (-not (Test-Path $historyDir)) { return }
+    if (-not (Test-Path -LiteralPath $historyDir)) { return }
 
-    $failedFiles = Get-ChildItem -Path $historyDir -Filter "*.json" -ErrorAction SilentlyContinue |
+    $failedFiles = Get-ChildItem -LiteralPath $historyDir -Filter "*.json" -ErrorAction SilentlyContinue |
         Sort-Object -Property LastWriteTime -Descending
 
     $failedTasks = @()
     foreach ($file in $failedFiles) {
         try {
-            $data = Get-Content -Path $file.FullName -Raw | ConvertFrom-Json
+            $data = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
             if ($data.status -eq "failed") {
                 $failedTasks += $data
             }
@@ -202,8 +202,8 @@ function Invoke-BuildAction {
         $outputDir = $ProjectConfig.build.output_dir
     }
     $outputPath = Join-Path $ProjectDir $outputDir
-    if (-not (Test-Path $outputPath)) {
-        New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $outputPath)) {
+        New-Item -ItemType Directory -LiteralPath $outputPath -Force | Out-Null
     }
 
     Write-Log "Fuehre Build aus: $buildCmd" "INFO"
@@ -277,7 +277,7 @@ function Process-SingleTask {
 
     # Task-Datei lesen und validieren
     try {
-        $taskData = Get-Content -Path $TaskFilePath -Raw | ConvertFrom-Json
+        $taskData = Get-Content -LiteralPath $TaskFilePath -Raw | ConvertFrom-Json
     } catch {
         Write-Log "Ungueltige JSON-Datei: $fileName" "ERROR"
         return
@@ -305,7 +305,7 @@ function Process-SingleTask {
     }
 
     # Projektordner finden
-    $projectDir = Get-ChildItem -Path $baseDir -Directory |
+    $projectDir = Get-ChildItem -LiteralPath $baseDir -Directory |
         Where-Object { $_.Name -eq $projectName -and $_.Name -ne "_control" } |
         Select-Object -First 1
 
@@ -325,7 +325,7 @@ function Process-SingleTask {
 
     # project.json lesen
     $projectJsonPath = Join-Path $projectPath "project.json"
-    if (-not (Test-Path $projectJsonPath)) {
+    if (-not (Test-Path -LiteralPath $projectJsonPath)) {
         Write-Log "project.json nicht gefunden in $projectPath" "ERROR"
         $taskHash = @{
             project   = $projectName
@@ -339,7 +339,7 @@ function Process-SingleTask {
         return
     }
 
-    $projectConfig = Get-Content -Path $projectJsonPath -Raw | ConvertFrom-Json
+    $projectConfig = Get-Content -LiteralPath $projectJsonPath -Raw | ConvertFrom-Json
 
     # Status: running
     Write-StatusFile -ProjectDir $projectPath -Action $action -Status "running"
@@ -380,17 +380,17 @@ function Process-SingleTask {
 }
 
 function Process-AllTasks {
-    if (-not (Test-Path $baseDir)) { return }
+    if (-not (Test-Path -LiteralPath $baseDir)) { return }
 
-    $projectDirs = Get-ChildItem -Path $baseDir -Directory |
+    $projectDirs = Get-ChildItem -LiteralPath $baseDir -Directory |
         Where-Object { $_.Name -ne "_control" }
 
     foreach ($projDir in $projectDirs) {
         $tasksDir = Join-Path $projDir.FullName "_tasks"
-        if (-not (Test-Path $tasksDir)) { continue }
+        if (-not (Test-Path -LiteralPath $tasksDir)) { continue }
 
         # .json Dateien suchen (keine .tmp)
-        $taskFiles = Get-ChildItem -Path $tasksDir -Filter "*.json" -ErrorAction SilentlyContinue |
+        $taskFiles = Get-ChildItem -LiteralPath $tasksDir -Filter "*.json" -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notlike "status_*" } |
             Sort-Object -Property CreationTime
 
@@ -418,13 +418,13 @@ if ($watch) {
     Process-AllTasks
 
     $watchers = @()
-    $projectDirs = Get-ChildItem -Path $baseDir -Directory -ErrorAction SilentlyContinue |
+    $projectDirs = Get-ChildItem -LiteralPath $baseDir -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ne "_control" }
 
     foreach ($projDir in $projectDirs) {
         $tasksDir = Join-Path $projDir.FullName "_tasks"
-        if (-not (Test-Path $tasksDir)) {
-            New-Item -ItemType Directory -Path $tasksDir -Force | Out-Null
+        if (-not (Test-Path -LiteralPath $tasksDir)) {
+            New-Item -ItemType Directory -LiteralPath $tasksDir -Force | Out-Null
         }
 
         $watcher = New-Object System.IO.FileSystemWatcher
@@ -444,7 +444,7 @@ if ($watch) {
             # Kurz warten (Datei koennte noch geschrieben werden)
             Start-Sleep -Milliseconds 500
 
-            if (Test-Path $filePath) {
+            if (Test-Path -LiteralPath $filePath) {
                 Process-SingleTask -TaskFilePath $filePath
             }
         }

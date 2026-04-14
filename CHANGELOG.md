@@ -5,6 +5,54 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.11] - 2026-04-14
+
+### Added
+
+- **`Invoke-Native`-Helper in `install.ps1`.** Wrapping-Function fuer
+  alle nativen Tool-Calls (wsl.exe, git.exe, etc.), die unter PS 5.1 +
+  `$ErrorActionPreference='Stop'` an stderr-Output crashen koennen
+  (NativeCommandError, der durch `2>&1` nicht abgefangen wird). Setzt
+  lokal `Continue` und wrapped den Block in try/catch, restored den
+  vorherigen Wert in finally.
+
+### Fixed (proaktiver Bug-Sweep)
+
+Nach mehreren Roundtrips, bei denen ich denselben Bug-Pattern in Files
+uebersehen habe (1.0.8 nur `install.ps1`, 1.0.9 dann erst `win-setup-
+core.ps1`), habe ich systematisch alle PS- und Bash-Files nach den
+bekannten Bug-Klassen durchsucht und proaktiv alle latenten Stellen
+gefixt:
+
+- **`win-task-runner.ps1`**: Komplette `-LiteralPath`-Umstellung fuer
+  alle `Test-Path`, `Get-Content`, `Get-ChildItem`, `New-Item`,
+  `Remove-Item`, `Copy-Item`, `Move-Item`-Calls mit Variablen-Pfaden.
+  Vorher anfaellig fuer den Tilde-Username-Bug (Schueler → SCHLER~1)
+  bei Background-Task-Runs.
+- **`install.ps1::Import-AgentboxHostDistro`**: `wsl -l -q`,
+  `wsl --unregister`, `wsl --import` jetzt alle ueber `Invoke-Native`.
+  Vorher: bei Erst-Install (oder wenn `agentbox-host` per Reset
+  geloescht wurde) konnte `wsl --import` mit Status-Output auf stderr
+  den Installer killen.
+- **`install.ps1` WSL2-Bootstrap-Phase**: `wsl --install
+  --no-distribution` und beide `wsl --set-default-version 2`-Calls
+  jetzt ueber `Invoke-Native`. Vorher: auf einem frischen Windows ohne
+  WSL2 wuerde der Installer im automatischen WSL-Setup an den
+  Status-Messages crashen — bei einem User der gerade WSL einrichten
+  laesst, der schlimmstmoegliche Zeitpunkt.
+- **`install.ps1` `.bashrc`-Phase (Zeile 727-897)**: Komplette Phase
+  laeuft jetzt mit lokalem `$ErrorActionPreference = "Continue"`,
+  vorheriger Wert wird am Ende der Phase wiederhergestellt. 7 latente
+  `wsl -d agentbox-host bash -c ...`-Calls in einem Schritt abgesichert
+  (grep, cp, python3, base64-Append). Im happy path war keiner der
+  Calls anfaellig, aber bei jeder bash-Warning oder einem nicht-existen-
+  ten File haette es geknallt.
+- **`install.ps1` finaler Auto-Start (Zeile 1030)**: Der finale
+  `wsl -d agentbox-host -e bash -li -c "agentbox"` jetzt ueber
+  `Invoke-Native`, weil `wsl-ai-start.sh` und der Sandbox-Trap stderr
+  schreiben — der Installer haette sonst statt mit cleanem Exit mit
+  einem NativeCommandError raus.
+
 ## [1.0.10] - 2026-04-14
 
 ### Fixed
