@@ -87,23 +87,10 @@ function Import-AgentboxHostDistro {
     if (-not (Test-Path $hostDir)) {
         New-Item -ItemType Directory -Path $hostDir -Force | Out-Null
     }
-    # Vor dem Import die existierenden Distros einsammeln, BEVOR wir was
-    # aendern — wir wollen wissen, ob der User eine eigene "echte" Distro
-    # hat (Ubuntu, Debian, ...), damit wir die nicht als Default ueberschreiben.
-    $existingPreImport = & wsl.exe -l -q 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() } | Where-Object { $_ }
-    $hasRealUserDistro = $false
-    foreach ($d in @($existingPreImport)) {
-        if ($d -eq $DistroName) { continue }
-        if ($d -eq "agentbox-template-build") { continue }
-        # docker-desktop und docker-desktop-data sind interne Docker-VMs,
-        # keine User-Shells — die zaehlen nicht als "echte" Default-Distro.
-        if ($d -match '^docker-desktop') { continue }
-        $hasRealUserDistro = $true
-        break
-    }
     # Falls eine alte $DistroName-Registrierung herumliegt (vorheriger Lauf),
     # zuerst abmelden — wsl --import scheitert sonst mit "already exists".
-    if ($existingPreImport -contains $DistroName) {
+    $existing = & wsl.exe -l -q 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() } | Where-Object { $_ }
+    if ($existing -contains $DistroName) {
         & wsl.exe --unregister $DistroName 2>&1 | Out-Null
     }
     Write-Host "Importiere Host-Distro '$DistroName' aus Template..." -ForegroundColor Cyan
@@ -114,16 +101,14 @@ function Import-AgentboxHostDistro {
         Write-Host "FEHLER: Import der Host-Distro fehlgeschlagen." -ForegroundColor Red
         return $false
     }
-    # Als Default setzen — NUR wenn der User keine eigene echte Distro hat.
-    # docker-desktop ueberschreiben wir bewusst, weil das eine reine Pseudo-
-    # Distro ist und der User sowieso `docker` CLI verwendet, nicht `wsl`.
-    if (-not $hasRealUserDistro) {
-        & wsl.exe --set-default $DistroName 2>&1 | Out-Null
-        Write-Host "[OK] Host-Distro '$DistroName' importiert und als Default gesetzt" -ForegroundColor Green
-    } else {
-        Write-Host "[OK] Host-Distro '$DistroName' importiert" -ForegroundColor Green
-        Write-Host "     Default-Distro bleibt unveraendert — agentbox spricht $DistroName explizit per -d an." -ForegroundColor Gray
-    }
+    # KEIN expliziter `wsl --set-default`. Begruendung:
+    # - Hatte der User vorher gar keine Distro, setzt WSL agentbox-host beim
+    #   Import automatisch als Default. ✓
+    # - Hatte der User schon eine Default (Ubuntu, Debian, docker-desktop —
+    #   egal was), respektieren wir die. agentbox-Aufrufe gehen ueberall mit
+    #   `-d agentbox-host` explizit, das funktioniert unabhaengig von der
+    #   WSL-Default. Wir aendern nicht das WSL-Setup des Users.
+    Write-Host "[OK] Host-Distro '$DistroName' importiert" -ForegroundColor Green
     return $true
 }
 

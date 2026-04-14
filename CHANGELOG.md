@@ -5,6 +5,23 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-04-14
+
+### Changed
+
+- **`Import-AgentboxHostDistro` setzt agentbox-host nicht mehr explizit
+  als WSL-Default, und kennt keine docker-desktop-Sonderfaelle mehr.**
+  1.0.5 hatte eine `$hasRealUserDistro`-Detection, die `docker-desktop`
+  als Pseudo-Distro klassifizierte und in dem Fall die Default mit
+  agentbox-host ueberschrieben hat. Das war Magie ohne Mehrwert: agentbox
+  spricht seine Distro seit 1.0.5 ueberall mit `-d agentbox-host` an,
+  also ist die WSL-Default fuer agentbox egal. Wenn der User vorher gar
+  keine Distro hatte, setzt WSL agentbox-host beim Import automatisch
+  als Default — wir muessen das nicht selbst machen. Wenn der User
+  schon eine Default hatte (Ubuntu, Debian, docker-desktop — egal),
+  wird sie jetzt unangetastet gelassen. Kein Workflow-Bruch fuer den
+  User, kein Sonderfall im Code.
+
 ## [1.0.5] - 2026-04-14
 
 ### DAU-Fixes
