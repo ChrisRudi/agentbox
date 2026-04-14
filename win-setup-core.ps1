@@ -23,8 +23,8 @@ Write-Host ""
 # (Sync-Kosten, Files-On-Demand-Placeholder, ERROR_PATH_NOT_FOUND bei wsl
 # --import). Gleiche Regel wie fuer auth\ und host-distro\.
 $sandboxDir = Join-Path $env:LOCALAPPDATA "agentbox\sandbox"
-if (-not (Test-Path $sandboxDir)) {
-    New-Item -ItemType Directory -Path $sandboxDir -Force | Out-Null
+if (-not (Test-Path -LiteralPath $sandboxDir)) {
+    New-Item -ItemType Directory -LiteralPath $sandboxDir -Force | Out-Null
 }
 $templatePath = Join-Path $sandboxDir "template.tar.gz"
 $tempBase = Join-Path $env:TEMP "agentbox"
@@ -38,22 +38,22 @@ $distroName = "agentbox-template-build"
 # MUSS hier laufen — sonst greift gleich der Cache-Check unten ins Leere
 # und Import-AgentboxHostDistro findet das Template nicht am neuen Ort.
 $legacySandboxDir = Join-Path $scriptDir "sandbox"
-if (Test-Path $legacySandboxDir) {
+if (Test-Path -LiteralPath $legacySandboxDir) {
     Write-Host "[MIGRATE] Altes sandbox/ unter $legacySandboxDir gefunden — verschiebe nach $sandboxDir" -ForegroundColor Yellow
     foreach ($name in @("template.tar.gz", ".config_hash")) {
         $legacyFile = Join-Path $legacySandboxDir $name
         $targetFile = Join-Path $sandboxDir $name
-        if ((Test-Path $legacyFile) -and -not (Test-Path $targetFile)) {
+        if ((Test-Path -LiteralPath $legacyFile) -and -not (Test-Path -LiteralPath $targetFile)) {
             try {
-                Move-Item -Path $legacyFile -Destination $targetFile -Force -ErrorAction Stop
+                Move-Item -LiteralPath $legacyFile -Destination $targetFile -Force -ErrorAction Stop
                 Write-Host "          moved: $name" -ForegroundColor Gray
             } catch {
                 # Move-Item kann an OneDrive-Files-On-Demand-Placeholdern oder
                 # cross-volume Sync-Aussetzern scheitern (Template ist ~1.2 GB).
                 # Copy + Remove als Fallback — erzwingt Hydration via Read.
                 try {
-                    Copy-Item -Path $legacyFile -Destination $targetFile -Force -ErrorAction Stop
-                    Remove-Item -Path $legacyFile -Force -ErrorAction SilentlyContinue
+                    Copy-Item -LiteralPath $legacyFile -Destination $targetFile -Force -ErrorAction Stop
+                    Remove-Item -LiteralPath $legacyFile -Force -ErrorAction SilentlyContinue
                     Write-Host "          copied: $name" -ForegroundColor Gray
                 } catch {
                     Write-Host "          WARN: $name — $($_.Exception.Message)" -ForegroundColor Yellow
@@ -61,15 +61,15 @@ if (Test-Path $legacySandboxDir) {
             }
         }
     }
-    try { Remove-Item -Path $legacySandboxDir -Recurse -Force -ErrorAction Stop } catch { }
+    try { Remove-Item -LiteralPath $legacySandboxDir -Recurse -Force -ErrorAction Stop } catch { }
 }
 
 # --- config.json laden ---
 $configPath = Join-Path $scriptDir "config.json"
 $config = $null
 try {
-    if (Test-Path $configPath) {
-        $config = Get-Content -Path $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    if (Test-Path -LiteralPath $configPath) {
+        $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
     }
 } catch {
     Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
@@ -149,13 +149,13 @@ function Write-AgentboxSeedIfEmpty {
         [Parameter(Mandatory=$true)][string[]]$Lines
     )
     $dir = Split-Path -Parent $Path
-    if (-not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -LiteralPath $dir -Force | Out-Null
     }
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $content = ($Lines -join "`n") + "`n"
 
-    if (-not (Test-Path $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
         [IO.File]::WriteAllText($Path, $content, $utf8NoBom)
         return "created"
     }
@@ -188,12 +188,12 @@ function Merge-AgentboxClaudeSettings {
     $defaultContent = ($defaultLines -join "`n") + "`n"
 
     $dir = Split-Path -Parent $Path
-    if (-not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -LiteralPath $dir -Force | Out-Null
     }
 
     # Fehlt oder leer/whitespace → Default schreiben
-    if (-not (Test-Path $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
         [IO.File]::WriteAllText($Path, $defaultContent, $utf8NoBom)
         return "created"
     }
@@ -299,9 +299,9 @@ Initialize-AgentboxAutoApproveDefaults
 $configHashFile = Join-Path $sandboxDir ".config_hash"
 $currentHash = Get-AgentboxConfigHash -cfg $config
 
-if ((Test-Path $templatePath) -and (Test-Path $configHashFile)) {
+if ((Test-Path -LiteralPath $templatePath) -and (Test-Path -LiteralPath $configHashFile)) {
     $savedHash = ""
-    try { $savedHash = (Get-Content -Path $configHashFile -Raw -ErrorAction SilentlyContinue).Trim() } catch {}
+    try { $savedHash = (Get-Content -LiteralPath $configHashFile -Raw -ErrorAction SilentlyContinue).Trim() } catch {}
     if ($savedHash -eq $currentHash) {
         $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
         Write-Host ""
@@ -336,11 +336,11 @@ $ubuntuUrl = if ($config -and $config.ubuntu_image_url) { $config.ubuntu_image_u
 }
 $downloadPath = Join-Path $tempBase "ubuntu-minimal.tar.xz"
 
-if (-not (Test-Path $tempBase)) {
-    New-Item -ItemType Directory -Path $tempBase -Force | Out-Null
+if (-not (Test-Path -LiteralPath $tempBase)) {
+    New-Item -ItemType Directory -LiteralPath $tempBase -Force | Out-Null
 }
 
-if (-not (Test-Path $downloadPath)) {
+if (-not (Test-Path -LiteralPath $downloadPath)) {
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $ProgressPreference = 'SilentlyContinue'
@@ -366,10 +366,10 @@ if ($existingDistros -match $distroName) {
     & wsl.exe --unregister $distroName 2>&1 | Out-Null
 }
 
-if (Test-Path $tempSetup) {
-    Remove-Item -Path $tempSetup -Recurse -Force
+if (Test-Path -LiteralPath $tempSetup) {
+    Remove-Item -LiteralPath $tempSetup -Recurse -Force
 }
-New-Item -ItemType Directory -Path $tempSetup -Force | Out-Null
+New-Item -ItemType Directory -LiteralPath $tempSetup -Force | Out-Null
 
 # Output als String-Array einsammeln (nicht live ausgeben):
 # - Stderr-Zeilen werden stringifiziert → kein NativeCommandError
@@ -596,7 +596,7 @@ Write-Host "[OK] Sysctl-Hardening gesetzt" -ForegroundColor Green
 Write-Host "Kopiere SYSTEM_META_PROMPT.md..." -ForegroundColor Cyan
 
 $metaPromptSrc = Join-Path $scriptDir "SYSTEM_META_PROMPT.md"
-if (Test-Path $metaPromptSrc) {
+if (Test-Path -LiteralPath $metaPromptSrc) {
     # wslpath hier im Template-Distro-Kontext ist OK (die Distro existiert),
     # Stderr trotzdem stringifizieren fuer einheitliches Verhalten.
     $wslMetaPath = (& wsl.exe -d $distroName -- wslpath -u ($metaPromptSrc -replace '\\', '/') 2>&1 | ForEach-Object { "$_" }) -join ""
@@ -610,8 +610,8 @@ if (Test-Path $metaPromptSrc) {
 Write-Host ""
 Write-Host "Exportiere Template..." -ForegroundColor Cyan
 
-if (-not (Test-Path $sandboxDir)) {
-    New-Item -ItemType Directory -Path $sandboxDir -Force | Out-Null
+if (-not (Test-Path -LiteralPath $sandboxDir)) {
+    New-Item -ItemType Directory -LiteralPath $sandboxDir -Force | Out-Null
 }
 
 # Export-Output schlucken (wsl schreibt "Der Vorgang wurde erfolgreich beendet."
@@ -625,7 +625,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Config-Hash speichern (fuer naechsten Skip-Check)
 try {
-    $currentHash | Out-File -FilePath $configHashFile -Encoding ascii -NoNewline
+    $currentHash | Out-File -LiteralPath $configHashFile -Encoding ascii -NoNewline
 } catch { }
 
 $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
@@ -634,8 +634,8 @@ Write-Host "[OK] Template exportiert: $templatePath ($templateSize MB)" -Foregro
 # --- Temporaere Distro entfernen ---
 Write-Host "Entferne temporaere Build-Distro..." -ForegroundColor Cyan
 & wsl.exe --unregister $distroName 2>&1 | Out-Null
-if (Test-Path $tempSetup) {
-    Remove-Item -Path $tempSetup -Recurse -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath $tempSetup) {
+    Remove-Item -LiteralPath $tempSetup -Recurse -Force -ErrorAction SilentlyContinue
 }
 Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 

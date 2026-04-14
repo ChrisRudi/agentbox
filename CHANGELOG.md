@@ -5,6 +5,34 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] - 2026-04-14
+
+### Fixed
+
+- **Tilde-Username-Crash jetzt auch in `win-setup-core.ps1` gefixt.**
+  1.0.8 hatte den `Remove-Item -Path`-Bug nur in `install.ps1`
+  beseitigt, aber `win-setup-core.ps1` (das wird vom Installer
+  aufgerufen) hatte die gleiche Falle in mehreren Stellen — der
+  naechste Lauf crashte direkt im Template-Build-Cleanup:
+
+  ```
+  Remove-Item : Ein Objekt im angegebenen Pfad "C:\Users\SCHLER~1"
+                ist nicht vorhanden.
+  In Zeile:370 Zeichen:5
+  +     Remove-Item -Path $tempSetup -Recurse -Force
+  ```
+
+  Fix: Systematisch ALLE `*-Item -Path` und `Test-Path` mit
+  Variablen-Pfaden in `win-setup-core.ps1` und nachgezogen auch in
+  `install.ps1` auf `-LiteralPath` umgestellt. Betrifft Cmdlets:
+  `Test-Path`, `New-Item`, `Get-Content`, `Get-ChildItem`,
+  `Copy-Item`, `Move-Item`, `Remove-Item`, `Out-File`,
+  `Expand-Archive`. Function-Aufrufe an eigene Helper-Functions
+  (`Set-ShortcutRunAsAdmin -Path`, `Merge-AgentboxClaudeSettings -Path`,
+  `Write-AgentboxSeedIfEmpty -Path`) sind absichtlich NICHT umgestellt
+  — die heissen das Param so und nutzen .NET-File-API intern, was
+  Tilde-safe ist.
+
 ## [1.0.8] - 2026-04-14
 
 ### Fixed

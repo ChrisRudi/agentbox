@@ -1,6 +1,6 @@
 # install.ps1 — agentbox Bootstrap (PS 5.1 kompatibel)
 # CRLF-Selbstreparatur fuer den Fall dass die Datei lokal mit LF-Zeilenenden vorliegt.
-if (-not $env:_AGENTBOX_CRLF) { $p = $MyInvocation.MyCommand.Path; if ($p -and (Test-Path $p)) { $t = [IO.File]::ReadAllText($p); if (-not $t.Contains("`r")) { [IO.File]::WriteAllText($p, $t.Replace("`n", "`r`n")); $env:_AGENTBOX_CRLF = '1'; & $p; return } } }
+if (-not $env:_AGENTBOX_CRLF) { $p = $MyInvocation.MyCommand.Path; if ($p -and (Test-Path -LiteralPath $p)) { $t = [IO.File]::ReadAllText($p); if (-not $t.Contains("`r")) { [IO.File]::WriteAllText($p, $t.Replace("`n", "`r`n")); $env:_AGENTBOX_CRLF = '1'; & $p; return } } }
 $env:_AGENTBOX_CRLF = $null
 
 $ErrorActionPreference = "Stop"
@@ -79,13 +79,13 @@ function Import-AgentboxHostDistro {
         [Parameter(Mandatory)][string]$TemplatePath,
         [string]$DistroName = "agentbox-host"
     )
-    if (-not (Test-Path $TemplatePath)) {
+    if (-not (Test-Path -LiteralPath $TemplatePath)) {
         Write-Host "FEHLER: Template nicht gefunden: $TemplatePath" -ForegroundColor Red
         return $false
     }
     $hostDir = Join-Path $env:LOCALAPPDATA "agentbox\host-distro"
-    if (-not (Test-Path $hostDir)) {
-        New-Item -ItemType Directory -Path $hostDir -Force | Out-Null
+    if (-not (Test-Path -LiteralPath $hostDir)) {
+        New-Item -ItemType Directory -LiteralPath $hostDir -Force | Out-Null
     }
     # Falls eine alte $DistroName-Registrierung herumliegt (vorheriger Lauf),
     # zuerst abmelden — wsl --import scheitert sonst mit "already exists".
@@ -228,7 +228,7 @@ if (-not $wslReady) {
         # aktiviert wurde, dessen Aktivierung einen Reboot verlangt).
         if (-not $needsReboot) {
             $cbsPending = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
-            if (Test-Path $cbsPending) { $needsReboot = $true }
+            if (Test-Path -LiteralPath $cbsPending) { $needsReboot = $true }
         }
 
         if ($needsReboot) {
@@ -423,9 +423,9 @@ if ($env:OneDrive) {
 
 foreach ($tryDir in $possibleControlDirs) {
     $tryConfig = Join-Path $tryDir "config.json"
-    if (Test-Path $tryConfig) {
+    if (Test-Path -LiteralPath $tryConfig) {
         try {
-            $existingConfig = Get-Content -Path $tryConfig -Raw -ErrorAction Stop | ConvertFrom-Json
+            $existingConfig = Get-Content -LiteralPath $tryConfig -Raw -ErrorAction Stop | ConvertFrom-Json
             if ($existingConfig.base_path_override -and $existingConfig.base_path_override -ne "") {
                 $baseDir = $existingConfig.base_path_override
                 $controlDirName = if ($existingConfig.control_dir_name) { $existingConfig.control_dir_name } else { "_control" }
@@ -447,8 +447,8 @@ if (-not $baseDir) {
     $controlDir = Join-Path $baseDir "_control"
 }
 
-if (-not (Test-Path $baseDir)) {
-    New-Item -ItemType Directory -Path $baseDir -Force | Out-Null
+if (-not (Test-Path -LiteralPath $baseDir)) {
+    New-Item -ItemType Directory -LiteralPath $baseDir -Force | Out-Null
     Write-Host "[OK] Basisordner erstellt: $baseDir" -ForegroundColor Green
 }
 
@@ -457,8 +457,8 @@ $repoUrl = "https://github.com/chrisrudi/agentbox.git"
 $zipUrl = "https://github.com/ChrisRudi/agentbox/archive/refs/heads/main.zip"
 $versionUrl = "https://raw.githubusercontent.com/ChrisRudi/agentbox/main/.version"
 
-$isInstalled = Test-Path $controlDir
-$isGitRepo = $isInstalled -and (Test-Path (Join-Path $controlDir ".git"))
+$isInstalled = Test-Path -LiteralPath $controlDir
+$isGitRepo = $isInstalled -and (Test-Path -LiteralPath (Join-Path $controlDir ".git"))
 
 if ($isInstalled) {
     # --- Update ---
@@ -468,8 +468,8 @@ if ($isInstalled) {
     # Versionsvergleich
     $localVersion = ""
     $localVersionFile = Join-Path $controlDir ".version"
-    if (Test-Path $localVersionFile) {
-        $localVersion = (Get-Content -Path $localVersionFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if (Test-Path -LiteralPath $localVersionFile) {
+        $localVersion = (Get-Content -LiteralPath $localVersionFile -Raw -ErrorAction SilentlyContinue).Trim()
     }
 
     $remoteVersion = ""
@@ -614,7 +614,7 @@ if ($isInstalled) {
 
 # --- win-setup.ps1 ausfuehren ---
 $setupScript = Join-Path $controlDir "win-setup.ps1"
-if (-not (Test-Path $setupScript)) {
+if (-not (Test-Path -LiteralPath $setupScript)) {
     Write-Host "FEHLER: win-setup.ps1 nicht gefunden in $controlDir" -ForegroundColor Red
     exit 1
 }
@@ -875,8 +875,8 @@ Write-Host "Pruefe WSL Ressourcen-Limits..." -ForegroundColor Cyan
 $installConfig = $null
 $installConfigPath = Join-Path $controlDir "config.json"
 try {
-    if (Test-Path $installConfigPath) {
-        $installConfig = Get-Content -Path $installConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
+    if (Test-Path -LiteralPath $installConfigPath) {
+        $installConfig = Get-Content -LiteralPath $installConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
     }
 } catch { }
 
@@ -887,7 +887,7 @@ $resSwap = if ($installConfig -and $installConfig.resources_swap)       { $insta
 $wslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
 $wslConfigMarker = "# agentbox"
 
-if (-not (Test-Path $wslConfigPath)) {
+if (-not (Test-Path -LiteralPath $wslConfigPath)) {
     # .wslconfig existiert nicht — mit Werten aus config.json erstellen
     $wslConfigContent = @"
 $wslConfigMarker — Ressourcen-Limits fuer Sandbox-Distros
@@ -896,12 +896,12 @@ memory=$resMem
 processors=$resCpu
 swap=$resSwap
 "@
-    $wslConfigContent | Out-File -FilePath $wslConfigPath -Encoding ascii -NoNewline
+    $wslConfigContent | Out-File -LiteralPath $wslConfigPath -Encoding ascii -NoNewline
     Write-Host "[OK] .wslconfig erstellt ($resMem RAM, $resCpu CPUs, $resSwap Swap)" -ForegroundColor Green
     Write-Host "     Anpassbar unter: $wslConfigPath oder in config.json" -ForegroundColor Gray
 } else {
     # .wslconfig existiert — pruefen ob bereits konfiguriert
-    $existingConfig = Get-Content -Path $wslConfigPath -Raw -ErrorAction SilentlyContinue
+    $existingConfig = Get-Content -LiteralPath $wslConfigPath -Raw -ErrorAction SilentlyContinue
     if ($existingConfig -match [regex]::Escape($wslConfigMarker)) {
         Write-Host "[OK] .wslconfig bereits durch agentbox konfiguriert" -ForegroundColor Green
     } else {
