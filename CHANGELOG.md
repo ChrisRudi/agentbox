@@ -5,6 +5,62 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-04-14
+
+### DAU-Fixes
+
+Leitprinzip dieser Version: **agentbox muss starten, wenn ein DAU
+doppelklickt — oder klar erklaeren warum nicht. Keine "trag mal das in
+admin-PowerShell ein"-Aufgaben.** 1.0.4 hatte das halbherzig gemacht
+(Pre-Flight zeigte nur Anweisungen statt sie auszufuehren). 1.0.5 macht
+es richtig.
+
+### Added
+
+- **Auto-Update fuer veraltete WSL.** `install.ps1` ruft `wsl --update`
+  jetzt selbst auf, wenn der Pre-Flight-Check Inbox-WSL erkennt. Fallback
+  auf `wsl --update --web-download`, falls Standard-Update am Microsoft
+  Store scheitert. Nur wenn beide Versuche failen, wird der User um
+  manuelle Store-Installation gebeten — mit klick-fuer-klick-Anleitung,
+  nicht mit CLI-Befehlen.
+- **Reboot-Prompt nach erfolgreichem WSL-Update.** Statt "bitte starten Sie
+  Windows neu und fuehren Sie install.ps1 erneut aus" bietet der Installer
+  jetzt direkt `Restart-Computer -Force` an mit 10s-Countdown und Abbruch-
+  Hinweis.
+
+### Fixed
+
+- **`agentbox-host` wird IMMER importiert**, nicht mehr nur wenn 0 Distros
+  registriert sind. Frueher schaltete der Installer den Host-Distro-Setup
+  ab, sobald *irgendeine* andere Distro registriert war — und bei Usern
+  mit Docker Desktop landete dann jeder spaetere `wsl bash -c ...`-Aufruf
+  in der `docker-desktop`-VM (laeuft als root, hat keine `~/.bashrc`),
+  was den `grep: /root/.bashrc: No such file or directory`-Fehler aus
+  unserem letzten Bug-Roundtrip ausloeste. Jetzt: agentbox-host wird
+  idempotent erstellt (Skip, wenn schon vorhanden), unabhaengig von
+  Fremd-Distros.
+- **Alle `wsl bash -c`-Aufrufe in der `.bashrc`-Phase nutzen jetzt
+  explizit `-d agentbox-host`**, statt sich auf die Default-Distro zu
+  verlassen. Damit landen `.bashrc`-Reads, Konflikt-Cleanup, Migration
+  und der finale `>> ~/.bashrc`-Append garantiert in unserer eigenen
+  Distro, auch wenn der User docker-desktop, Ubuntu oder eine andere
+  Distro als Default hat.
+- **Desktop-Shortcut nutzt `wsl.exe -d agentbox-host -e bash -li -c
+  agentbox`** statt nur `-e bash -li -c agentbox`. Vorher: Doppelklick
+  bei Docker-Desktop-Usern landete in der Docker-VM und tat nichts.
+  Jetzt: Doppelklick startet zuverlaessig agentbox-host, egal was die
+  WSL-Default ist.
+- **`Import-AgentboxHostDistro` setzt agentbox-host nur dann als WSL-
+  Default, wenn der User keine eigene "echte" Distro hat.** docker-desktop
+  und docker-desktop-data zaehlen dabei NICHT als echt — die ueberschreiben
+  wir bewusst, weil docker-Nutzer ihre Container ueber `docker` CLI
+  starten, nicht ueber `wsl`. Bei Usern mit Ubuntu/Debian/etc. bleibt
+  ihre Default unangetastet, agentbox spricht seine Distro per `-d`
+  immer explizit an.
+- **`Invoke-WslUpdate`-Helper nutzt `$wslArgs` statt `$args`** — `$args`
+  ist eine PS-Auto-Variable und in einem Function-Scope read-only;
+  Zuweisung wuerde mit "Cannot overwrite variable args" abbrechen.
+
 ## [1.0.4] - 2026-04-14
 
 ### Added

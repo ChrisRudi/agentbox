@@ -87,10 +87,23 @@ function Import-AgentboxHostDistro {
     if (-not (Test-Path $hostDir)) {
         New-Item -ItemType Directory -Path $hostDir -Force | Out-Null
     }
+    # Vor dem Import die existierenden Distros einsammeln, BEVOR wir was
+    # aendern — wir wollen wissen, ob der User eine eigene "echte" Distro
+    # hat (Ubuntu, Debian, ...), damit wir die nicht als Default ueberschreiben.
+    $existingPreImport = & wsl.exe -l -q 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() } | Where-Object { $_ }
+    $hasRealUserDistro = $false
+    foreach ($d in @($existingPreImport)) {
+        if ($d -eq $DistroName) { continue }
+        if ($d -eq "agentbox-template-build") { continue }
+        # docker-desktop und docker-desktop-data sind interne Docker-VMs,
+        # keine User-Shells — die zaehlen nicht als "echte" Default-Distro.
+        if ($d -match '^docker-desktop') { continue }
+        $hasRealUserDistro = $true
+        break
+    }
     # Falls eine alte $DistroName-Registrierung herumliegt (vorheriger Lauf),
     # zuerst abmelden — wsl --import scheitert sonst mit "already exists".
-    $existing = & wsl.exe -l -q 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
-    if ($existing -contains $DistroName) {
+    if ($existingPreImport -contains $DistroName) {
         & wsl.exe --unregister $DistroName 2>&1 | Out-Null
     }
     Write-Host "Importiere Host-Distro '$DistroName' aus Template..." -ForegroundColor Cyan
@@ -101,10 +114,16 @@ function Import-AgentboxHostDistro {
         Write-Host "FEHLER: Import der Host-Distro fehlgeschlagen." -ForegroundColor Red
         return $false
     }
-    # Als Default setzen — damit funktionieren `wsl.exe bash -c ...` und der
-    # Desktop-Shortcut `wsl.exe -e bash -li -c agentbox` ohne explizites `-d`.
-    & wsl.exe --set-default $DistroName 2>&1 | Out-Null
-    Write-Host "[OK] Host-Distro '$DistroName' importiert und als Default gesetzt" -ForegroundColor Green
+    # Als Default setzen — NUR wenn der User keine eigene echte Distro hat.
+    # docker-desktop ueberschreiben wir bewusst, weil das eine reine Pseudo-
+    # Distro ist und der User sowieso `docker` CLI verwendet, nicht `wsl`.
+    if (-not $hasRealUserDistro) {
+        & wsl.exe --set-default $DistroName 2>&1 | Out-Null
+        Write-Host "[OK] Host-Distro '$DistroName' importiert und als Default gesetzt" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] Host-Distro '$DistroName' importiert" -ForegroundColor Green
+        Write-Host "     Default-Distro bleibt unveraendert — agentbox spricht $DistroName explizit per -d an." -ForegroundColor Gray
+    }
     return $true
 }
 
@@ -246,50 +265,119 @@ if (-not $wslReady) {
     Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 }
 
-# --- WSL-Version-Pre-Flight (Inbox-WSL ist zu alt fuer Ubuntu 24.04 Noble) ---
-# Die in Windows eingebaute Inbox-WSL (alles vor Store-WSL ~2023) kennt
-# `--version` nicht und kann das Ubuntu-24.04-Cloud-Minimal-Image NICHT
-# importieren. Symptom ist ein generisches "Unbekannter Fehler" bei
-# `wsl --import` ohne Hinweis auf die Ursache. Wir fangen das hier ab und
-# zeigen einen klaren Handlungsschritt, statt den User durch 5 Minuten
-# Template-Build laufen zu lassen, die in einem Mojibake-Output enden.
+# --- WSL-Version-Pre-Flight + Auto-Update ---
+# Inbox-WSL (vor Store-WSL ~2023) kann das Ubuntu-24.04-Cloud-Image NICHT
+# importieren. Symptom waere ein generisches "Unbekannter Fehler" beim
+# spaeteren Template-Build. Wir machen hier KEINEN reinen Detect-and-Tell-User
+# mehr, sondern: erkennen, automatisch updaten, ggf. Reboot anbieten. Ein DAU
+# soll den Installer doppelklicken und nicht selbst CLI-Befehle eintippen.
+
+function Test-WslVersionOk {
+    $out = & wsl.exe --version 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
+    if ($LASTEXITCODE -ne 0) { return $false }
+    foreach ($line in @($out)) {
+        if ($line -match 'WSL.*\d+\.\d+') { return $true }
+    }
+    return $false
+}
+
+function Invoke-WslUpdate {
+    param([string]$Method = "")
+    # NICHT $args verwenden — das ist eine automatische PS-Variable und in
+    # einem Function-Scope read-only.
+    $wslArgs = @("--update")
+    if ($Method -eq "web") { $wslArgs += "--web-download" }
+    Write-Host "  > wsl.exe $($wslArgs -join ' ')" -ForegroundColor DarkGray
+    & wsl.exe @wslArgs 2>&1 | ForEach-Object {
+        $line = ("$_" -replace "`0", "").Trim()
+        if ($line) { Write-Host "    $line" -ForegroundColor DarkGray }
+    }
+    return ($LASTEXITCODE -eq 0)
+}
+
 Write-Host ""
 Write-Host "Pruefe WSL-Version..." -ForegroundColor Cyan
-$wslVersionOutput = & wsl.exe --version 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
-$wslVersionOk = ($LASTEXITCODE -eq 0) -and ($wslVersionOutput -match 'WSL.*\d+\.\d+')
-if (-not $wslVersionOk) {
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host " WSL ist zu alt fuer agentbox           " -ForegroundColor Red
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Deine WSL-Installation kennt 'wsl --version' nicht — das ist die" -ForegroundColor Yellow
-    Write-Host "Inbox-Variante (in Windows eingebaut), und sie kann das aktuelle" -ForegroundColor Yellow
-    Write-Host "Ubuntu-24.04-Cloud-Image nicht importieren. agentbox wuerde im" -ForegroundColor Yellow
-    Write-Host "Template-Build mit 'Unbekannter Fehler' aus wsl.exe abbrechen." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Bitte WSL aktualisieren:" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  wsl --update" -ForegroundColor White
-    Write-Host ""
-    Write-Host "Falls das nichts bringt (alte Inbox-Version blockiert das Update teilweise):" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  wsl --update --web-download" -ForegroundColor White
-    Write-Host ""
-    Write-Host "Oder direkt aus dem Microsoft Store: 'Windows Subsystem for Linux'" -ForegroundColor Cyan
-    Write-Host "(Microsoft, kostenlos) installieren." -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Anschliessend EINMAL Windows neu starten, dann install.ps1 erneut ausfuehren:" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex" -ForegroundColor White
-    Write-Host ""
-    exit 1
-}
-$wslVersionLine = ($wslVersionOutput | Where-Object { $_ -match 'WSL.*\d+\.\d+' } | Select-Object -First 1)
-if ($wslVersionLine) {
-    Write-Host "[OK] $wslVersionLine" -ForegroundColor Green
+if (Test-WslVersionOk) {
+    $wslVerOut = & wsl.exe --version 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
+    $wslVerLine = ($wslVerOut | Where-Object { $_ -match 'WSL.*\d+\.\d+' } | Select-Object -First 1)
+    if ($wslVerLine) {
+        Write-Host "[OK] $wslVerLine" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] WSL-Version-Check bestanden" -ForegroundColor Green
+    }
 } else {
-    Write-Host "[OK] WSL-Version-Check bestanden" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "WSL ist veraltet — aktualisiere automatisch..." -ForegroundColor Yellow
+    Write-Host "(Inbox-WSL kann das aktuelle Ubuntu-24.04-Image nicht importieren." -ForegroundColor Gray
+    Write-Host " Das hier kann 1-3 Minuten dauern.)" -ForegroundColor Gray
+    Write-Host ""
+
+    # Versuch 1: Standard wsl --update (geht ueber Microsoft Store)
+    [void](Invoke-WslUpdate)
+    $wslUpdateOk = Test-WslVersionOk
+
+    # Versuch 2: Web-Download (umgeht Store, falls Store geblockt/kaputt)
+    if (-not $wslUpdateOk) {
+        Write-Host ""
+        Write-Host "Standard-Update ohne Erfolg — versuche Web-Download..." -ForegroundColor Yellow
+        [void](Invoke-WslUpdate -Method "web")
+        $wslUpdateOk = Test-WslVersionOk
+    }
+
+    if (-not $wslUpdateOk) {
+        # Beide Versuche gescheitert — User muss manuell ran. Klare Anweisung,
+        # keine "irgendwo in der CLI eintippen"-Aufgabe.
+        Write-Host ""
+        Write-Host "========================================" -ForegroundColor Red
+        Write-Host " WSL-Update fehlgeschlagen              " -ForegroundColor Red
+        Write-Host "========================================" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "agentbox konnte WSL nicht automatisch aktualisieren. Mach bitte:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  1. Microsoft Store oeffnen" -ForegroundColor White
+        Write-Host "  2. nach 'Windows Subsystem for Linux' suchen" -ForegroundColor White
+        Write-Host "     (Herausgeber: Microsoft Corporation, kostenlos)" -ForegroundColor Gray
+        Write-Host "  3. auf 'Installieren' klicken und warten" -ForegroundColor White
+        Write-Host "  4. Windows EINMAL neu starten" -ForegroundColor White
+        Write-Host "  5. agentbox-Installer erneut starten (Doppelklick auf den Shortcut," -ForegroundColor White
+        Write-Host "     oder dieses Fenster nochmal aufrufen)" -ForegroundColor White
+        Write-Host ""
+        Write-Host "Hintergrund: Das in Windows eingebaute WSL ist von 2022 und kann das" -ForegroundColor DarkGray
+        Write-Host "aktuelle Ubuntu-24.04-Cloud-Image nicht importieren." -ForegroundColor DarkGray
+        Write-Host ""
+        exit 1
+    }
+
+    Write-Host ""
+    Write-Host "[OK] WSL erfolgreich aktualisiert." -ForegroundColor Green
+    Write-Host ""
+
+    # Reboot empfohlen: der neue WSL-Kernel/wslservice ist erst nach einem
+    # Neustart sicher aktiv. Wir testen `Test-WslVersionOk` ist zwar erfolgreich,
+    # aber `wsl --import` kann trotzdem in ERROR_HCS_E_HYPERV_NOT_INSTALLED
+    # laufen, weil vmcompute noch die alte Kernel-Version sieht.
+    Write-Host "Damit der neue WSL-Kernel sicher aktiv wird, sollte Windows einmal" -ForegroundColor Yellow
+    Write-Host "neu gestartet werden. Soll ich Windows JETZT neu starten?" -ForegroundColor Yellow
+    Write-Host "(Nach dem Reboot bitte den agentbox-Installer-Shortcut erneut ausfuehren," -ForegroundColor Gray
+    Write-Host " oder dieses Fenster wieder aufrufen.)" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [J] Ja, jetzt neu starten" -ForegroundColor White
+    Write-Host "  [N] Nein, ich starte spaeter selbst neu" -ForegroundColor White
+    Write-Host ""
+    $rebootChoice = Read-Host "Auswahl [J/n]"
+    $rebootChoice = "$rebootChoice".Trim()
+    if ($rebootChoice -eq "" -or $rebootChoice -match '^(j|J|ja|Ja|JA|y|Y|yes|Yes|YES)$') {
+        Write-Host ""
+        Write-Host "Starte Windows in 10 Sekunden neu..." -ForegroundColor Cyan
+        Write-Host "(Ctrl+C zum Abbrechen)" -ForegroundColor Gray
+        Start-Sleep -Seconds 10
+        Restart-Computer -Force
+        exit 0
+    } else {
+        Write-Host ""
+        Write-Host "OK — bitte spaeter manuell neu starten und den Installer erneut ausfuehren." -ForegroundColor Yellow
+        exit 0
+    }
 }
 
 # --- Git pruefen (optional — wird fuer ZIP-Fallback nicht benoetigt) ---
@@ -511,34 +599,44 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNUNG: win-setup.ps1 meldete Fehler. Bitte manuell pruefen." -ForegroundColor Yellow
 }
 
-# --- Host-Distro sicherstellen ---
+# --- Host-Distro IMMER sicherstellen ---
 # agentbox selbst laeuft ephemer (jede Session = eigene Sandbox-Distro, die
 # hinterher verworfen wird). Fuer die `.bashrc`-Integration und den Desktop-
-# Shortcut brauchen wir aber eine *persistente* Default-Distro, in der
-# `wsl.exe bash -c ...` und `wsl.exe -e bash -li -c agentbox` laufen koennen.
+# Shortcut brauchen wir aber eine *persistente* Distro namens `agentbox-host`,
+# die wir explizit per `-d agentbox-host` ansprechen.
 #
-# Vorher war der Ablauf: win-setup.ps1 baut das Template in einer temporaeren
-# `agentbox-template-build`-Distro, meldet sie wieder ab — und wenn der User
-# sonst keine Distro hat, stehen danach 0 registrierte Distros da. Die
-# folgenden `wsl.exe bash -c`-Aufrufe scheitern dann still (Stderr ist
-# 2>$null unterdrueckt), der Installer schreibt trotzdem "[OK] .bashrc-
-# Eintrag gesetzt", und am Ende zeigt `wsl` nur noch "keine installierten
-# Distributionen". Genau dieses "wsl laesst sich nach dem Installer nicht
-# mehr oeffnen"-Symptom wollen wir hier verhindern.
+# Frueher war der Code: nur erstellen, wenn KEINE Distros vorhanden. Das war
+# falsch fuer User mit `docker-desktop` (oder anderen vorhandenen Distros) —
+# der Code uebersprang die Host-Distro-Erstellung, und alle nachfolgenden
+# `wsl bash -c ...`-Aufrufe (.bashrc-Write etc.) liefen gegen die zufaellige
+# Default-Distro (z.B. `docker-desktop`, die als root laeuft und keine
+# `.bashrc` hat). Symptom: 'grep: /root/.bashrc: No such file or directory'.
+#
+# Jetzt: agentbox-host wird IMMER importiert, idempotent. Wenn schon vorhanden,
+# ueberspringen. Spaetere wsl.exe-Calls in der .bashrc-Phase nutzen explizit
+# `-d agentbox-host`, statt sich auf die Default-Distro zu verlassen.
 if ($setupOk) {
     $installedDistros = Get-WslRegisteredDistros
-    if ($installedDistros.Count -eq 0) {
+    if ("agentbox-host" -in $installedDistros) {
         Write-Host ""
-        Write-Host "Keine WSL-Distro registriert — richte Host-Distro ein..." -ForegroundColor Yellow
-        # Template liegt seit der LOCALAPPDATA-Migration nicht mehr unter
-        # $controlDir\sandbox\, sondern unter $env:LOCALAPPDATA\agentbox\sandbox\.
+        Write-Host "[OK] agentbox-host bereits registriert" -ForegroundColor Green
+        if ($installedDistros.Count -gt 1) {
+            $others = $installedDistros | Where-Object { $_ -ne "agentbox-host" }
+            Write-Host "     Weitere Distros: $($others -join ', ')" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host ""
+        if ($installedDistros.Count -eq 0) {
+            Write-Host "Richte agentbox-host ein (keine bestehenden Distros)..." -ForegroundColor Yellow
+        } else {
+            Write-Host "Richte agentbox-host ein (neben: $($installedDistros -join ', '))..." -ForegroundColor Yellow
+        }
+        # Template liegt seit der LOCALAPPDATA-Migration unter
+        # $env:LOCALAPPDATA\agentbox\sandbox\, nicht mehr unter $controlDir\sandbox\.
         $hostTemplate = Join-Path $env:LOCALAPPDATA "agentbox\sandbox\template.tar.gz"
         if (-not (Import-AgentboxHostDistro -TemplatePath $hostTemplate)) {
             $setupOk = $false
         }
-    } else {
-        Write-Host ""
-        Write-Host "[OK] WSL-Distro(s) vorhanden: $($installedDistros -join ', ')" -ForegroundColor Green
     }
 }
 
@@ -585,11 +683,11 @@ $patternList = $conflictPatterns -join '|'
 # - grep -q: exit 0 bei Treffer, 1 sonst
 # - Wenn wsl.exe selbst scheitert (z.B. keine Distros installiert), liefert
 #   es einen Nicht-Null Exit-Code und wir ueberspringen den Cleanup korrekt.
-& wsl.exe bash -c "grep -qE '$patternList' $bashrcPath" 2>$null
+& wsl.exe -d agentbox-host bash -c "grep -qE '$patternList' $bashrcPath" 2>$null
 $conflictFound = ($LASTEXITCODE -eq 0)
 $conflictLine = ""
 if ($conflictFound) {
-    $conflictLine = & wsl.exe bash -c "grep -m1 -E '$patternList' $bashrcPath" 2>$null
+    $conflictLine = & wsl.exe -d agentbox-host bash -c "grep -m1 -E '$patternList' $bashrcPath" 2>$null
     $conflictLine = "$conflictLine".Trim()
 }
 if ($conflictFound) {
@@ -597,7 +695,7 @@ if ($conflictFound) {
     if ($conflictLine) { Write-Host "       $conflictLine" -ForegroundColor Gray }
     Write-Host "[INFO] Entferne Konflikt-Block aus ~/.bashrc (Backup: ~/.bashrc.agentbox-backup)" -ForegroundColor Cyan
     # Backup anlegen und Python-Blockentfernung durchfuehren (robuster als sed)
-    & wsl.exe bash -c "cp $bashrcPath ~/.bashrc.agentbox-backup" 2>&1 | Out-Null
+    & wsl.exe -d agentbox-host bash -c "cp $bashrcPath ~/.bashrc.agentbox-backup" 2>&1 | Out-Null
     $cleanupScript = @"
 import re, os
 p = os.path.expanduser('~/.bashrc')
@@ -630,7 +728,7 @@ else:
     $cleanupScript = $cleanupScript -replace "`r", ""
     $cleanupB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($cleanupScript))
     $runCleanup = "echo $cleanupB64 | base64 -d > /tmp/agentbox_bashrc_cleanup.py && python3 /tmp/agentbox_bashrc_cleanup.py; rc=`$?; rm -f /tmp/agentbox_bashrc_cleanup.py; exit `$rc"
-    & wsl.exe bash -c $runCleanup 2>&1 | ForEach-Object { "$_" } | Out-Host
+    & wsl.exe -d agentbox-host bash -c $runCleanup 2>&1 | ForEach-Object { "$_" } | Out-Host
 }
 
 # --- Migration: alter agentbox-Block ohne AGENTBOX_AUTO_PROMPTED-Guard ---
@@ -677,11 +775,11 @@ print('[migrate] Alter agentbox-Block entfernt (Backup: ~/.bashrc.agentbox-pre-m
 $migrateScript = $migrateScript -replace "`r", ""
 $migrateB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($migrateScript))
 $runMigrate = "echo $migrateB64 | base64 -d > /tmp/agentbox_bashrc_migrate.py && python3 /tmp/agentbox_bashrc_migrate.py; rc=`$?; rm -f /tmp/agentbox_bashrc_migrate.py; exit `$rc"
-& wsl.exe bash -c $runMigrate 2>&1 | ForEach-Object { "$_" } | Out-Host
+& wsl.exe -d agentbox-host bash -c $runMigrate 2>&1 | ForEach-Object { "$_" } | Out-Host
 
 # Exit-Code-basierte Pruefung: grep -q ist zuverlaessiger als Output-Capture,
 # und faengt den Fall ab, dass wsl.exe selbst scheitert (keine Distros).
-& wsl.exe bash -c "grep -qF '$bashrcMarker' ~/.bashrc" 2>$null
+& wsl.exe -d agentbox-host bash -c "grep -qF '$bashrcMarker' ~/.bashrc" 2>$null
 $alreadyPresent = ($LASTEXITCODE -eq 0)
 
 if (-not $alreadyPresent) {
@@ -720,7 +818,7 @@ fi
     # umgeht das Windows-Filesystem komplett.
     $bashrcBlock = $bashrcBlock -replace "`r", ""
     $bashrcB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($bashrcBlock))
-    & wsl.exe bash -c "echo $bashrcB64 | base64 -d >> ~/.bashrc" 2>&1 | ForEach-Object { "$_" } | Out-Null
+    & wsl.exe -d agentbox-host bash -c "echo $bashrcB64 | base64 -d >> ~/.bashrc" 2>&1 | ForEach-Object { "$_" } | Out-Null
     $bashrcWriteRc = $LASTEXITCODE
 
     if ($bashrcWriteRc -ne 0) {
@@ -806,9 +904,13 @@ try {
     $shell = New-Object -ComObject WScript.Shell
 
     # 1) Agentbox-Start-Shortcut (laeuft im Normal-User-Kontext, kein UAC).
+    # `-d agentbox-host` ist hier KRITISCH: ohne explizite Distro greift wsl.exe
+    # die Default-Distro, und wenn der User docker-desktop hat, landet der Klick
+    # in der docker-VM und nicht in der agentbox-Distro. Mit -d zeigt der
+    # Shortcut immer in unsere eigene Distro.
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = "wsl.exe"
-    $shortcut.Arguments = "-e bash -li -c agentbox"
+    $shortcut.Arguments = "-d agentbox-host -e bash -li -c agentbox"
     $shortcut.WorkingDirectory = "%USERPROFILE%"
     $shortcut.Description = "agentbox — Sandboxed AI Agent Runner"
     $shortcut.IconLocation = "wsl.exe,0"
@@ -842,8 +944,8 @@ Write-Host " agentbox erfolgreich installiert!      " -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Starten:" -ForegroundColor Cyan
-Write-Host "  - Doppelklick auf 'agentbox' am Desktop" -ForegroundColor White
-Write-Host "  - Oder: WSL-Terminal oeffnen und 'agentbox' eingeben" -ForegroundColor White
+Write-Host "  - Doppelklick auf 'agentbox' am Desktop  (empfohlen)" -ForegroundColor White
+Write-Host "  - Oder Konsole: wsl -d agentbox-host" -ForegroundColor White
 Write-Host ""
 
 # --- Direkt starten? ---
@@ -865,7 +967,7 @@ if ($startNow) {
     Write-Host ""
     Write-Host "Starte agentbox in WSL..." -ForegroundColor Green
     Write-Host ""
-    & wsl.exe -e bash -li -c "agentbox"
+    & wsl.exe -d agentbox-host -e bash -li -c "agentbox"
 } else {
-    Write-Host "OK — manuell starten via Desktop-Shortcut oder 'wsl' + 'agentbox'." -ForegroundColor Gray
+    Write-Host "OK — manuell starten via Desktop-Shortcut oder 'wsl -d agentbox-host' + 'agentbox'." -ForegroundColor Gray
 }
