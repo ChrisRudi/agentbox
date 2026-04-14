@@ -5,6 +5,35 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-04-14
+
+### Fixed
+
+- **Pre-Flight crashte mit `NativeCommandError` waehrend WSL-Update.**
+  PS 5.1 unter `$ErrorActionPreference='Stop'` wirft fuer jede stderr-
+  Zeile eines nativen Tools einen `ErrorRecord` — auch mit `2>&1`. Das
+  Zwischen-`Test-WslVersionOk`, das nach `wsl --update` lief, fiel auf
+  die Schnauze, weil `wsl.exe --version` Status-Meldungen wie
+  "WSL beendet ein Upgrade..." auf stderr schreibt:
+
+  ```
+  wsl.exe : WSL beendet ein Upgrade...
+  In Zeile:261 Zeichen:12
+  +     $out = & wsl.exe --version 2>&1 | ...
+  ```
+
+  Fix: `Test-WslVersionOk` (jetzt umbenannt zu `Get-WslVersionLine` +
+  duenner Bool-Wrapper) und `Invoke-WslUpdate` setzen lokal
+  `$ErrorActionPreference = "Continue"` und wrappen die Pipeline in
+  try/catch. Damit ueberlebt der Pre-Flight stderr-Output von wsl.exe
+  ohne abzubrechen, der Update-Loop laeuft sauber durch, und die
+  finale Versionszeile wird auch im Erfolgsfall ausgegeben (z.B.
+  "[OK] WSL erfolgreich aktualisiert: WSL-Version: 2.3.26.0").
+- Doppelter `wsl.exe --version`-Aufruf in der Pre-Flight-Anzeige
+  entfernt — die Version wird jetzt von `Get-WslVersionLine` gleich
+  mit zurueckgegeben, statt sie nochmal anzufordern (was vorher den
+  gleichen stderr-Bug ausloesen konnte).
+
 ## [1.0.6] - 2026-04-14
 
 ### Changed

@@ -257,13 +257,31 @@ if (-not $wslReady) {
 # mehr, sondern: erkennen, automatisch updaten, ggf. Reboot anbieten. Ein DAU
 # soll den Installer doppelklicken und nicht selbst CLI-Befehle eintippen.
 
-function Test-WslVersionOk {
-    $out = & wsl.exe --version 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
-    if ($LASTEXITCODE -ne 0) { return $false }
-    foreach ($line in @($out)) {
-        if ($line -match 'WSL.*\d+\.\d+') { return $true }
+function Get-WslVersionLine {
+    # Liefert die "WSL Version: X.Y.Z"-Zeile, oder $null wenn nicht verfuegbar.
+    # PS 5.1 + $ErrorActionPreference='Stop' macht aus jedem nativen-Tool-
+    # stderr einen NativeCommandError, auch mit `2>&1`. wsl.exe --version
+    # schreibt Status-Meldungen wie "WSL beendet ein Upgrade..." auf stderr —
+    # ohne lokales Continue + try/catch killt das den Installer mitten im
+    # Pre-Flight-Loop, obwohl wsl.exe selbst sauber durchlaeuft.
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = @(& wsl.exe --version 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() })
+    } catch {
+        $ErrorActionPreference = $prevErr
+        return $null
     }
-    return $false
+    $ErrorActionPreference = $prevErr
+    if ($LASTEXITCODE -ne 0) { return $null }
+    foreach ($line in @($out)) {
+        if ($line -match 'WSL.*\d+\.\d+') { return $line }
+    }
+    return $null
+}
+
+function Test-WslVersionOk {
+    return ($null -ne (Get-WslVersionLine))
 }
 
 function Invoke-WslUpdate {
@@ -273,23 +291,30 @@ function Invoke-WslUpdate {
     $wslArgs = @("--update")
     if ($Method -eq "web") { $wslArgs += "--web-download" }
     Write-Host "  > wsl.exe $($wslArgs -join ' ')" -ForegroundColor DarkGray
-    & wsl.exe @wslArgs 2>&1 | ForEach-Object {
-        $line = ("$_" -replace "`0", "").Trim()
-        if ($line) { Write-Host "    $line" -ForegroundColor DarkGray }
+    # Gleicher PS-5.1-stderr-Schutz wie in Test-WslVersionOk: wsl --update
+    # streamt seinen Fortschritt teilweise ueber stderr, was unter
+    # $ErrorActionPreference='Stop' den Installer killen wuerde.
+    $prevErr = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & wsl.exe @wslArgs 2>&1 | ForEach-Object {
+            $line = ("$_" -replace "`0", "").Trim()
+            if ($line) { Write-Host "    $line" -ForegroundColor DarkGray }
+        }
+    } catch {
+        Write-Host "    (Pipeline-Fehler beim wsl-Update-Aufruf: $($_.Exception.Message))" -ForegroundColor DarkGray
+        $ErrorActionPreference = $prevErr
+        return $false
     }
+    $ErrorActionPreference = $prevErr
     return ($LASTEXITCODE -eq 0)
 }
 
 Write-Host ""
 Write-Host "Pruefe WSL-Version..." -ForegroundColor Cyan
-if (Test-WslVersionOk) {
-    $wslVerOut = & wsl.exe --version 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
-    $wslVerLine = ($wslVerOut | Where-Object { $_ -match 'WSL.*\d+\.\d+' } | Select-Object -First 1)
-    if ($wslVerLine) {
-        Write-Host "[OK] $wslVerLine" -ForegroundColor Green
-    } else {
-        Write-Host "[OK] WSL-Version-Check bestanden" -ForegroundColor Green
-    }
+$wslVerLine = Get-WslVersionLine
+if ($wslVerLine) {
+    Write-Host "[OK] $wslVerLine" -ForegroundColor Green
 } else {
     Write-Host ""
     Write-Host "WSL ist veraltet — aktualisiere automatisch..." -ForegroundColor Yellow
@@ -334,7 +359,12 @@ if (Test-WslVersionOk) {
     }
 
     Write-Host ""
-    Write-Host "[OK] WSL erfolgreich aktualisiert." -ForegroundColor Green
+    $wslVerLineAfter = Get-WslVersionLine
+    if ($wslVerLineAfter) {
+        Write-Host "[OK] WSL erfolgreich aktualisiert: $wslVerLineAfter" -ForegroundColor Green
+    } else {
+        Write-Host "[OK] WSL erfolgreich aktualisiert." -ForegroundColor Green
+    }
     Write-Host ""
 
     # Reboot empfohlen: der neue WSL-Kernel/wslservice ist erst nach einem
