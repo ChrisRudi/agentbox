@@ -53,7 +53,8 @@ if (Test-Path -LiteralPath $legacySandboxDir) {
                 # Copy + Remove als Fallback — erzwingt Hydration via Read.
                 try {
                     Copy-Item -LiteralPath $legacyFile -Destination $targetFile -Force -ErrorAction Stop
-                    Remove-Item -LiteralPath $legacyFile -Force -ErrorAction SilentlyContinue
+                    # .NET-API statt Remove-Item (PS 5.1 Tilde-Provider-Bug)
+                    try { [System.IO.File]::Delete($legacyFile) } catch { }
                     Write-Host "          copied: $name" -ForegroundColor Gray
                 } catch {
                     Write-Host "          WARN: $name — $($_.Exception.Message)" -ForegroundColor Yellow
@@ -61,7 +62,7 @@ if (Test-Path -LiteralPath $legacySandboxDir) {
             }
         }
     }
-    try { Remove-Item -LiteralPath $legacySandboxDir -Recurse -Force -ErrorAction Stop } catch { }
+    try { [System.IO.Directory]::Delete($legacySandboxDir, $true) } catch { }
 }
 
 # --- config.json laden ---
@@ -366,8 +367,11 @@ if ($existingDistros -match $distroName) {
     & wsl.exe --unregister $distroName 2>&1 | Out-Null
 }
 
-if (Test-Path -LiteralPath $tempSetup) {
-    Remove-Item -LiteralPath $tempSetup -Recurse -Force
+if ([System.IO.Directory]::Exists($tempSetup)) {
+    # .NET-API statt Remove-Item: PS 5.1 hat einen Provider-Bug, bei dem
+    # Remove-Item -LiteralPath bei Tilde-Pfaden ($env:TEMP unter Umlaut-User
+    # → SCHLER~1) mit InvalidArgument crasht, obwohl Test-Path true returnt.
+    try { [System.IO.Directory]::Delete($tempSetup, $true) } catch { }
 }
 New-Item -ItemType Directory -LiteralPath $tempSetup -Force | Out-Null
 
@@ -634,8 +638,9 @@ Write-Host "[OK] Template exportiert: $templatePath ($templateSize MB)" -Foregro
 # --- Temporaere Distro entfernen ---
 Write-Host "Entferne temporaere Build-Distro..." -ForegroundColor Cyan
 & wsl.exe --unregister $distroName 2>&1 | Out-Null
-if (Test-Path -LiteralPath $tempSetup) {
-    Remove-Item -LiteralPath $tempSetup -Recurse -Force -ErrorAction SilentlyContinue
+if ([System.IO.Directory]::Exists($tempSetup)) {
+    # .NET-API statt Remove-Item (PS 5.1 Tilde-Provider-Bug)
+    try { [System.IO.Directory]::Delete($tempSetup, $true) } catch { }
 }
 Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 

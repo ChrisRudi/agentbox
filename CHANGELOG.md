@@ -5,6 +5,49 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12] - 2026-04-14
+
+### Fixed
+
+- **Remove-Item-Crash bei Tilde-Username — der echte Fix.** 1.0.8/1.0.9
+  hatten `-Path` auf `-LiteralPath` umgestellt, in der Annahme das wuerde
+  reichen. Falsch: PS 5.1 hat einen **separaten Provider-Bug**, bei dem
+  `Remove-Item -LiteralPath` mit Tilde-Pfaden (`C:\Users\SCHLER~1\...`)
+  trotzdem mit `InvalidArgument` crasht — obwohl `Test-Path -LiteralPath`
+  mit dem gleichen Pfad `$true` returnt. Inkonsistenz im FileSystem-Provider.
+
+  User-Report:
+  ```
+  Remove-Item : Ein Objekt im angegebenen Pfad "C:\Users\SCHLER~1"
+                ist nicht vorhanden.
+  +     Remove-Item -LiteralPath $tempZip -Force -ErrorAction Sil ...
+  ```
+
+  Korrekter Fix: alle `Remove-Item`-Calls in den ZIP-, Update-, Migration-
+  und Cleanup-Pfaden durch `[System.IO.File]::Delete()` und
+  `[System.IO.Directory]::Delete()` ersetzt. Das umgeht den PS-Provider
+  vollstaendig und nutzt Win32 direkt. Betroffen:
+  - `install.ps1` ZIP-Update-Cleanup (war der Trigger)
+  - `install.ps1` Neuinstall-ZIP-Cleanup
+  - `install.ps1` Neuinstall-git-clone-Cleanup
+  - `install.ps1` WSL-Kernel-MSI-Cleanup
+  - `win-setup-core.ps1` Template-Build-Setup-Cleanup (2 Stellen)
+  - `win-setup-core.ps1` Legacy-Sandbox-Migration-Cleanup
+  - `win-task-runner.ps1` Task-File-Cleanup nach Verarbeitung
+
+  `Test-Path -LiteralPath` und `Copy-Item -LiteralPath` sind weiter im
+  Einsatz — die haben den Bug nicht, nur `Remove-Item`. Statt `Test-Path`
+  fuer die `Delete()`-Vorabchecks: `[System.IO.File]::Exists()` /
+  `[System.IO.Directory]::Exists()`, ebenfalls Win32-direkt.
+- **`Get-ChildItem -Force` im Update-Loop**, damit hidden Files wie
+  `.version` mitkopiert werden. Vorher waren Updates im "Endlos-Loop":
+  Code wurde aktualisiert (Copy-Item lief), aber `.version` blieb
+  stehen, weil `Get-ChildItem` ohne `-Force` keine Dot-Files auflistet —
+  beim naechsten `irm | iex`-Run sah der Installer wieder "Local 1.0.9
+  → Remote 1.0.x" und ratterte denselben Update-Pfad nochmal durch.
+  Effekt fuer den User: `irm | iex` war effektiv idempotent
+  funktional, aber kosmetisch immer mit Update-Phase + Cleanup-Crash.
+
 ## [1.0.11] - 2026-04-14
 
 ### Added

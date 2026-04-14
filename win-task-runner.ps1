@@ -140,7 +140,10 @@ function Move-TaskToHistory {
 
     [System.IO.File]::WriteAllText($historyPath, ($TaskData | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
 
-    Remove-Item -LiteralPath $TaskFilePath -Force -ErrorAction SilentlyContinue
+    # .NET-API statt Remove-Item: PS 5.1 hat einen Provider-Bug, bei dem
+    # Remove-Item -LiteralPath bei Tilde-Pfaden (Username mit Umlaut →
+    # Schueler → SCHLER~1) mit InvalidArgument crasht.
+    try { [System.IO.File]::Delete($TaskFilePath) } catch { }
 }
 
 # --- Teil 1: Fehleranzeige ---

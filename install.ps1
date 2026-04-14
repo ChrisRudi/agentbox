@@ -218,8 +218,9 @@ if (-not $wslReady) {
             $ProgressPreference = 'SilentlyContinue'
             Invoke-WebRequest -Uri $kernelUrl -OutFile $kernelMsi -UseBasicParsing
             Start-Process msiexec.exe -ArgumentList "/i", "`"$kernelMsi`"", "/quiet", "/norestart" -Wait -NoNewWindow
-            if ($kernelMsi -and (Test-Path -LiteralPath $kernelMsi)) {
-                Remove-Item -LiteralPath $kernelMsi -Force -ErrorAction SilentlyContinue
+            if ($kernelMsi) {
+                # .NET-API statt Remove-Item (PS 5.1 Tilde-Provider-Bug)
+                try { [System.IO.File]::Delete($kernelMsi) } catch { }
             }
             Write-Host "  [OK] WSL2-Kernel-Update installiert" -ForegroundColor Green
 
@@ -536,12 +537,18 @@ if ($isInstalled) {
 
         if ($needsUpdate) {
             # Fallback: ZIP-Download
-            # WICHTIG: ueberall -LiteralPath statt -Path, weil $env:TEMP bei
-            # Usern mit Umlaut im Namen (z.B. "Schueler" → 8.3 "SCHLER~1")
-            # einen Tilde im Pfad enthaelt, und PS 5.1 Remove-Item das im
-            # -Path-Modus mit Wildcard-Glob-Resolution interpretiert. Resultat:
-            # "Ein Objekt im angegebenen Pfad ist nicht vorhanden" trotz
-            # existierender Datei. -LiteralPath umgeht jede Pattern-Interpretation.
+            # WICHTIG: alle Path-Cmdlets nutzen -LiteralPath wegen Tilde-
+            # Username (Schueler → SCHLER~1). Das reicht aber NICHT fuer
+            # Remove-Item — PS 5.1 hat einen separaten Provider-Bug, bei dem
+            # `Test-Path -LiteralPath $tilde` true returnt, aber
+            # `Remove-Item -LiteralPath $tilde` mit InvalidArgument crasht.
+            # Loesung: fuer den Cleanup direkt auf .NET File/Directory-API
+            # gehen, das umgeht den PS-Provider komplett.
+            #
+            # Plus: `Get-ChildItem -Force` im Update-Loop, damit hidden Files
+            # wie .version mitgenommen werden — ohne -Force bleibt .version
+            # auf der alten Version, und der Installer denkt jeden Run wieder
+            # "Update noetig", obwohl der Code-Stand schon aktuell ist.
             Write-Host "Lade neueste Version als ZIP..." -ForegroundColor Cyan
             $tempZip = Join-Path $env:TEMP "agentbox_update_$(Get-Random).zip"
             $tempExtract = Join-Path $env:TEMP "agentbox_extract_$(Get-Random)"
@@ -551,17 +558,19 @@ if ($isInstalled) {
                 Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force
 
                 # ZIP enthaelt agentbox-main/ Unterordner
-                $extractedDir = Get-ChildItem -LiteralPath $tempExtract -Directory | Select-Object -First 1
+                $extractedDir = Get-ChildItem -LiteralPath $tempExtract -Directory -Force | Select-Object -First 1
 
                 # Bestehende config.json sichern (User-Anpassungen)
                 $userConfig = $null
                 $existingConfigPath = Join-Path $controlDir "config.json"
-                if (Test-Path -LiteralPath $existingConfigPath) {
-                    $userConfig = Get-Content -LiteralPath $existingConfigPath -Raw -ErrorAction SilentlyContinue
+                if ([System.IO.File]::Exists($existingConfigPath)) {
+                    try { $userConfig = [System.IO.File]::ReadAllText($existingConfigPath) } catch { }
                 }
 
-                # Dateien aktualisieren (nicht _control loeschen — cache/ und sandbox/ bleiben)
-                Get-ChildItem -LiteralPath $extractedDir.FullName -Exclude "sandbox","cache" | ForEach-Object {
+                # Dateien aktualisieren (nicht _control loeschen — cache/ und sandbox/ bleiben).
+                # -Force ist KRITISCH, sonst werden hidden Dateien wie .version uebersprungen
+                # und der Installer ist in einer Endlos-Update-Schleife (lokal != Remote).
+                Get-ChildItem -LiteralPath $extractedDir.FullName -Exclude "sandbox","cache" -Force | ForEach-Object {
                     $destPath = Join-Path $controlDir $_.Name
                     if ($_.PSIsContainer) {
                         Copy-Item -LiteralPath $_.FullName -Destination $destPath -Recurse -Force
@@ -580,11 +589,14 @@ if ($isInstalled) {
                 Write-Host "WARNUNG: ZIP-Update fehlgeschlagen, fahre mit bestehender Version fort." -ForegroundColor Yellow
                 Write-Host $_.Exception.Message -ForegroundColor Yellow
             } finally {
-                if ($tempZip -and (Test-Path -LiteralPath $tempZip)) {
-                    Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
+                # .NET-API statt Remove-Item: umgeht den PS 5.1 Provider-Bug
+                # bei Tilde-Pfaden (siehe oben). try/catch, weil Delete() auf
+                # nicht-existierende Pfade IOException wirft.
+                if ($tempZip) {
+                    try { [System.IO.File]::Delete($tempZip) } catch { }
                 }
-                if ($tempExtract -and (Test-Path -LiteralPath $tempExtract)) {
-                    Remove-Item -LiteralPath $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+                if ($tempExtract) {
+                    try { [System.IO.Directory]::Delete($tempExtract, $true) } catch { }
                 }
             }
         }
@@ -607,8 +619,9 @@ if ($isInstalled) {
             Write-Host "WARNUNG: git clone fehlgeschlagen, versuche ZIP-Fallback..." -ForegroundColor Yellow
             $hasGit = $false
         } finally {
-            if ($tempClone -and (Test-Path -LiteralPath $tempClone)) {
-                Remove-Item -LiteralPath $tempClone -Recurse -Force -ErrorAction SilentlyContinue
+            # .NET-API statt Remove-Item (PS 5.1 Tilde-Bug, siehe oben)
+            if ($tempClone) {
+                try { [System.IO.Directory]::Delete($tempClone, $true) } catch { }
             }
         }
     }
@@ -623,7 +636,9 @@ if ($isInstalled) {
             Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
             Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force
 
-            $extractedDir = Get-ChildItem -LiteralPath $tempExtract -Directory | Select-Object -First 1
+            # -Force fuer hidden Files (.version) — sonst bleibt .version
+            # nach dem ersten Install fehlend / leer.
+            $extractedDir = Get-ChildItem -LiteralPath $tempExtract -Directory -Force | Select-Object -First 1
             Copy-Item -LiteralPath $extractedDir.FullName -Destination $controlDir -Recurse -Force
             Write-Host "[OK] agentbox installiert nach: $controlDir" -ForegroundColor Green
         } catch {
@@ -631,11 +646,12 @@ if ($isInstalled) {
             Write-Host $_.Exception.Message -ForegroundColor Red
             exit 1
         } finally {
-            if ($tempZip -and (Test-Path -LiteralPath $tempZip)) {
-                Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
+            # .NET-API statt Remove-Item (PS 5.1 Tilde-Bug, siehe oben)
+            if ($tempZip) {
+                try { [System.IO.File]::Delete($tempZip) } catch { }
             }
-            if ($tempExtract -and (Test-Path -LiteralPath $tempExtract)) {
-                Remove-Item -LiteralPath $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+            if ($tempExtract) {
+                try { [System.IO.Directory]::Delete($tempExtract, $true) } catch { }
             }
         }
     }
