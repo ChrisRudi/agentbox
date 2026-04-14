@@ -246,6 +246,52 @@ if (-not $wslReady) {
     Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 }
 
+# --- WSL-Version-Pre-Flight (Inbox-WSL ist zu alt fuer Ubuntu 24.04 Noble) ---
+# Die in Windows eingebaute Inbox-WSL (alles vor Store-WSL ~2023) kennt
+# `--version` nicht und kann das Ubuntu-24.04-Cloud-Minimal-Image NICHT
+# importieren. Symptom ist ein generisches "Unbekannter Fehler" bei
+# `wsl --import` ohne Hinweis auf die Ursache. Wir fangen das hier ab und
+# zeigen einen klaren Handlungsschritt, statt den User durch 5 Minuten
+# Template-Build laufen zu lassen, die in einem Mojibake-Output enden.
+Write-Host ""
+Write-Host "Pruefe WSL-Version..." -ForegroundColor Cyan
+$wslVersionOutput = & wsl.exe --version 2>&1 | ForEach-Object { ("$_" -replace "`0", "").Trim() }
+$wslVersionOk = ($LASTEXITCODE -eq 0) -and ($wslVersionOutput -match 'WSL.*\d+\.\d+')
+if (-not $wslVersionOk) {
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host " WSL ist zu alt fuer agentbox           " -ForegroundColor Red
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Deine WSL-Installation kennt 'wsl --version' nicht — das ist die" -ForegroundColor Yellow
+    Write-Host "Inbox-Variante (in Windows eingebaut), und sie kann das aktuelle" -ForegroundColor Yellow
+    Write-Host "Ubuntu-24.04-Cloud-Image nicht importieren. agentbox wuerde im" -ForegroundColor Yellow
+    Write-Host "Template-Build mit 'Unbekannter Fehler' aus wsl.exe abbrechen." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Bitte WSL aktualisieren:" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  wsl --update" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Falls das nichts bringt (alte Inbox-Version blockiert das Update teilweise):" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  wsl --update --web-download" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Oder direkt aus dem Microsoft Store: 'Windows Subsystem for Linux'" -ForegroundColor Cyan
+    Write-Host "(Microsoft, kostenlos) installieren." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Anschliessend EINMAL Windows neu starten, dann install.ps1 erneut ausfuehren:" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex" -ForegroundColor White
+    Write-Host ""
+    exit 1
+}
+$wslVersionLine = ($wslVersionOutput | Where-Object { $_ -match 'WSL.*\d+\.\d+' } | Select-Object -First 1)
+if ($wslVersionLine) {
+    Write-Host "[OK] $wslVersionLine" -ForegroundColor Green
+} else {
+    Write-Host "[OK] WSL-Version-Check bestanden" -ForegroundColor Green
+}
+
 # --- Git pruefen (optional — wird fuer ZIP-Fallback nicht benoetigt) ---
 $hasGit = $false
 try {
@@ -496,6 +542,28 @@ if ($setupOk) {
     }
 }
 
+# --- Frueh-Abbruch bei fehlgeschlagenem Setup ---
+# Wenn entweder win-setup.ps1 oder der Host-Distro-Rescue gefailt sind,
+# darf die .bashrc-Integration NICHT laufen. Frueher lief sie trotzdem
+# durch und produzierte Folgefehler wie 'grep: /root/.bashrc: No such
+# file or directory' gegen eine zufaellige Default-Distro (z.B.
+# docker-desktop), oder schlimmer: meldete still "[OK] .bashrc-Eintrag
+# gesetzt", obwohl wsl.exe den Write nie ausgefuehrt hat.
+if (-not $setupOk) {
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host " agentbox Installation UNVOLLSTAENDIG   " -ForegroundColor Red
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Template-Build fehlgeschlagen — keine weiteren Integrationsschritte." -ForegroundColor Yellow
+    Write-Host "Weder .bashrc-Eintrag noch .wslconfig noch Desktop-Shortcut wurden angelegt," -ForegroundColor Yellow
+    Write-Host "weil ohne funktionierendes Template alles auf eine zufaellige Fremd-Distro" -ForegroundColor Yellow
+    Write-Host "gelandet waere. Bitte die Fehlermeldung oben pruefen und install.ps1 erneut" -ForegroundColor Yellow
+    Write-Host "ausfuehren. Falls ein Reboot verlangt wurde: zuerst neu starten." -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
 # --- WSL .bashrc-Eintrag setzen ---
 Write-Host ""
 Write-Host "Konfiguriere WSL-Integration..." -ForegroundColor Cyan
@@ -565,6 +633,52 @@ else:
     & wsl.exe bash -c $runCleanup 2>&1 | ForEach-Object { "$_" } | Out-Host
 }
 
+# --- Migration: alter agentbox-Block ohne AGENTBOX_AUTO_PROMPTED-Guard ---
+# Bestandsinstalls aus 1.0.x haben einen .bashrc-Block ohne den neuen Auto-
+# Prompt-Guard. Symptom: nach "n" beim 5s-Timer erscheint der Prompt sofort
+# wieder, weil die Shell die .bashrc doppelt sourced. Hier detektieren wir
+# den alten Block und entfernen ihn — der naechste Schritt schreibt dann den
+# frischen Block mit Guard.
+$migrateScript = @'
+import os, sys, shutil
+p = os.path.expanduser('~/.bashrc')
+if not os.path.exists(p):
+    sys.exit(0)
+with open(p) as f: lines = f.readlines()
+marker = '# agentbox'
+guard = 'AGENTBOX_AUTO_PROMPTED'
+start = None
+for i, l in enumerate(lines):
+    if marker in l:
+        start = i
+        break
+if start is None:
+    sys.exit(0)
+# Block-Ende: erste alleinstehende `fi` nach start
+end = None
+for i in range(start, len(lines)):
+    if lines[i].rstrip() == 'fi':
+        end = i
+        break
+if end is None:
+    sys.exit(0)
+block = ''.join(lines[start:end+1])
+if guard in block:
+    # Schon migriert
+    sys.exit(0)
+shutil.copy(p, p + '.agentbox-pre-migrate')
+del lines[start:end+1]
+# Fuehrende Leerzeile vor dem entfernten Block auch loeschen
+if start > 0 and start - 1 < len(lines) and lines[start-1].strip() == '':
+    del lines[start-1]
+with open(p, 'w') as f: f.writelines(lines)
+print('[migrate] Alter agentbox-Block entfernt (Backup: ~/.bashrc.agentbox-pre-migrate)')
+'@
+$migrateScript = $migrateScript -replace "`r", ""
+$migrateB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($migrateScript))
+$runMigrate = "echo $migrateB64 | base64 -d > /tmp/agentbox_bashrc_migrate.py && python3 /tmp/agentbox_bashrc_migrate.py; rc=`$?; rm -f /tmp/agentbox_bashrc_migrate.py; exit `$rc"
+& wsl.exe bash -c $runMigrate 2>&1 | ForEach-Object { "$_" } | Out-Host
+
 # Exit-Code-basierte Pruefung: grep -q ist zuverlaessiger als Output-Capture,
 # und faengt den Fall ab, dass wsl.exe selbst scheitert (keine Distros).
 & wsl.exe bash -c "grep -qF '$bashrcMarker' ~/.bashrc" 2>$null
@@ -579,8 +693,23 @@ $bashrcMarker
 export AI_PROJECTS_ROOT="$wslBasePath"
 if [ -f "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh" ]; then
     alias agentbox='bash "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh"'
-    # Auto-Start: fragt 5s ob agentbox starten soll, Enter/Timeout = Ja, n = normales Terminal
-    bash "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh" --auto
+    # Auto-Start: fragt 5s ob agentbox starten soll, Enter/Timeout = Ja, n = normales Terminal.
+    # Zwei Guards verhindern, dass der Prompt doppelt erscheint:
+    #   1. case-Match auf interaktive Shells, damit non-interactive Source-Aufrufe
+    #      (z.B. aus Hilfs-Scripts) nicht ins Leere prompten.
+    #   2. AGENTBOX_AUTO_PROMPTED-Env-Var: einmal gesetzt, bleibt sie in der
+    #      Login-Shell und allen Sub-Shells. Wenn .bashrc doppelt gesourced wird
+    #      (bash -li sourced .profile, das wiederum .bashrc, und danach noch
+    #      interactive-init nochmal .bashrc) erscheint der Prompt trotzdem nur
+    #      einmal pro Login-Shell. Nach n-Ablehnen kein erneuter Timer.
+    case "`$-" in
+        *i*)
+            if [ -z "`$AGENTBOX_AUTO_PROMPTED" ]; then
+                export AGENTBOX_AUTO_PROMPTED=1
+                bash "`$AI_PROJECTS_ROOT/_control/wsl-ai-start.sh" --auto
+            fi
+            ;;
+    esac
 fi
 "@
 
@@ -654,24 +783,8 @@ swap=$resSwap
     }
 }
 
-# --- Bei fehlgeschlagenem Setup: hier abbrechen, BEVOR Shortcut erstellt wird ---
-# Ein Shortcut auf 'wsl.exe -e bash -li -c agentbox' ohne funktionierende
-# Sandbox-Template waere irrefuehrend — der Doppelklick wuerde nur Fehler zeigen.
-if (-not $setupOk) {
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host " agentbox Installation UNVOLLSTAENDIG   " -ForegroundColor Red
-    Write-Host "========================================" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "win-setup.ps1 ist fehlgeschlagen — Template wurde nicht gebaut." -ForegroundColor Yellow
-    Write-Host "Desktop-Shortcut wurde NICHT erstellt (waere ohne Ziel)." -ForegroundColor Yellow
-    Write-Host "Bitte die Fehlermeldung oben pruefen und install.ps1 erneut ausfuehren." -ForegroundColor Yellow
-    Write-Host "Falls ein Reboot verlangt wurde: zuerst neu starten." -ForegroundColor Yellow
-    Write-Host ""
-    exit 1
-}
-
-# --- Desktop-Shortcuts erstellen (nur bei erfolgreichem Setup) ---
+# --- Desktop-Shortcuts erstellen ---
+# Hier sind wir nur, wenn $setupOk = $true (frueher Abbruch oben).
 Write-Host ""
 Write-Host "Erstelle Desktop-Shortcuts..." -ForegroundColor Cyan
 

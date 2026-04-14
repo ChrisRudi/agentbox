@@ -375,22 +375,41 @@ New-Item -ItemType Directory -Path $tempSetup -Force | Out-Null
 # - Stderr-Zeilen werden stringifiziert → kein NativeCommandError
 # - Success-Zeile 'Der Vorgang wurde erfolgreich beendet.' wird nicht gezeigt
 # - Fehler-Output bleibt fuer HCS-Detection + Log-Anzeige erhalten
-$importOutput = @(& wsl.exe --import $distroName $tempSetup $downloadPath 2>&1 | ForEach-Object { "$_" })
+# Wichtig: NUL-Bytes strippen, BEVOR irgendeine Regex laeuft. Alte wsl.exe-
+# Versionen ignorieren $env:WSL_UTF8 und schreiben UTF-16LE auf stderr/stdout
+# — durchgeschleust wird das als string mit "\0" zwischen jedem Zeichen, und
+# unsere `match 'HCS_E_*'`-Detection fand danach nichts, weil "H\0C\0S\0..."
+# nie auf "HCS" matcht. Wir saeubern hier rigoros: NUL raus, dann Trim().
+$importOutputRaw = @(& wsl.exe --import $distroName $tempSetup $downloadPath 2>&1 | ForEach-Object { "$_" })
 $importExit = $LASTEXITCODE
+$importOutput = @($importOutputRaw | ForEach-Object { ($_ -replace "`0", "").Trim() } | Where-Object { $_ -ne "" })
 if ($importExit -ne 0) {
     $importText = ($importOutput -join "`n")
-    foreach ($line in $importOutput) { Write-Host "       $line" -ForegroundColor DarkGray }
-    if ($importText -match 'HCS_E_SERVICE_NOT_AVAILABLE' -or $importText -match 'HCS/HCS_') {
-        Write-Host ""
-        Write-Host "FEHLER: Hyper-V Host Compute Service (vmcompute) nicht verfuegbar." -ForegroundColor Red
-        Write-Host "        Das passiert typischerweise direkt nach 'wsl --install'" -ForegroundColor Yellow
-        Write-Host "        auf einem frischen System: Die VM-Features sind aktiviert," -ForegroundColor Yellow
-        Write-Host "        aber der Dienst startet erst nach einem Neustart." -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "        Bitte den PC neu starten und install.ps1 erneut ausfuehren:" -ForegroundColor Yellow
-        Write-Host "          irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex" -ForegroundColor White
+    Write-Host ""
+    Write-Host "FEHLER: WSL-Import fehlgeschlagen (Exit $importExit)." -ForegroundColor Red
+    Write-Host "        Rohausgabe von wsl.exe:" -ForegroundColor Yellow
+    if ($importOutput.Count -gt 0) {
+        foreach ($line in $importOutput) { Write-Host "          $line" -ForegroundColor DarkGray }
     } else {
-        Write-Host "FEHLER: WSL-Import fehlgeschlagen." -ForegroundColor Red
+        Write-Host "          (leer)" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    if ($importText -match 'HCS_E_SERVICE_NOT_AVAILABLE' -or $importText -match 'HCS/HCS_') {
+        Write-Host "Diagnose: Hyper-V Host Compute Service (vmcompute) nicht verfuegbar." -ForegroundColor Yellow
+        Write-Host "          Das passiert typischerweise direkt nach 'wsl --install' auf" -ForegroundColor Yellow
+        Write-Host "          einem frischen System: Die VM-Features sind aktiviert, aber" -ForegroundColor Yellow
+        Write-Host "          der Dienst startet erst nach einem Neustart." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "          Bitte den PC neu starten und install.ps1 erneut ausfuehren:" -ForegroundColor Yellow
+        Write-Host "            irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex" -ForegroundColor White
+    } elseif ($importText -match 'Unbekannter Fehler' -or $importText -match 'Unspecified error') {
+        Write-Host "Diagnose: Generischer wsl.exe-Fehler. Haeufigste Ursache: WSL ist zu" -ForegroundColor Yellow
+        Write-Host "          alt fuer das Ubuntu-24.04-Cloud-Image. Bitte WSL aktualisieren:" -ForegroundColor Yellow
+        Write-Host "            wsl --update" -ForegroundColor White
+        Write-Host "            wsl --update --web-download   # Fallback" -ForegroundColor White
+        Write-Host "          und anschliessend Windows einmal neu starten." -ForegroundColor Yellow
+    } else {
+        Write-Host "Diagnose: Bitte die Rohausgabe oben pruefen — kein bekanntes Fehlermuster." -ForegroundColor Yellow
     }
     exit 1
 }

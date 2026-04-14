@@ -5,6 +5,53 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-04-14
+
+### Added
+
+- **WSL-Version-Pre-Flight in `install.ps1`.** Vor dem teuren Template-Build
+  wird `wsl --version` aufgerufen. Inbox-WSL (in Windows eingebaut, vor der
+  Store-Variante) kennt den Schalter nicht und kann das Ubuntu-24.04-Cloud-
+  Minimal-Image nicht importieren — der spaetere `wsl --import` quittiert
+  das mit einem generischen "Unbekannter Fehler" ohne Hinweis auf die
+  Ursache. Wir fangen das jetzt frueh ab und zeigen einen klaren Fix-Pfad
+  (`wsl --update`, Fallback `--web-download`, oder Store-Install + Reboot)
+  statt den User durch 5 Minuten Mojibake-Output zu schicken.
+- **Frueh-Abbruch in `install.ps1` bei fehlgeschlagenem Setup.** Wenn
+  `win-setup.ps1` oder der Host-Distro-Rescue gefailt sind, wird jetzt
+  unmittelbar danach mit einer klaren Fehlermeldung abgebrochen — vor der
+  `.bashrc`-Integration, vor `.wslconfig`, vor Desktop-Shortcut. Frueher
+  lief der Installer trotzdem weiter und produzierte Folgefehler wie
+  `grep: /root/.bashrc: No such file or directory` gegen eine zufaellige
+  Default-Distro (z.B. `docker-desktop`). Der spaete `$setupOk`-Check, der
+  fast am Ende des Installers stand, ist damit obsolet und wurde entfernt.
+
+### Fixed
+
+- **`win-setup-core.ps1` `wsl --import`-Error-Reporting ist jetzt UTF-16-
+  bewusst.** Alte wsl.exe-Versionen ignorieren `$env:WSL_UTF8` und schreiben
+  Stderr/Stdout als UTF-16LE. Die `HCS_E_*`-Detection-Regex matchte nie,
+  weil "H\0C\0S\0..." nicht auf "HCS" matcht. Wir strippen NUL-Bytes jetzt
+  rigoros vor der Pattern-Erkennung und zeigen die rohe (gesaeuberte) wsl-
+  Fehlermeldung in jedem Fall an, plus zusaetzliche Diagnose fuer
+  "Unbekannter Fehler" / "Unspecified error" mit Verweis auf `wsl --update`.
+- **Auto-Start-Prompt in `~/.bashrc` startet den Timer nach "n" nicht mehr
+  erneut.** Der `.bashrc`-Block hatte keinen Schutz gegen doppeltes Sourcing
+  (z.B. `bash -li` sourced `~/.profile`, das wiederum `~/.bashrc`, und der
+  interactive-init triggert ein zweites `~/.bashrc`-Loading). Nach einem
+  "n" beim 5s-Prompt erschien der Timer sofort wieder. Zwei neue Guards
+  im `.bashrc`-Block:
+  - `case "$-" in *i*)` — der Auto-Prompt laeuft nur in interaktiven Shells,
+    nicht in non-interactive Source-Aufrufen.
+  - `[ -z "$AGENTBOX_AUTO_PROMPTED" ]` + `export AGENTBOX_AUTO_PROMPTED=1` —
+    einmal pro Login-Shell prompten, dann ist die Var im Environment, alle
+    Sub-Shells und Re-Sources sehen sie und ueberspringen.
+- **Bestandsinstalls bekommen die Auto-Prompt-Guards per Migration.** Der
+  alte `.bashrc`-Block (ohne `AGENTBOX_AUTO_PROMPTED`) wird beim naechsten
+  `install.ps1`-Lauf erkannt und aus der `.bashrc` entfernt — der frische
+  Block mit Guards wird danach angehaengt. Backup vor der Migration unter
+  `~/.bashrc.agentbox-pre-migrate`.
+
 ## [1.0.3] - 2026-04-13
 
 ### Fixed
