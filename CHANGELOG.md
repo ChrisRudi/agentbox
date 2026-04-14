@@ -5,6 +5,36 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-04-14
+
+### Fixed
+
+- **ZIP-Update crashte bei User-Namen mit Umlaut.** Wenn der Windows-
+  User-Name ein Sonderzeichen enthielt (z.B. "Schueler" → 8.3-Pfad
+  `C:\Users\SCHLER~1\AppData\Local\Temp\...`), warf `Remove-Item -Path`
+  im Cleanup-finally-Block:
+
+  ```
+  Remove-Item : Ein Objekt im angegebenen Pfad "C:\Users\SCHLER~1"
+                ist nicht vorhanden.
+  In Zeile:546 Zeichen:17
+  +     Remove-Item -Path $tempZip -Force -ErrorAction SilentlyCo ...
+      + CategoryInfo : InvalidArgument: (:) [Remove-Item], PSArgumentException
+  ```
+
+  Ursache: PS 5.1 `Remove-Item -Path` resolved den Pfad mit Wildcard-
+  Pattern-Engine, die am Tilde des 8.3-Namens stolpert. Update wurde
+  zwar erfolgreich angewendet ("[OK] Update per ZIP abgeschlossen"),
+  aber der Cleanup-Fehler killte den Installer mit `$ErrorActionPreference
+  = "Stop"`.
+
+  Fix: Alle `*-Item -Path` mit User-TEMP-Pfaden auf `-LiteralPath`
+  umgestellt — das umgeht jede Pattern-Interpretation. Plus defensive
+  `Test-Path -LiteralPath`-Guards vor jedem Remove-Item, damit ein
+  noch nicht erstellter Temp-Pfad keinen zusaetzlichen Fehler wirft.
+  Betroffen: ZIP-Update-Pfad, Neuinstall-ZIP-Pfad, Neuinstall-git-clone-
+  Pfad, WSL-Kernel-MSI-Cleanup im WSL2-Bootstrap.
+
 ## [1.0.7] - 2026-04-14
 
 ### Fixed

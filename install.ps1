@@ -189,7 +189,9 @@ if (-not $wslReady) {
             $ProgressPreference = 'SilentlyContinue'
             Invoke-WebRequest -Uri $kernelUrl -OutFile $kernelMsi -UseBasicParsing
             Start-Process msiexec.exe -ArgumentList "/i", "`"$kernelMsi`"", "/quiet", "/norestart" -Wait -NoNewWindow
-            Remove-Item -Path $kernelMsi -Force -ErrorAction SilentlyContinue
+            if ($kernelMsi -and (Test-Path -LiteralPath $kernelMsi)) {
+                Remove-Item -LiteralPath $kernelMsi -Force -ErrorAction SilentlyContinue
+            }
             Write-Host "  [OK] WSL2-Kernel-Update installiert" -ForegroundColor Green
 
             & wsl.exe --set-default-version 2 2>&1 | Out-Null
@@ -505,31 +507,37 @@ if ($isInstalled) {
 
         if ($needsUpdate) {
             # Fallback: ZIP-Download
+            # WICHTIG: ueberall -LiteralPath statt -Path, weil $env:TEMP bei
+            # Usern mit Umlaut im Namen (z.B. "Schueler" → 8.3 "SCHLER~1")
+            # einen Tilde im Pfad enthaelt, und PS 5.1 Remove-Item das im
+            # -Path-Modus mit Wildcard-Glob-Resolution interpretiert. Resultat:
+            # "Ein Objekt im angegebenen Pfad ist nicht vorhanden" trotz
+            # existierender Datei. -LiteralPath umgeht jede Pattern-Interpretation.
             Write-Host "Lade neueste Version als ZIP..." -ForegroundColor Cyan
             $tempZip = Join-Path $env:TEMP "agentbox_update_$(Get-Random).zip"
             $tempExtract = Join-Path $env:TEMP "agentbox_extract_$(Get-Random)"
             try {
                 $ProgressPreference = 'SilentlyContinue'
                 Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
-                Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+                Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force
 
                 # ZIP enthaelt agentbox-main/ Unterordner
-                $extractedDir = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
+                $extractedDir = Get-ChildItem -LiteralPath $tempExtract -Directory | Select-Object -First 1
 
                 # Bestehende config.json sichern (User-Anpassungen)
                 $userConfig = $null
                 $existingConfigPath = Join-Path $controlDir "config.json"
-                if (Test-Path $existingConfigPath) {
-                    $userConfig = Get-Content -Path $existingConfigPath -Raw -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $existingConfigPath) {
+                    $userConfig = Get-Content -LiteralPath $existingConfigPath -Raw -ErrorAction SilentlyContinue
                 }
 
                 # Dateien aktualisieren (nicht _control loeschen — cache/ und sandbox/ bleiben)
-                Get-ChildItem -Path $extractedDir.FullName -Exclude "sandbox","cache" | ForEach-Object {
+                Get-ChildItem -LiteralPath $extractedDir.FullName -Exclude "sandbox","cache" | ForEach-Object {
                     $destPath = Join-Path $controlDir $_.Name
                     if ($_.PSIsContainer) {
-                        Copy-Item -Path $_.FullName -Destination $destPath -Recurse -Force
+                        Copy-Item -LiteralPath $_.FullName -Destination $destPath -Recurse -Force
                     } else {
-                        Copy-Item -Path $_.FullName -Destination $destPath -Force
+                        Copy-Item -LiteralPath $_.FullName -Destination $destPath -Force
                     }
                 }
 
@@ -543,8 +551,12 @@ if ($isInstalled) {
                 Write-Host "WARNUNG: ZIP-Update fehlgeschlagen, fahre mit bestehender Version fort." -ForegroundColor Yellow
                 Write-Host $_.Exception.Message -ForegroundColor Yellow
             } finally {
-                Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
-                Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+                if ($tempZip -and (Test-Path -LiteralPath $tempZip)) {
+                    Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
+                }
+                if ($tempExtract -and (Test-Path -LiteralPath $tempExtract)) {
+                    Remove-Item -LiteralPath $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }
@@ -560,19 +572,19 @@ if ($isInstalled) {
             & git.exe clone $repoUrl $tempClone 2>&1 | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "git clone fehlgeschlagen" }
 
-            Copy-Item -Path $tempClone -Destination $controlDir -Recurse -Force
+            Copy-Item -LiteralPath $tempClone -Destination $controlDir -Recurse -Force
             Write-Host "[OK] agentbox installiert nach: $controlDir" -ForegroundColor Green
         } catch {
             Write-Host "WARNUNG: git clone fehlgeschlagen, versuche ZIP-Fallback..." -ForegroundColor Yellow
             $hasGit = $false
         } finally {
-            if (Test-Path $tempClone) {
-                Remove-Item -Path $tempClone -Recurse -Force -ErrorAction SilentlyContinue
+            if ($tempClone -and (Test-Path -LiteralPath $tempClone)) {
+                Remove-Item -LiteralPath $tempClone -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
-    if (-not $hasGit -or -not (Test-Path $controlDir)) {
+    if (-not $hasGit -or -not (Test-Path -LiteralPath $controlDir)) {
         Write-Host "Lade agentbox als ZIP herunter..." -ForegroundColor Cyan
         $tempZip = Join-Path $env:TEMP "agentbox_install_$(Get-Random).zip"
         $tempExtract = Join-Path $env:TEMP "agentbox_extract_$(Get-Random)"
@@ -580,18 +592,22 @@ if ($isInstalled) {
         try {
             $ProgressPreference = 'SilentlyContinue'
             Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
-            Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force
+            Expand-Archive -LiteralPath $tempZip -DestinationPath $tempExtract -Force
 
-            $extractedDir = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
-            Copy-Item -Path $extractedDir.FullName -Destination $controlDir -Recurse -Force
+            $extractedDir = Get-ChildItem -LiteralPath $tempExtract -Directory | Select-Object -First 1
+            Copy-Item -LiteralPath $extractedDir.FullName -Destination $controlDir -Recurse -Force
             Write-Host "[OK] agentbox installiert nach: $controlDir" -ForegroundColor Green
         } catch {
             Write-Host "FEHLER: Download fehlgeschlagen." -ForegroundColor Red
             Write-Host $_.Exception.Message -ForegroundColor Red
             exit 1
         } finally {
-            Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+            if ($tempZip -and (Test-Path -LiteralPath $tempZip)) {
+                Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
+            }
+            if ($tempExtract -and (Test-Path -LiteralPath $tempExtract)) {
+                Remove-Item -LiteralPath $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 }
