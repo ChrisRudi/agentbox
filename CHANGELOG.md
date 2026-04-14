@@ -5,6 +5,40 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.10] - 2026-04-14
+
+### Fixed
+
+- **`wsl-ai-start.sh` startete nicht mit Umlaut-Usernamen.** Beim
+  ersten Start im agentbox-host crashte das Script mit
+  `FEHLER: %LOCALAPPDATA% nicht ermittelbar`. Ursache: Die Funktion
+  `_resolve_agentbox_local_root` rief `cmd.exe /c echo %LOCALAPPDATA%`
+  auf — und cmd.exe schreibt seinen Output in der OEM-Codepage
+  (cp850 in DE), nicht UTF-8. Bei einem User namens "Schueler" wird
+  das `ue` als single byte 0x81 ausgegeben, bash interpretiert das
+  als invalid UTF-8 lead byte, und `wslpath -u` bekommt einen
+  Garbage-Pfad.
+
+  Fix: Drei-stufige Aufloesung mit Fallbacks:
+  1. `powershell.exe` mit explizitem
+     `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` —
+     bevorzugte Methode, robust gegen Umlaute.
+  2. `cmd.exe` als Fallback fuer ASCII-Usernamen, wenn PowerShell
+     nicht verfuegbar ist.
+  3. **Filesystem-Glob auf `/mnt/c/Users/*/AppData/Local/agentbox/`**
+     als finaler Rettungsanker. Bash-globbing arbeitet direkt mit den
+     Filesystem-Bytes ohne Encoding-Roundtrip — funktioniert garantiert
+     bei jedem Username, solange `install.ps1` den Ordner schon angelegt
+     hat. Ueberspringt Public/Default/All-Users-System-Profile.
+
+  Bei Failure jetzt diagnostische Fehlermeldung mit den drei probierten
+  Methoden und Hinweisen zum Pruefen des WSL-Interops.
+- **Selber Bug auch in der Sandbox-Distro-Import-Phase
+  (`WIN_TEMP_BASE`).** `wsl-ai-start.sh:1222` rief ebenfalls
+  `cmd.exe /c echo %TEMP%` auf — beim selben Username waere der
+  Sandbox-Import an `wsl --import` mit korruptem Pfad gescheitert.
+  Gleicher PowerShell-zuerst-Cascade als Fix.
+
 ## [1.0.9] - 2026-04-14
 
 ### Fixed

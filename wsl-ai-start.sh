@@ -188,17 +188,74 @@ AGENTBOX_CONFIG="$CONTROL_DIR/config.json"
 # nicht in den OneDrive-synchronisierten CONTROL_DIR. Gleiche Regel wie
 # fuer ~/.claude/: lokal, user-privat, kein Cloud-Sync. Der Host-Distro-
 # Ordner liegt bereits dort (install.ps1 Import-AgentboxHostDistro).
+#
+# Die Aufloesung von %LOCALAPPDATA% ist tueckisch, wenn der Windows-User
+# einen Umlaut im Namen hat (z.B. "Schueler"):
+# - cmd.exe schreibt seinen Output in der OEM-Codepage (cp850 in DE, NICHT
+#   UTF-8). Der "ue" wird als single byte 0x81 ausgegeben, bash interpretiert
+#   das als invalid UTF-8 lead byte, und wslpath bekommt einen Garbage-Pfad.
+# - powershell.exe kann auf UTF-8 gezwungen werden — bevorzugte Methode.
+# - Als finaler Rettungsanker: glob-match auf /mnt/c/Users/*/AppData/Local/
+#   agentbox/. Der Ordner muss existieren, weil install.ps1 ihn beim Setup
+#   anlegt. Bash globbing nutzt direkt die Filesystem-Bytes, kein Encoding-
+#   Roundtrip noetig.
 _resolve_agentbox_local_root() {
-    local _w _l
+    local _w _l _candidate
+
+    # Methode 1: PowerShell mit explizitem UTF-8 Output. Robust gegen Umlaute.
+    if command -v powershell.exe >/dev/null 2>&1; then
+        _w=$(powershell.exe -NoProfile -NonInteractive -Command '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Write-Output $env:LOCALAPPDATA' 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
+        if [ -n "$_w" ]; then
+            _l=$(wslpath -u "$_w" 2>/dev/null || true)
+            if [ -n "$_l" ] && [ -d "$_l" ]; then
+                echo "$_l/agentbox"
+                return 0
+            fi
+        fi
+    fi
+
+    # Methode 2: cmd.exe als Fallback. Funktioniert bei ASCII-Usernamen, kann
+    # bei Umlauten failen wegen OEM-Codepage-Mismatch.
     _w=$(cmd.exe /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
-    [ -z "$_w" ] && return 1
-    _l=$(wslpath -u "$_w" 2>/dev/null || true)
-    { [ -z "$_l" ] || [ ! -d "$_l" ]; } && return 1
-    echo "$_l/agentbox"
+    if [ -n "$_w" ]; then
+        _l=$(wslpath -u "$_w" 2>/dev/null || true)
+        if [ -n "$_l" ] && [ -d "$_l" ]; then
+            echo "$_l/agentbox"
+            return 0
+        fi
+    fi
+
+    # Methode 3: Filesystem-Glob auf /mnt/c/Users/*/AppData/Local/agentbox/.
+    # Funktioniert auch mit Umlauten, weil bash-globbing direkt mit den
+    # Filesystem-Bytes arbeitet und keinen Windows-CLI-Roundtrip macht. Gilt
+    # nur, wenn install.ps1 das agentbox-Verzeichnis bereits angelegt hat.
+    # Public/Default/All-Users-Profile ueberspringen — das sind Windows-
+    # System-Profile, kein echter User.
+    for _candidate in /mnt/c/Users/*/AppData/Local/agentbox; do
+        case "$_candidate" in
+            */Public/*) continue ;;
+            */Default/*) continue ;;
+            */Default\ User/*) continue ;;
+            */All\ Users/*) continue ;;
+        esac
+        if [ -d "$_candidate" ]; then
+            echo "$_candidate"
+            return 0
+        fi
+    done
+
+    return 1
 }
 AGENTBOX_LOCAL_ROOT=$(_resolve_agentbox_local_root || echo "")
 if [ -z "$AGENTBOX_LOCAL_ROOT" ]; then
-    echo "FEHLER: %LOCALAPPDATA% nicht ermittelbar — Runtime-State nicht lokalisierbar."
+    echo "FEHLER: %LOCALAPPDATA% nicht ermittelbar — Runtime-State nicht lokalisierbar." >&2
+    echo "        Versucht wurden:" >&2
+    echo "          1) powershell.exe (UTF-8)" >&2
+    echo "          2) cmd.exe (OEM-Codepage)" >&2
+    echo "          3) glob /mnt/c/Users/*/AppData/Local/agentbox/" >&2
+    echo "        Pruefe, ob Windows-Interop in agentbox-host aktiv ist:" >&2
+    echo "          ls /mnt/c   # sollte den Windows-C-Drive zeigen" >&2
+    echo "          which powershell.exe cmd.exe" >&2
     exit 1
 fi
 # Root selbst anlegen; die Unter-Ordner NICHT vorab — sonst schlaegt die
@@ -1169,10 +1226,19 @@ log_info "Importiere Sandbox-Distro..."
 WIN_PROJECT_DIR=$(wslpath -w "$PROJECT_DIR" 2>/dev/null || echo "$PROJECT_DIR")
 WIN_TEMPLATE=$(wslpath -w "$TEMPLATE_PATH" 2>/dev/null || echo "$TEMPLATE_PATH")
 
-# Windows-Temp-Verzeichnis via cmd.exe ermitteln (USERNAME in WSL != Windows)
-WIN_TEMP_BASE=$(cmd.exe /c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' | tr -d '\000')
+# Windows-Temp-Verzeichnis ermitteln (USERNAME in WSL != Windows).
+# Mehrstufig wie _resolve_agentbox_local_root: PowerShell zuerst (UTF-8-faehig,
+# robust gegen Umlaut-Usernamen), cmd.exe als Fallback (kann an OEM-Codepage
+# scheitern, wenn der Username einen Umlaut enthaelt), und am Ende /tmp.
+WIN_TEMP_BASE=""
+if command -v powershell.exe >/dev/null 2>&1; then
+    WIN_TEMP_BASE=$(powershell.exe -NoProfile -NonInteractive -Command '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Write-Output $env:TEMP' 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
+fi
 if [ -z "$WIN_TEMP_BASE" ]; then
-    # Fallback: WSL-Pfad via wslpath konvertieren
+    WIN_TEMP_BASE=$(cmd.exe /c "echo %TEMP%" 2>/dev/null | tr -d '\r\n' | tr -d '\000' || true)
+fi
+if [ -z "$WIN_TEMP_BASE" ]; then
+    # Letzter Fallback: WSL-Pfad via wslpath konvertieren
     WIN_TEMP_BASE=$(wslpath -w /tmp 2>/dev/null || echo "C:\\Temp")
 fi
 WIN_TEMP_DIR="${WIN_TEMP_BASE}\\agentbox\\${PROJECT_NAME}"
