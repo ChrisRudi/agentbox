@@ -5,6 +5,65 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.13] - 2026-04-15
+
+### Fixed
+
+- **`wsl --status`-Endlosschleife im Installer (Issue #32).** Ein User
+  hatte WSL- und VM-Features korrekt aktiviert, der Kernel-Update-MSI
+  war installiert, der Reboot war durchgelaufen — und `install.ps1`
+  forderte trotzdem stur "Neustart erforderlich!" und schickte ihn
+  immer wieder im Kreis.
+
+  User-Report (Issue #32):
+  ```
+  WSL2 ist nicht installiert — richte es automatisch ein...
+  Versuche: wsl --install --no-distribution ...
+  Fallback: Aktiviere WSL- und VM-Features manuell...
+    [OK] Windows Subsystem for Linux bereits aktiv
+    [OK] Virtual Machine Platform bereits aktiv
+    Lade WSL2-Kernel-Update herunter...
+    [OK] WSL2-Kernel-Update installiert
+  ========================================
+   Neustart erforderlich!
+  ========================================
+  ```
+
+  Diagnose vom User selbst im Issue-Kommentar: *"wsl -xxx geht nur in
+  der CMD nicht in PS :-)"*. Es ist tatsaechlich ein bekanntes Quirk-
+  Bundle: `wsl.exe --status` (und `wsl --install`) liefern aus PS 5.1
+  heraus regelmaessig `$LASTEXITCODE != 0`, obwohl derselbe Aufruf in
+  cmd.exe sauber durchlaeuft. 1.0.7/1.0.11 hatten das ueber
+  `Invoke-Native` nur halb abgefangen — der NativeCommandError bei
+  stderr-Output war damit weg, der falsche Exit-Code aber nicht.
+  Ursachenmix: UTF-16LE-Output von Inbox-WSL, Argument-Weiterreichung
+  in PS, Console-Handle-Detection in wsl.exe.
+
+  Folge im Code: bei Issue #32 lief der Installer in
+  - `wsl --status` (Initial-Probe, Zeile 175) → faelschlich != 0
+  - `wsl --install --no-distribution` (Methode 1) → faelschlich != 0
+    → unnoetiger Sprung in den manuellen Fallback
+  - `wsl --status` (Reboot-Detection, Zeile 239) → faelschlich != 0
+    → `$needsReboot = $true` → "Neustart erforderlich"-Endlosschleife
+
+  Fix: neuer Helper `Invoke-WslExitCode` in `install.ps1`, der
+  `wsl ...`-Probes durch `cmd.exe /c "wsl ... >NUL 2>&1"` routet und
+  nur den Exit-Code zurueckgibt. cmd.exe isoliert PS vollstaendig von
+  den wsl.exe-Quirks: kein NativeCommandError, kein UTF-16LE-Decoding,
+  korrekte Argument-Weiterreichung. Output wird verworfen — wir
+  brauchen nur den Exit-Code, und das Decoding waere unter Inbox-WSL
+  ohnehin unzuverlaessig.
+
+  Drei Callsites in `install.ps1` umgebogen:
+  - Initial-Probe `wsl --status` vor dem Install-Block
+  - `wsl --install --no-distribution` (Methode 1)
+  - Post-Fallback `wsl --status` fuer die Reboot-Detection
+
+  Die nachgelagerten Checks (`vmcompute`-Service-Status, CBS Pending-
+  Reboot-Flag) bleiben unveraendert — die haben den Fall sowieso schon
+  korrekt erkannt, sind durch die falsche `wsl --status`-Vorpruefung
+  nur nie erreicht worden.
+
 ## [1.0.12] - 2026-04-14
 
 ### Fixed

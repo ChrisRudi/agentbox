@@ -37,6 +37,23 @@ function Invoke-Native {
     }
 }
 
+# --- Helper: wsl.exe ueber cmd.exe aufrufen (PS-5.1-Quirk-Bypass) ---
+# Hintergrund (Issue #32): manche `wsl --xxx`-Aufrufe liefern unter PowerShell
+# einen nicht-null Exit-Code, obwohl derselbe Aufruf in cmd.exe sauber
+# durchlaeuft. Ursache ist ein Mix aus UTF-16LE-Output von Inbox-WSL,
+# NativeCommandError unter $ErrorActionPreference='Stop' und PS-Argument-
+# Weiterreichung. Symptom war die "Neustart erforderlich"-Endlosschleife im
+# install.ps1, weil `wsl --status` aus PS heraus konstant != 0 zurueckgab,
+# obwohl WSL nach dem Reboot bereits einsatzbereit war. Wir routen die
+# Probe deshalb durch `cmd.exe /c`, das die Quirks vollstaendig isoliert.
+# Output wird verworfen — der Caller braucht nur den Exit-Code, und das
+# Decoding waere unter Inbox-WSL ohnehin unzuverlaessig.
+function Invoke-WslExitCode {
+    param([Parameter(Mandatory)][string]$WslArgs)
+    & cmd.exe /c "wsl $WslArgs >NUL 2>&1"
+    return $LASTEXITCODE
+}
+
 # --- Pure-PS Windows → WSL Pfad-Konvertierung ---
 # Ersatz fuer `wsl.exe wslpath -u`. Laeuft OHNE laufende Default-Distro,
 # was wichtig ist: nach dem Template-Build hat agentbox die
@@ -170,11 +187,10 @@ if ($osBuild -lt 19041) {
 Write-Host "[OK] $osName (Build $osBuild)" -ForegroundColor Green
 
 # --- WSL2 pruefen und bei Bedarf installieren ---
-$wslReady = $false
-try {
-    $wslOutput = & wsl.exe --status 2>&1
-    if ($LASTEXITCODE -eq 0) { $wslReady = $true }
-} catch { }
+# Probe ueber cmd.exe (Invoke-WslExitCode), nicht direkt ueber `& wsl.exe`:
+# unter PS 5.1 kann `wsl --status` aus mehreren Gruenden faelschlich != 0
+# liefern (Issue #32) — ein cmd.exe-Wrapper isoliert das.
+$wslReady = ((Invoke-WslExitCode "--status") -eq 0)
 
 if (-not $wslReady) {
     Write-Host ""
@@ -182,11 +198,12 @@ if (-not $wslReady) {
 
     if ($osBuild -ge 19041) {
         # Methode 1: wsl --install (funktioniert ab Win10 2004 mit neueren Updates + Win11)
-        # Invoke-Native, weil wsl --install Status auf stderr schreibt — sonst
-        # crasht der Installer am NativeCommandError unter Stop-Mode.
+        # Wir routen ueber cmd.exe (Invoke-WslExitCode), weil `wsl --install`
+        # aus PS 5.1 heraus regelmaessig einen falschen Exit-Code liefert
+        # (Issue #32) — Folge waere ein unnoetiger Sprung in den manuellen
+        # Fallback. Status-Meldungen landen im NUL-Sink des Wrappers.
         Write-Host "Versuche: wsl --install --no-distribution ..." -ForegroundColor Cyan
-        $installResult = Invoke-Native { & wsl.exe --install --no-distribution 2>&1 }
-        $installSuccess = ($LASTEXITCODE -eq 0)
+        $installSuccess = ((Invoke-WslExitCode "--install --no-distribution") -eq 0)
 
         if (-not $installSuccess) {
             # Methode 2: Features manuell aktivieren (aeltere Win10 Builds)
@@ -233,12 +250,11 @@ if (-not $wslReady) {
         # Feature aktiviert, der Dienst startet aber erst nach einem Reboot.
         # Ohne diesen Dienst schlaegt spaeter `wsl --import` mit
         # HCS_E_SERVICE_NOT_AVAILABLE fehl. Daher hier explizit pruefen.
+        # Wichtig: `wsl --status` ueber cmd.exe-Wrapper, nicht direkt — Issue
+        # #32 zeigt, dass die Direktvariante in PS 5.1 hier eine Endlosschleife
+        # ("Neustart erforderlich" trotz bereits gebooteter Maschine) ausloest.
         $needsReboot = $false
-
-        try {
-            $wslCheck = & wsl.exe --status 2>&1
-            if ($LASTEXITCODE -ne 0) { $needsReboot = $true }
-        } catch { $needsReboot = $true }
+        if ((Invoke-WslExitCode "--status") -ne 0) { $needsReboot = $true }
 
         if (-not $needsReboot) {
             $vmcompute = Get-Service -Name vmcompute -ErrorAction SilentlyContinue
