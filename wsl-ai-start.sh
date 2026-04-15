@@ -308,6 +308,20 @@ mkdir -p "$AGENTBOX_LOCAL_ROOT/sandbox" "$AGENTBOX_LOCAL_ROOT/cache/npm" \
          "$AGENTBOX_LOCAL_ROOT/cache/pip" "$AGENTBOX_LOCAL_ROOT/sessions" \
          "$AGENTBOX_LOCAL_ROOT/auth" 2>/dev/null || true
 
+# Einmaliges Cleanup alter Desktop-Shortcut-Namen (1.0.17 hat auf EINEN
+# gemeinsamen `agentbox`-Shortcut konsolidiert — die separaten Installer/
+# Update-Shortcuts sind damit obsolet). Via powershell.exe-Interop statt
+# /mnt/c/Users/..., weil cmd.exe bzw. /mnt/c-Pfade bei Umlaut-Usernamen
+# stolpern. Marker-Datei verhindert, dass der Check bei jedem Start
+# laeuft — nur einmal pro Rechner, dann nie wieder.
+_legacy_shortcut_marker="$AGENTBOX_LOCAL_ROOT/.legacy-shortcut-cleaned"
+if [ ! -f "$_legacy_shortcut_marker" ] && command -v powershell.exe &> /dev/null; then
+    powershell.exe -NoProfile -Command \
+        "\$d=[Environment]::GetFolderPath('Desktop'); foreach(\$n in 'agentbox-installer.lnk','agentbox-update.lnk'){\$p=Join-Path \$d \$n; if(Test-Path -LiteralPath \$p){Remove-Item -LiteralPath \$p -Force -ErrorAction SilentlyContinue}}" \
+        2>/dev/null || true
+    touch "$_legacy_shortcut_marker" 2>/dev/null || true
+fi
+
 # Farben
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -407,6 +421,22 @@ if [ "$_auto_update" = "true" ]; then
             _remote_version=$(wget -qO- --timeout=5 "$_version_url" 2>/dev/null | tr -d '[:space:]')
         fi
 
+        # Update-Class (minor|major) remote pruefen — bestimmt, ob der Pull
+        # silent durchlaeuft oder ob der User zum Installer-Rerun mit UAC
+        # geroutet werden muss. Default bei fehlender Datei: "minor", damit
+        # Upgrades von Pre-1.0.17-Versionen ohne Reibung durchlaufen.
+        _remote_update_class="minor"
+        _class_url="https://raw.githubusercontent.com/ChrisRudi/agentbox/main/.update_class"
+        _class_raw=""
+        if command -v curl &> /dev/null; then
+            _class_raw=$(curl -fsSL --connect-timeout 5 --max-time 5 "$_class_url" 2>/dev/null | tr -d '[:space:]' || echo "")
+        elif command -v wget &> /dev/null; then
+            _class_raw=$(wget -qO- --timeout=5 "$_class_url" 2>/dev/null | tr -d '[:space:]' || echo "")
+        fi
+        if [ "$_class_raw" = "major" ] || [ "$_class_raw" = "minor" ]; then
+            _remote_update_class="$_class_raw"
+        fi
+
         date +%s > "$_last_check_file"
 
         # Nur updaten wenn remote tatsaechlich neuer ist (sort -V = Version-
@@ -417,6 +447,46 @@ if [ "$_auto_update" = "true" ]; then
             if [ "$_newer" = "$_remote_version" ]; then
                 _need_update=true
             fi
+        fi
+        if [ "$_need_update" = true ] && [ "$_remote_update_class" = "major" ]; then
+            # MAJOR-Update: Installer-Rerun mit Admin noetig. In-Place-Pull
+            # wuerde nur die Scripts aktualisieren, aber die Windows-seitigen
+            # Aenderungen (Features, Kernel, Template-Rebuild-Struktur)
+            # nicht auftragen. Also: prompt → elevated PS spawn → exit.
+            echo ""
+            echo -e "${CYAN}[UPDATE]${NC} Neue agentbox-Version verfuegbar! ($YELLOW$_local_version${NC} → ${GREEN}$_remote_version${NC}) ${YELLOW}[MAJOR]${NC}"
+            echo "         Dieses Update braucht ein einmaliges Admin-Setup (UAC-Prompt)."
+            echo ""
+            echo "           [1] Jetzt aktualisieren (oeffnet elevated Installer)"
+            echo "           [2] Diesmal skippen (agentbox startet mit aktueller Version)"
+            echo ""
+            echo -n "         Auswahl [1]: "
+            _major_choice=1
+            if read -r -t 10 _major_answer; then
+                case "$_major_answer" in
+                    2) _major_choice=2 ;;
+                    *) _major_choice=1 ;;
+                esac
+            else
+                echo ""
+            fi
+
+            if [ "$_major_choice" = "1" ]; then
+                echo -e "         ${CYAN}Spawne elevated Installer — bitte den UAC-Prompt bestaetigen...${NC}"
+                # Via WSL-Interop einen externen PS-Prozess starten, der per
+                # -Verb RunAs eine neue, elevated PS mit install.ps1 hochzieht.
+                # Wir koennen die aktuelle WSL-Session nicht in-place eleven;
+                # der Umweg ueber powershell.exe ist der einzige saubere Pfad.
+                powershell.exe -NoProfile -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command','irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex'" 2>/dev/null || true
+                echo ""
+                echo "         Nach Abschluss des Installers bitte agentbox erneut starten."
+                exit 0
+            else
+                echo "         Update uebersprungen — beim naechsten Start (> 24h) wieder."
+            fi
+            # Flag, damit der unten folgende minor-Block nicht auch noch
+            # aktiv wird.
+            _need_update=false
         fi
         if [ "$_need_update" = true ]; then
             echo ""

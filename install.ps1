@@ -985,68 +985,105 @@ swap=$resSwap
     }
 }
 
+# --- Windows Terminal sicherstellen ---
+# Hintergrund: Wenn der Agent-Shortcut auf `wsl.exe` direkt zeigt, landet
+# er im system-weiten Terminal-Handler. Auf Win11 ist das wt.exe (gut),
+# auf Win10 ohne installiertes Windows Terminal ist das der alte
+# ConsoleHost — dort kommen Fullscreen-UI + UTF-8 + ANSI aus Claude Code
+# nur halb durch (Encoding-Glitches, kaputte Box-Drawing-Chars). Deshalb
+# verweisen wir den Shortcut auf wt.exe direkt und stellen sicher, dass
+# wt.exe da ist — wenn nicht, via winget installieren.
+$hasWt = $false
+if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
+    $hasWt = $true
+} elseif (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+    Write-Host ""
+    Write-Host "Windows Terminal fehlt — installiere via winget..." -ForegroundColor Cyan
+    Invoke-Native {
+        & winget.exe install --id Microsoft.WindowsTerminal --exact `
+            --accept-source-agreements --accept-package-agreements `
+            --silent 2>&1 | ForEach-Object { "$_" }
+    }
+    # Nach dem winget-Run ggf. erneut suchen — wt.exe kommt erst nach
+    # Path-Refresh auf manchen Systemen, also auch direkte Standardpfade pruefen.
+    if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
+        $hasWt = $true
+    } else {
+        $wtProbe = "$env:LOCALAPPDATA\Microsoft\WindowsApps\wt.exe"
+        if (Test-Path -LiteralPath $wtProbe) { $hasWt = $true }
+    }
+    if ($hasWt) {
+        Write-Host "[OK] Windows Terminal installiert" -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Windows Terminal konnte nicht installiert werden — Shortcut fallt zurueck auf wsl.exe direkt." -ForegroundColor Yellow
+        Write-Host "       Im alten ConsoleHost koennen Claude-Code-UI-Zeichen glitchy aussehen." -ForegroundColor Gray
+    }
+} else {
+    Write-Host ""
+    Write-Host "[WARN] winget nicht gefunden — Windows Terminal wird nicht automatisch installiert." -ForegroundColor Yellow
+    Write-Host "       Shortcut fallt zurueck auf wsl.exe direkt (UI-Glitches moeglich im alten ConsoleHost)." -ForegroundColor Gray
+    Write-Host "       Empfehlung: Windows Terminal aus dem Microsoft Store installieren." -ForegroundColor Gray
+}
+
 # --- Desktop-Shortcuts erstellen ---
 # Hier sind wir nur, wenn $setupOk = $true (frueher Abbruch oben).
 Write-Host ""
-Write-Host "Erstelle Desktop-Shortcuts..." -ForegroundColor Cyan
+Write-Host "Erstelle Desktop-Shortcut..." -ForegroundColor Cyan
 
 $desktopPath = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktopPath "agentbox.lnk"
-$updateShortcutPath = Join-Path $desktopPath "agentbox-update.lnk"
 
-# Alter Shortcut-Name aus <= 1.0.15 aufraeumen, damit User nach einem Update
-# nicht zwei Eintraege ("agentbox-installer" + "agentbox-update") auf dem
-# Desktop haben. Fehler beim Loeschen ignorieren — Datei kann vom User
-# geloescht oder in Gebrauch sein.
-$legacyUpdatePath = Join-Path $desktopPath "agentbox-installer.lnk"
-if (Test-Path -LiteralPath $legacyUpdatePath) {
-    try { [System.IO.File]::Delete($legacyUpdatePath) } catch { }
-}
-
-# Helper: setzt das "Run as administrator"-Flag in einer .lnk-Datei.
-# Offset 0x15 ist das Link-Flags-Byte, Bit 0x20 = RunAsAdministrator.
-# (Quelle: [MS-SHLLINK] Shell Link Binary File Format, LinkFlags)
-function Set-ShortcutRunAsAdmin {
-    param([Parameter(Mandatory)][string]$Path)
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    $bytes[0x15] = $bytes[0x15] -bor 0x20
-    [System.IO.File]::WriteAllBytes($Path, $bytes)
+# Legacy-Cleanup: alte Update-Shortcut-Namen aufraeumen. Seit 1.0.17 gibt
+# es nur noch EINEN Shortcut (`agentbox`) — Updates erkennt und triggert
+# `wsl-ai-start.sh` selbst, der Installer-Rerun via separatem Icon ist
+# entfallen. Zwei Alt-Namen koennen herumliegen:
+#   - agentbox-installer.lnk  (bis 1.0.15)
+#   - agentbox-update.lnk     (1.0.16)
+foreach ($legacyName in @("agentbox-installer.lnk", "agentbox-update.lnk")) {
+    $legacyPath = Join-Path $desktopPath $legacyName
+    if (Test-Path -LiteralPath $legacyPath) {
+        try { [System.IO.File]::Delete($legacyPath) } catch { }
+    }
 }
 
 try {
     $shell = New-Object -ComObject WScript.Shell
 
-    # 1) Agentbox-Start-Shortcut (laeuft im Normal-User-Kontext, kein UAC).
+    # Einziger Desktop-Shortcut seit 1.0.17. Updates laeuft `wsl-ai-start.sh`
+    # selbst an (minor silent per git pull, major via elevated PS-Spawn) —
+    # der separate "agentbox-update"-Shortcut ist entfallen.
+    #
+    # Target-Strategie:
+    #   wt.exe vorhanden   → `wt.exe --title agentbox wsl.exe -d agentbox-host …`
+    #                        → sauberer UTF-8/ANSI/Alt-Screen-Host, kein Encoding-
+    #                          Glitch bei Claude-Code-UI
+    #   wt.exe NICHT da    → Fallback `wsl.exe -d agentbox-host …` direkt
+    #                        → landet im system-weiten Terminal-Handler, kann
+    #                          im alten ConsoleHost glitchy wirken
+    #
     # `-d agentbox-host` ist hier KRITISCH: ohne explizite Distro greift wsl.exe
     # die Default-Distro, und wenn der User docker-desktop hat, landet der Klick
-    # in der docker-VM und nicht in der agentbox-Distro. Mit -d zeigt der
-    # Shortcut immer in unsere eigene Distro.
+    # in der docker-VM und nicht in der agentbox-Distro.
     $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = "wsl.exe"
-    $shortcut.Arguments = "-d agentbox-host -e bash -li -c agentbox"
+    if ($hasWt) {
+        $shortcut.TargetPath = "wt.exe"
+        $shortcut.Arguments = "--title agentbox wsl.exe -d agentbox-host -e bash -li -c agentbox"
+    } else {
+        $shortcut.TargetPath = "wsl.exe"
+        $shortcut.Arguments = "-d agentbox-host -e bash -li -c agentbox"
+    }
     $shortcut.WorkingDirectory = "%USERPROFILE%"
     $shortcut.Description = "agentbox — Portable Sandboxed AI Agent Runner"
     $shortcut.IconLocation = "wsl.exe,0"
     $shortcut.Save()
     Write-Host "[OK] Desktop-Shortcut erstellt: $shortcutPath" -ForegroundColor Green
-
-    # 2) Update-Shortcut: 'irm ... | iex' als Admin (UAC-Prompt).
-    # Verwendung: Doppelklick → UAC → PS laedt frische install.ps1 von GitHub
-    # und fuehrt sie aus (idempotent, macht Update wenn schon installiert).
-    $updater = $shell.CreateShortcut($updateShortcutPath)
-    $updater.TargetPath = "powershell.exe"
-    $updater.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex`""
-    $updater.WorkingDirectory = "%USERPROFILE%"
-    $updater.Description = "agentbox aktualisieren (als Administrator)"
-    $updater.IconLocation = "powershell.exe,0"
-    $updater.Save()
-    Set-ShortcutRunAsAdmin -Path $updateShortcutPath
-    Write-Host "[OK] Update-Shortcut erstellt: $updateShortcutPath" -ForegroundColor Green
-    Write-Host "     (Doppelklick fuer Update/Neuinstall — UAC-Prompt)" -ForegroundColor Gray
+    if (-not $hasWt) {
+        Write-Host "     (Fallback auf wsl.exe direkt — Windows Terminal fehlt)" -ForegroundColor Gray
+    }
 
     [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
 } catch {
-    Write-Host "WARNUNG: Desktop-Shortcuts konnten nicht erstellt werden." -ForegroundColor Yellow
+    Write-Host "WARNUNG: Desktop-Shortcut konnte nicht erstellt werden." -ForegroundColor Yellow
     Write-Host $_.Exception.Message -ForegroundColor Yellow
 }
 
@@ -1078,12 +1115,32 @@ Write-Host ""
 
 if ($startNow) {
     Write-Host ""
-    Write-Host "Starte agentbox in WSL..." -ForegroundColor Green
-    Write-Host ""
-    # Invoke-Native, weil agentbox / wsl-ai-start.sh stderr schreiben kann
-    # (Logs, Warnungen, Trap-Output) — sonst wuerde der Installer am Ende mit
-    # NativeCommandError raus statt mit einem sauberen Exit.
-    Invoke-Native { & wsl.exe -d agentbox-host -e bash -li -c "agentbox" }
+    if ($hasWt) {
+        # Seit 1.0.17: agentbox in einem frischen wt.exe-Fenster starten,
+        # damit der Fullscreen-UI-Host (UTF-8 + ANSI + Alt-Screen) sauber
+        # greift. Der Installer beendet sich gleich danach; beide Fenster
+        # sind entkoppelt. Das loest das Encoding-Glitches-Problem, das
+        # der in-place-Start im alten ConsoleHost hatte.
+        Write-Host "Starte agentbox in einem neuen Windows-Terminal-Fenster..." -ForegroundColor Green
+        Write-Host ""
+        try {
+            Start-Process -FilePath "wt.exe" -ArgumentList @(
+                "--title", "agentbox",
+                "wsl.exe", "-d", "agentbox-host", "-e", "bash", "-li", "-c", "agentbox"
+            )
+        } catch {
+            Write-Host "WARNUNG: Konnte wt.exe nicht starten — fallback auf wsl.exe direkt." -ForegroundColor Yellow
+            Invoke-Native { & wsl.exe -d agentbox-host -e bash -li -c "agentbox" }
+        }
+    } else {
+        Write-Host "Starte agentbox in WSL..." -ForegroundColor Green
+        Write-Host ""
+        # Fallback ohne Windows Terminal: in-place im aktuellen PS-Host.
+        # Invoke-Native, weil agentbox / wsl-ai-start.sh stderr schreiben kann
+        # (Logs, Warnungen, Trap-Output) — sonst wuerde der Installer am Ende mit
+        # NativeCommandError raus statt mit einem sauberen Exit.
+        Invoke-Native { & wsl.exe -d agentbox-host -e bash -li -c "agentbox" }
+    }
 } else {
     Write-Host "OK — manuell starten via Desktop-Shortcut oder 'wsl -d agentbox-host' + 'agentbox'." -ForegroundColor Gray
 }

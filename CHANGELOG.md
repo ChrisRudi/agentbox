@@ -5,6 +5,91 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.17] - 2026-04-15
+
+### Changed
+
+- **Ein einziger Desktop-Shortcut statt zwei.** Der separate
+  `agentbox-update`-Shortcut (in 1.0.16 aus `agentbox-installer`
+  umbenannt) ist entfallen. Begruendung: die Auto-Update-Logik in
+  `wsl-ai-start.sh` kann 99% der Faelle (Script/Template/Agent-
+  Updates) ohne Admin in-place erledigen — der UAC-geladene Installer-
+  Rerun war damit fast immer Overkill fuer "alles schon aktuell". Ein
+  Icon, ein Klick, der Rest passiert von selbst. `install.ps1` raeumt
+  beide Legacy-Shortcut-Namen (`agentbox-installer.lnk` +
+  `agentbox-update.lnk`) auf dem Desktop weg, und ein einmaliger
+  Cleanup-Block in `wsl-ai-start.sh` macht dasselbe beim ersten Start
+  nach dem Update (fuer User, die `install.ps1` nicht mehr laufen
+  lassen, weil es jetzt nicht mehr noetig ist).
+
+- **Auto-Update mit Minor/Major-Klassifizierung (`.update_class`).** Der
+  Auto-Update-Flow in `wsl-ai-start.sh` liest jetzt eine neue Datei
+  `.update_class` vom Repo-Root (parallel zu `.version`) und entscheidet
+  damit:
+  - **minor** (Default): wie bisher, silent git pull in `_control/`,
+    kein User-Prompt, kein UAC, kein Admin. Alle Script-/Template-/
+    Config-/CHANGELOG-Aenderungen laufen ueber diesen Pfad.
+  - **major**: neuer [1]/[2]-Prompt, 10s-Timeout-Default auf [1]. Bei
+    [1] wird aus dem WSL heraus via `powershell.exe -Command
+    "Start-Process powershell.exe -Verb RunAs …"` ein elevated PS
+    gespawnt, der die frische `install.ps1` laedt und ausfuehrt
+    (gleicher Pfad wie das alte `agentbox-update`-Icon, nur halt
+    bedarfsgerecht und nur wenn tatsaechlich noetig). Die aktuelle
+    agentbox-Session beendet sich, User startet nach Installer-
+    Abschluss erneut.
+  - Bei fehlendem `.update_class` auf Remote: Default `minor`. Damit
+    laufen Upgrades von Pre-1.0.17-Versionen ohne Reibung durch —
+    die alte Version kennt das Flag nicht, die neue wsl-ai-start.sh
+    nach dem Pull setzt die Regeln fuer kommende Updates.
+  - CLAUDE.md-Eintrag als Projekt-Memory: **bei jedem Release muss
+    `.update_class` bewusst gesetzt werden**. Faustregel: nur `.sh`/
+    `.ps1`/`lib/`/`config.json`/Docs → minor; sobald `install.ps1` im
+    Erst-Install-Pfad (Features, Kernel, Template-Struktur) geaendert
+    wird → major.
+
+- **Windows Terminal (`wt.exe`) wird Standard-Host fuer die Agent-UI.**
+  Motivation: wenn man `irm … | iex` ausfuehrt und der Installer am
+  Ende in-place den Agent via `wsl.exe -d agentbox-host …` startet,
+  landet die Claude-Code-Fullscreen-UI im Terminal-Host der aktuellen
+  PowerShell-Session. Auf alten Win10-Systemen mit ConsoleHost, in
+  ISE, oder bei ungluecklichen Encoding-Konfigurationen kam es dort zu
+  UTF-8-/ANSI-/Alt-Screen-Glitches (kaputte Box-Drawing-Chars, Farben
+  klebten fest, Umlaut-Mojibake).
+  - `install.ps1` prueft beim Erst-Install, ob `wt.exe` da ist. Wenn
+    nicht: via `winget install --id Microsoft.WindowsTerminal --silent
+    …` installieren. Fallback bei fehlendem winget: Warnung + der
+    alte direkt-`wsl.exe`-Pfad.
+  - Desktop-Shortcut `agentbox.lnk` zeigt jetzt primaer auf
+    `wt.exe --title agentbox wsl.exe -d agentbox-host -e bash -li -c
+    agentbox`. Fallback bei fehlendem `wt.exe`: wie bisher direkt auf
+    `wsl.exe`.
+  - `install.ps1` End-of-Install-Autostart lauft jetzt via
+    `Start-Process wt.exe …` in einem frischen Fenster. Der Installer
+    beendet sich sauber, die agentbox-Session laeuft komplett
+    entkoppelt in ihrem eigenen wt-Fenster. Kein Kontext-Leak mehr,
+    keine Encoding-Ueberraschungen.
+  - Die `-Verb RunAs`-Fallback-Helper-Function `Set-ShortcutRunAsAdmin`
+    ist aus `install.ps1` entfallen, weil sie nur fuer den alten
+    Update-Shortcut gebraucht wurde (der war admin-markiert, der
+    Start-Shortcut nie).
+
+### User-facing Flow
+
+**Tag 1 (Erst-Install auf neuer Maschine):**
+1. `irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex` in Admin-PowerShell
+2. Installer laeuft: WSL-Check, evtl. `winget install Microsoft.WindowsTerminal`, Template-Build, Host-Distro-Import, EIN Desktop-Icon (`agentbox`)
+3. Am Ende: neues Windows-Terminal-Fenster oeffnet sich automatisch, agentbox laeuft an, Projekt-Auswahl
+
+**Alltag:**
+1. Doppelklick auf `agentbox`-Icon
+2. wt.exe oeffnet, wsl-ai-start.sh laeuft, Auto-Update-Check (24h-gated, ~1-2s wenn faellig, sonst null)
+3. Projekt-Auswahl, Agent startet
+
+**Seltenes Major-Update:**
+1. Beim Start: "Neue Version 1.x.y verfuegbar [MAJOR]. [1] Jetzt aktualisieren [2] Skippen"
+2. [1] → Elevated PS wird gespawnt, UAC-Prompt, Installer laeuft, User startet agentbox neu
+3. Ab da wieder normaler Alltag
+
 ## [1.0.16] - 2026-04-15
 
 ### Changed
