@@ -5,6 +5,65 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.19] - 2026-04-15
+
+### Fixed
+
+- **KRITISCH: Jede Sandbox-Session kracht in Parent-Trap, sobald der
+  Claude-Update-Run ins Timeout laeuft (User-Report JUC 1.0.18).** Die
+  1.0.18-Verbesserungen am `_run_agent_update`-Block hatten den
+  Heartbeat und Timeout-Kill korrekt, aber ich habe `set -euo pipefail`
+  am Script-Anfang uebersehen. `timeout -k 10 180` liefert rc=137
+  (SIGKILL), `set -e` triggert sofort, Script exit, und der
+  Parent-Cleanup-Trap in `wsl-ai-start.sh` unregistriert die Sandbox-
+  Distro — die Session ist weg, die `_update_rc=$?`-Zeile, die
+  WARN-Behandlung, und alles danach wird nie erreicht. Effekt auf JUCs
+  Rechner: jede Session hing 180s in "Pruefe claude auf Updates", kam
+  dann mit "Killed", die Distro wurde unregistered, agentbox fiel in
+  die Projekt-Auswahl zurueck, naechste Runde, gleicher Hang — keine
+  Moeglichkeit zu agentbox durchzukommen.
+
+  Fix: klassisches `set -e`-Workaround-Pattern — das `timeout …`-
+  Kommando mit `|| _update_rc=$?` abschliessen. Der gesamte Ausdruck
+  ist dann ein "erfolgreicher" Compound-Command (egal ob die LHS
+  fehlschlaegt), `set -e` greift nicht mehr, und `$_update_rc` traegt
+  den echten Exit-Code fuer die nachfolgende Fallunterscheidung.
+  Getestet mit `bash -c 'set -euo pipefail; FOO=bar timeout 1 sleep 5
+  || _rc=$?; echo $_rc'` → rc=124, Script laeuft weiter, so gewollt.
+
+- **npm-Cache kalt bei jedem Session-Start.** Der Update-Run laeuft
+  als `root`, aber der persistente npm-Cache (bind-mount von
+  `%LOCALAPPDATA%\agentbox\cache\npm`) haengt nur unter
+  `/home/$SANDBOX_USER/.npm`. Root's `/root/.npm` ist ephemer in der
+  frisch importierten Sandbox-Distro → bei jedem Start wurde der
+  komplette Claude-Code-Dependency-Tree aus dem Netz geladen statt
+  aus dem Cache. Auf langsamen Verbindungen reichten die 180s Timeout
+  aus 1.0.18 nicht. Fix: `npm_config_cache=/home/$SANDBOX_USER/.npm`
+  als Env-Var vor dem Update-Invocation setzen — root teilt sich
+  damit den Cache mit dem spaeteren agent-User, nach dem ersten
+  erfolgreichen Run ist er warm und der naechste Update-Run laeuft
+  in wenigen Sekunden durch.
+
+- **`npm_config_prefer_offline=true`** ergaenzend: wenn das Package
+  schon im Cache liegt, gar kein Registry-Roundtrip mehr. Faellt auf
+  Netz zurueck wenn der Cache kalt ist. Macht warme Updates
+  near-instant (~2-5s statt ~30-60s).
+
+- **Timeout auf 300s erhoeht** (von 180s). 180s waren auf JUCs
+  Verbindung zu knapp, und der Heartbeat zeigt ja Fortschritt, also
+  ist eine etwas laengere Toleranz OK. Der kill-escalation-Pfad
+  (`-k 10`) bleibt unveraendert.
+
+### Notizen
+
+- Die NPM-Env-Vars haben in 1.0.18 `NPM_CONFIG_…` in Grossbuchstaben
+  verwendet. Auf Linux sind Env-Var-Namen case-sensitive, npm liest
+  primaer die `npm_config_…`-Schreibweise (siehe npm docs, "Environment
+  Variables"). Der Effekt war wohl nur deshalb nicht frueher
+  aufgefallen, weil die "spart Zeit"-Optimierung im Log eh kaum
+  sichtbar war — auf Kalte-Cache-Runs macht AUDIT/FUND/PROGRESS keine
+  dramatische Differenz. In 1.0.19 jetzt einheitlich lowercase.
+
 ## [1.0.18] - 2026-04-15
 
 ### Fixed

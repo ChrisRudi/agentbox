@@ -544,21 +544,33 @@ _run_agent_update() {
     # Install-Command vom Host weitergegeben → wir respektieren User-Custom-
     # isations (z.B. eine andere npm-Registry oder ein Version-Pin).
     #
-    # Wichtige Haerte-Schrauben (sonst Report von JUC in 1.0.17: Start
-    # haengt bei "claude: 2.1.105 -> 2.1.109 seit 2 Minuten"):
+    # Wichtige Haerte-Schrauben (User-Report JUC 1.0.17/1.0.18):
     #   - stdin < /dev/null: verhindert dass npm/pip auf einen interaktiven
-    #     Prompt wartet (z.B. "y/n for ...") und unendlich blockt. Ohne das
-    #     haengt der Update-Run stumm, weil Output ins tmp-Log gepiped ist.
-    #   - timeout -k 10 180: 180s Grace, danach SIGTERM; wenn der Child das
-    #     ignoriert, 10s spaeter SIGKILL. Vorher war es plain `timeout 120`
-    #     ohne kill-Eskalation, da konnte der Child ewig weiterhaengen.
-    #   - NPM_CONFIG_AUDIT/FUND/PROGRESS=false: spart auf jedem npm-Run
-    #     5-30s. Audit ist fuer uns wertlos (ephemere Sandbox, kein
-    #     persistenter Security-Report), Fund sind Spendennoten, Progress
-    #     macht im Silent-Mode sowieso nichts.
-    #   - Heartbeat-Subshell: User sieht alle 15s einen Fortschritts-Ping,
-    #     damit klar ist dass der Start nicht tot ist. Wird mit trap EXIT
-    #     sauber abgeraeumt, auch wenn die Funktion frueh zurueckkehrt.
+    #     Prompt wartet (z.B. "y/n for ...") und unendlich blockt.
+    #   - timeout -k 10 300: 300s Grace (langsame Registry, grosse Dep-Tree,
+    #     kalter Cache, OneDrive-HDD), danach SIGTERM; wenn der Child das
+    #     ignoriert, 10s spaeter SIGKILL. 180s in 1.0.18 waren auf JUCs Netz
+    #     zu knapp — Update wurde konstant auf ~180s gekillt.
+    #   - || _update_rc=$?: KRITISCH gegen `set -euo pipefail` am Script-
+    #     Anfang. Ohne den `|| …`-Suffix triggert der nicht-null Exit-Code
+    #     von `timeout` sofort `set -e`, und der Script kracht in den
+    #     Parent-Trap (→ Sandbox wird unregistered, Session ist weg,
+    #     User sitzt im Kreis). Mit `|| _update_rc=$?` ist der gesamte
+    #     Ausdruck ein "erfolgreicher" Compound-Command, `set -e` greift
+    #     nicht, und wir koennen den Fehler regulaer handlen.
+    #   - npm_config_cache=/home/$SANDBOX_USER/.npm: Update laeuft hier als
+    #     root, aber der persistente npm-Cache ist via bind-mount nur unter
+    #     /home/$SANDBOX_USER/.npm verfuegbar (siehe oben im File). Ohne
+    #     diesen Env-Var-Override nutzt root /root/.npm (ephemer, kalt bei
+    #     jedem Start) und laedt jedes Dependency neu aus dem Netz — genau
+    #     der Grund warum jede Session auf langsamem Internet in das 180s-
+    #     Timeout gelaufen ist. Mit Override teilt root sich den Cache mit
+    #     dem spaeteren agent-User, der nach dem ersten Run warm ist.
+    #   - npm_config_prefer_offline=true: wenn das Package schon im Cache
+    #     liegt, kein Registry-Roundtrip mehr. Faellt auf Netz zurueck wenn
+    #     der Cache kalt ist. Macht warme Updates near-instant.
+    #   - NPM_CONFIG_AUDIT/FUND/PROGRESS=false: spart 5-30s pro Run.
+    #   - Heartbeat-Subshell: alle 15s ein Fortschritts-Ping.
     (
         _hb_n=0
         while sleep 15; do
@@ -567,15 +579,18 @@ _run_agent_update() {
         done
     ) &
     _hb_pid=$!
-    trap "kill $_hb_pid 2>/dev/null || true; wait $_hb_pid 2>/dev/null || true" RETURN
 
-    NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_PROGRESS=false \
-        timeout -k 10 180 bash -c "$_install" < /dev/null >/tmp/agent-update.log 2>&1
-    _update_rc=$?
+    _update_rc=0
+    npm_config_cache="/home/$SANDBOX_USER/.npm" \
+    npm_config_prefer_offline=true \
+    npm_config_audit=false \
+    npm_config_fund=false \
+    npm_config_progress=false \
+        timeout -k 10 300 bash -c "$_install" < /dev/null >/tmp/agent-update.log 2>&1 \
+        || _update_rc=$?
 
     kill "$_hb_pid" 2>/dev/null || true
     wait "$_hb_pid" 2>/dev/null || true
-    trap - RETURN
 
     if [ "$_update_rc" = "0" ]; then
         echo "[OK] $_cmd aktualisiert auf $_remote"
@@ -584,8 +599,10 @@ _run_agent_update() {
         # andere ist ein echter npm/pip-Fehler (Registry, Disk, Deps, …).
         case "$_update_rc" in
             124|137)
-                echo "[WARN] $_cmd Update Timeout ($_update_rc nach 180s+) — Sandbox bleibt auf ${_local:-?}."
-                echo "       Wahrscheinlich langsame Registry oder grosse Dep-Tree. Letzte Log-Zeilen:"
+                echo "[WARN] $_cmd Update Timeout (rc=$_update_rc, > 300s) — Sandbox bleibt auf ${_local:-?}."
+                echo "       Wahrscheinlich langsame Registry oder noch kalter Cache."
+                echo "       Nach dem ersten erfolgreichen Run ist der Cache warm und der naechste"
+                echo "       Update-Run laeuft in wenigen Sekunden durch."
                 ;;
             *)
                 echo "[WARN] $_cmd Update fehlgeschlagen (rc=$_update_rc) — Sandbox bleibt auf ${_local:-?}. Letzte Log-Zeilen:"
