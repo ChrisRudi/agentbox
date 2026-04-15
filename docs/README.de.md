@@ -22,12 +22,23 @@
 - Sie vergessen alles — nach der Session ist der Kontext weg
 - Sie fragen ständig nach — weil dein System auf dem Spiel steht
 
-**In einer Sandbox nicht.**
+**In einer portablen Sandbox nicht.**
 
-Ein Befehl. Saubere Umgebung. Volle Kontrolle.
+Ein Befehl. Saubere Umgebung. Volle Kontrolle. Komplett portabel.
 Windows nativ. Kein Docker. Kein Kubernetes.
 
 **agentbox** startet KI-Coding-Agenten in **wegwerfbaren WSL2-Distributionen** mit echter Dateisystem- und Netzwerkisolation — und gibt dir die Produktivität von KI-Agenten **ohne das Risiko**.
+
+### Gemacht für digitale Nomaden
+
+Rechnerwechsel soll nicht bedeuten, dass du dein komplettes KI-Dev-Setup neu aufbauen musst. Genau darauf ist agentbox ausgelegt:
+
+- **Eine PowerShell-Zeile installiert alles** — auf jeder frischen Windows-Kiste, in unter zwei Minuten. Kein Image mitzuschleppen, keine Container-Registry abfragen.
+- **Deine Projekte liegen in OneDrive** (oder Dropbox, oder in was auch immer du schon an Cloud-Sync nutzt). Der `_control/`-Ordner ist versioniert und synct per Default mit — Config, Agent-Seeds und Projektcode folgen dir also von selbst.
+- **Sessions sind per Design wegwerfbar** — das ist der ganze Witz. Nichts zu migrieren, keinen State hinterherziehen.
+- **Neuer Rechner = eine Zeile + einmal pro Agent einloggen.** Fertig. Weiter coden.
+
+Laptop verloren? Neuen kaufen, einen Befehl, einloggen. Deine Arbeit ist schon da.
 
 ## Unterstützte Agenten
 

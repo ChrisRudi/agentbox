@@ -158,7 +158,7 @@ function Import-AgentboxHostDistro {
 
 Write-Host ""
 Write-Host "=== agentbox Installer ===" -ForegroundColor Cyan
-Write-Host "Sandboxed AI Agent Runner fuer Windows + WSL2" -ForegroundColor Gray
+Write-Host "Portable Sandboxed AI Agent Runner fuer Windows + WSL2" -ForegroundColor Gray
 Write-Host ""
 
 # --- Admin-Rechte pruefen ---
@@ -397,8 +397,8 @@ if ($wslVerLine) {
         Write-Host "     (Herausgeber: Microsoft Corporation, kostenlos)" -ForegroundColor Gray
         Write-Host "  3. auf 'Installieren' klicken und warten" -ForegroundColor White
         Write-Host "  4. Windows EINMAL neu starten" -ForegroundColor White
-        Write-Host "  5. agentbox-Installer erneut starten (Doppelklick auf den Shortcut," -ForegroundColor White
-        Write-Host "     oder dieses Fenster nochmal aufrufen)" -ForegroundColor White
+        Write-Host "  5. agentbox-update erneut starten (Doppelklick auf den 'agentbox-update'-" -ForegroundColor White
+        Write-Host "     Shortcut am Desktop, oder dieses Fenster nochmal aufrufen)" -ForegroundColor White
         Write-Host ""
         Write-Host "Hintergrund: Das in Windows eingebaute WSL ist von 2022 und kann das" -ForegroundColor DarkGray
         Write-Host "aktuelle Ubuntu-24.04-Cloud-Image nicht importieren." -ForegroundColor DarkGray
@@ -421,8 +421,8 @@ if ($wslVerLine) {
     # laufen, weil vmcompute noch die alte Kernel-Version sieht.
     Write-Host "Damit der neue WSL-Kernel sicher aktiv wird, sollte Windows einmal" -ForegroundColor Yellow
     Write-Host "neu gestartet werden. Soll ich Windows JETZT neu starten?" -ForegroundColor Yellow
-    Write-Host "(Nach dem Reboot bitte den agentbox-Installer-Shortcut erneut ausfuehren," -ForegroundColor Gray
-    Write-Host " oder dieses Fenster wieder aufrufen.)" -ForegroundColor Gray
+    Write-Host "(Nach dem Reboot bitte den 'agentbox-update'-Shortcut am Desktop erneut" -ForegroundColor Gray
+    Write-Host " ausfuehren, oder dieses Fenster wieder aufrufen.)" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  [J] Ja, jetzt neu starten" -ForegroundColor White
     Write-Host "  [N] Nein, ich starte spaeter selbst neu" -ForegroundColor White
@@ -992,7 +992,16 @@ Write-Host "Erstelle Desktop-Shortcuts..." -ForegroundColor Cyan
 
 $desktopPath = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktopPath "agentbox.lnk"
-$updateShortcutPath = Join-Path $desktopPath "agentbox-installer.lnk"
+$updateShortcutPath = Join-Path $desktopPath "agentbox-update.lnk"
+
+# Alter Shortcut-Name aus <= 1.0.15 aufraeumen, damit User nach einem Update
+# nicht zwei Eintraege ("agentbox-installer" + "agentbox-update") auf dem
+# Desktop haben. Fehler beim Loeschen ignorieren — Datei kann vom User
+# geloescht oder in Gebrauch sein.
+$legacyUpdatePath = Join-Path $desktopPath "agentbox-installer.lnk"
+if (Test-Path -LiteralPath $legacyUpdatePath) {
+    try { [System.IO.File]::Delete($legacyUpdatePath) } catch { }
+}
 
 # Helper: setzt das "Run as administrator"-Flag in einer .lnk-Datei.
 # Offset 0x15 ist das Link-Flags-Byte, Bit 0x20 = RunAsAdministrator.
@@ -1016,23 +1025,23 @@ try {
     $shortcut.TargetPath = "wsl.exe"
     $shortcut.Arguments = "-d agentbox-host -e bash -li -c agentbox"
     $shortcut.WorkingDirectory = "%USERPROFILE%"
-    $shortcut.Description = "agentbox — Sandboxed AI Agent Runner"
+    $shortcut.Description = "agentbox — Portable Sandboxed AI Agent Runner"
     $shortcut.IconLocation = "wsl.exe,0"
     $shortcut.Save()
     Write-Host "[OK] Desktop-Shortcut erstellt: $shortcutPath" -ForegroundColor Green
 
-    # 2) Installer/Update-Shortcut: 'irm ... | iex' als Admin (UAC-Prompt).
+    # 2) Update-Shortcut: 'irm ... | iex' als Admin (UAC-Prompt).
     # Verwendung: Doppelklick → UAC → PS laedt frische install.ps1 von GitHub
     # und fuehrt sie aus (idempotent, macht Update wenn schon installiert).
     $updater = $shell.CreateShortcut($updateShortcutPath)
     $updater.TargetPath = "powershell.exe"
     $updater.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex`""
     $updater.WorkingDirectory = "%USERPROFILE%"
-    $updater.Description = "agentbox installieren/aktualisieren (als Administrator)"
+    $updater.Description = "agentbox aktualisieren (als Administrator)"
     $updater.IconLocation = "powershell.exe,0"
     $updater.Save()
     Set-ShortcutRunAsAdmin -Path $updateShortcutPath
-    Write-Host "[OK] Installer-Shortcut erstellt: $updateShortcutPath" -ForegroundColor Green
+    Write-Host "[OK] Update-Shortcut erstellt: $updateShortcutPath" -ForegroundColor Green
     Write-Host "     (Doppelklick fuer Update/Neuinstall — UAC-Prompt)" -ForegroundColor Gray
 
     [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null

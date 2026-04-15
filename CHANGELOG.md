@@ -5,6 +5,44 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.16] - 2026-04-15
+
+### Changed
+
+- **Update-Shortcut umbenannt: `agentbox-installer.lnk` → `agentbox-update.lnk`.**
+  Inhaltlich identisch (Doppelklick → UAC → `irm … | iex`), aber der
+  neue Name beschreibt besser, was der Shortcut in 99 % der Faelle
+  tatsaechlich tut — Update, nicht Erst-Installation. Installer-Flow
+  legt nach wie vor beide Desktop-Shortcuts an (`agentbox` zum Starten
+  + `agentbox-update` zum Aktualisieren).
+- **Legacy-Cleanup:** `install.ps1` loescht den alten
+  `agentbox-installer.lnk` auf dem Desktop beim naechsten Update-Run,
+  damit User nicht mit zwei fast-identischen Shortcuts dastehen.
+  Fehler beim Loeschen werden geschluckt (Datei koennte vom User
+  bereits manuell geloescht oder anderweitig im Gebrauch sein).
+- **User-facing Texte angepasst:** die Reboot-Hinweise im Installer-Flow
+  (nach `wsl --install`-Kernel-Update und nach dem WSL-Version-Auto-
+  Update) verweisen jetzt explizit auf den `agentbox-update`-Shortcut
+  am Desktop, statt generisch "agentbox-Installer-Shortcut" zu sagen.
+- **Installer-Banner + Shortcut-Description:** `agentbox — Sandboxed AI
+  Agent Runner` → `agentbox — Portable Sandboxed AI Agent Runner`.
+  Portabilitaet ist inzwischen ein expliziter Bestandteil des Pitchs
+  (siehe README-Aenderung unten), also auch in den beiden sichtbarsten
+  Installer-Strings ausgewiesen.
+
+### Docs
+
+- **README.md + docs/README.de.md: Portabilitaet als explizites Verkaufs-
+  argument.** Die Kern-Tagline ist jetzt "**Not in a portable sandbox.**
+  / One command. Clean environment. Full control. Fully portable."
+  (DE: "In einer portablen Sandbox nicht. / Ein Befehl. Saubere
+  Umgebung. Volle Kontrolle. Komplett portabel."). Dazu ein neuer
+  Abschnitt **"Built for digital nomads"** / **"Gemacht für digitale
+  Nomaden"** direkt nach der Kurzbeschreibung, der die Nomad-USPs
+  auflistet: one-line Install, Projekte in OneDrive/Cloud-Sync,
+  Sessions sind by design disposable, neuer Rechner = eine Zeile +
+  pro Agent einmal OAuth. Fokus auf den wechselnden-Rechner-Use-Case.
+
 ## [1.0.15] - 2026-04-15
 
 ### Changed
