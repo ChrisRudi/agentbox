@@ -1303,8 +1303,15 @@ METAEOF
 log_ok "Session-Snapshot erstellt: $SESSION_ID"
 
 # --- Sandbox-Distro importieren ---
+# `wsl --import` extrahiert das template.tar.gz in das Ziel-Verzeichnis —
+# das kostet beim ersten Start pro Rechner typischerweise 30-120 Sekunden
+# (Template ist ~1 GB gepackt, ~3 GB entpackt, abhaengig von aktivierten
+# Agents). Auf langsamen SSDs oder bei OneDrive-gebundenen AppData-Pfaden
+# kann es laenger dauern. Kein Hang, kein Bug — inhaerent zur "ephemere
+# Distro pro Session"-Architektur. Wir zeigen den Hinweis, damit der User
+# nicht auf Ctrl+C drueckt wenn die Zeile ein paar Minuten steht.
 echo ""
-log_info "Importiere Sandbox-Distro..."
+log_info "Importiere Sandbox-Distro (extrahiert template.tar.gz, 30-120s)..."
 
 # Windows-Pfad fuer WSL-Import
 WIN_PROJECT_DIR=$(wslpath -w "$PROJECT_DIR" 2>/dev/null || echo "$PROJECT_DIR")

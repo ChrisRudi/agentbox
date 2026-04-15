@@ -5,6 +5,82 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.18] - 2026-04-15
+
+### Fixed
+
+- **Sandbox-Start hing bei "claude: X -> Y seit 2+ Minuten" (User-Report
+  JUC).** Der 1.0.15-`_run_agent_update`-Block in `wsl-sandbox-init.sh`
+  hatte drei Schwachstellen, die in Kombination einen unendlichen Hang
+  auf dem `npm install`-Schritt erzeugen konnten:
+  - **stdin war nicht geschlossen**: `bash -c "$_install"` erbt das
+    Terminal-stdin. Wenn npm (oder ein Post-Install-Script) auf einen
+    interaktiven Prompt wartet (z.B. "y/n"), blockt der ganze Run —
+    Output geht ins Temp-Log, der User sieht aber nichts und kann
+    auch nichts antworten.
+  - **`timeout 120` ohne Kill-Eskalation**: bei Childs, die SIGTERM
+    ignorieren, blieb der Prozess auch nach Ablauf der 120s haengen.
+  - **Null Fortschritts-Feedback**: der User sitzt vor einer toten
+    Statuszeile und denkt, agentbox ist abgestuerzt.
+
+  Fix:
+  - `bash -c "$_install" < /dev/null` schliesst stdin — npm bricht bei
+    interaktivem Prompt sauber mit Fehler ab statt zu haengen.
+  - `timeout -k 10 180 …` gibt 180s Grace (ausreichend auch fuer
+    langsame Registries oder grosse Dep-Trees) und eskaliert bei
+    SIGTERM-Ignore nach 10s auf SIGKILL.
+  - `NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_PROGRESS=false`
+    spart 5-30s pro Run — Audit ist in einer ephemeren Sandbox ohnehin
+    wertlos, Fund sind Spendennoten, Progress ist im Silent-Mode nutzlos.
+  - **Heartbeat-Subshell**: alle 15s kommt eine Zeile
+    `... noch beim Aktualisieren (<N>s)`, damit der User sieht dass der
+    Start nicht tot ist. Wird via `trap RETURN` und expliziten
+    `kill+wait`-Blocks sauber abgeraeumt, auch bei Timeout oder Early
+    Return.
+  - **Differenzierte Fehlermeldungen**: rc=124/137 wird jetzt explizit
+    als Timeout gekennzeichnet (statt generisch "fehlgeschlagen"), so
+    dass der User weiss ob es ein Netzwerk- oder ein Paket-Problem ist.
+
+- **Desktop-Shortcut erschien nicht nach Installer-Rerun (User-Report
+  JUC).** Nach `irm | iex` war kein `agentbox.lnk` auf dem Desktop —
+  vermutete Ursache: OneDrive-Redirect des Desktop-Ordners, bei dem
+  der COM-`Save()` zwar erfolgreich meldet, die Datei aber in einem
+  Path landet, den der User nicht sieht (pausierter OneDrive-Sync,
+  Files-on-Demand-Placeholder, unterbrochener Redirect).
+
+  Fix in `install.ps1`:
+  - **Shortcut wird zusaetzlich ins Start-Menue gelegt** (`%APPDATA%\
+    Microsoft\Windows\Start Menu\Programs\agentbox.lnk`). Das ist der
+    zuverlaessige Entry-Point: Win-Taste druecken, "agentbox" tippen,
+    Enter — findet den Shortcut immer, unabhaengig von Desktop-
+    Redirects.
+  - **Beide Pfade werden vor der Erstellung explizit geloggt**
+    (`Desktop-Pfad: ...`, `Start-Menue-Pfad: ...`), damit bei
+    kuenftigen Problem-Reports sofort klar ist, wo der Installer
+    hinschreiben wollte.
+  - **Nach `$shortcut.Save()` wird `Test-Path` gecheckt**: wenn COM
+    erfolgreich war aber die Datei nicht auf Disk liegt, bekommt der
+    User eine laute `[WARN]` statt eines stillen Fehlers.
+  - **Legacy-Cleanup beide Pfade**: `agentbox-installer.lnk` und
+    `agentbox-update.lnk` werden jetzt sowohl am Desktop als auch im
+    Start-Menue gesucht und entfernt, falls vorhanden.
+  - **Helper-Funktion `New-AgentboxShortcut`**: gemeinsame Logik fuer
+    beide Shortcut-Ziele (Desktop + Start-Menue), damit bei Aenderungen
+    nicht mehr copy-paste an zwei Stellen noetig ist.
+
+### Changed
+
+- **Expliziter Hinweis beim Import der Sandbox-Distro**: die Log-Zeile
+  in `wsl-ai-start.sh` ist jetzt `"Importiere Sandbox-Distro (extrahiert
+  template.tar.gz, 30-120s)..."` statt nur `"Importiere Sandbox-Distro..."`.
+  User-Report JUC: die Extraktion dauert auf manchen Rechnern "sehr
+  lange" und die stumme Statuszeile sah aus wie ein Hang. Die 30-120s
+  sind **inhaerent zur ephemeren Per-Session-Architektur** (Template ist
+  gzip-komprimiert und wird bei jedem Start frisch entpackt), nicht
+  fixable ohne architekturellen Umbau auf vhdx-basiertes Snapshotting.
+  Fuer jetzt: transparenter Hinweis, damit der User nicht faelschlich
+  Ctrl+C drueckt.
+
 ## [1.0.17] - 2026-04-15
 
 ### Changed

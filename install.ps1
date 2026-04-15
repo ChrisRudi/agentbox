@@ -1025,13 +1025,31 @@ if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
     Write-Host "       Empfehlung: Windows Terminal aus dem Microsoft Store installieren." -ForegroundColor Gray
 }
 
-# --- Desktop-Shortcuts erstellen ---
+# --- Shortcuts erstellen ---
 # Hier sind wir nur, wenn $setupOk = $true (frueher Abbruch oben).
 Write-Host ""
-Write-Host "Erstelle Desktop-Shortcut..." -ForegroundColor Cyan
+Write-Host "Erstelle Shortcuts..." -ForegroundColor Cyan
 
+# Desktop und Start-Menue sind BEIDE relevant: der Desktop-Pfad kann auf
+# OneDrive redirected sein, und wenn OneDrive paused/uninstalliert ist,
+# sieht der User seinen Shortcut nicht dort wo er ihn erwartet. Start-Menue
+# ist die zuverlaessige Abhilfe — Win-Taste + "agentbox" tippen findet ihn
+# immer, unabhaengig vom Desktop-Setup. (User-Report 1.0.17: Shortcut
+# erschien nach Installer-Run nicht auf dem Desktop, vermutlich OneDrive-
+# Redirect.)
 $desktopPath = [Environment]::GetFolderPath("Desktop")
+$startMenuPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
 $shortcutPath = Join-Path $desktopPath "agentbox.lnk"
+$startShortcutPath = Join-Path $startMenuPath "agentbox.lnk"
+
+Write-Host "       Desktop-Pfad:    $desktopPath" -ForegroundColor Gray
+Write-Host "       Start-Menue-Pfad: $startMenuPath" -ForegroundColor Gray
+
+# Sicherstellen dass Start-Menue-Verzeichnis existiert (sollte immer, ist
+# aber bei manuell verbogenem Profil eventuell weg).
+if (-not (Test-Path -LiteralPath $startMenuPath)) {
+    try { New-Item -ItemType Directory -Path $startMenuPath -Force | Out-Null } catch { }
+}
 
 # Legacy-Cleanup: alte Update-Shortcut-Namen aufraeumen. Seit 1.0.17 gibt
 # es nur noch EINEN Shortcut (`agentbox`) — Updates erkennt und triggert
@@ -1039,20 +1057,42 @@ $shortcutPath = Join-Path $desktopPath "agentbox.lnk"
 # entfallen. Zwei Alt-Namen koennen herumliegen:
 #   - agentbox-installer.lnk  (bis 1.0.15)
 #   - agentbox-update.lnk     (1.0.16)
-foreach ($legacyName in @("agentbox-installer.lnk", "agentbox-update.lnk")) {
-    $legacyPath = Join-Path $desktopPath $legacyName
-    if (Test-Path -LiteralPath $legacyPath) {
-        try { [System.IO.File]::Delete($legacyPath) } catch { }
+# Cleanup auf beiden Ziel-Pfaden (Desktop + Start-Menue), weil frueher nur
+# Desktop gesaet wurde aber wir sicherheitshalber auch Start-Menue pruefen.
+foreach ($legacyDir in @($desktopPath, $startMenuPath)) {
+    foreach ($legacyName in @("agentbox-installer.lnk", "agentbox-update.lnk")) {
+        $legacyPath = Join-Path $legacyDir $legacyName
+        if (Test-Path -LiteralPath $legacyPath) {
+            try { [System.IO.File]::Delete($legacyPath) } catch { }
+        }
     }
+}
+
+# Helper: erstellt den agentbox-Shortcut an $Path. Gemeinsame Logik fuer
+# Desktop und Start-Menue, damit wir nicht zweimal dasselbe copy-pasten.
+function New-AgentboxShortcut {
+    param(
+        [Parameter(Mandatory)][object]$Shell,
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][bool]$UseWt
+    )
+    $sc = $Shell.CreateShortcut($Path)
+    if ($UseWt) {
+        $sc.TargetPath = "wt.exe"
+        $sc.Arguments = "--title agentbox wsl.exe -d agentbox-host -e bash -li -c agentbox"
+    } else {
+        $sc.TargetPath = "wsl.exe"
+        $sc.Arguments = "-d agentbox-host -e bash -li -c agentbox"
+    }
+    $sc.WorkingDirectory = "%USERPROFILE%"
+    $sc.Description = "agentbox — Portable Sandboxed AI Agent Runner"
+    $sc.IconLocation = "wsl.exe,0"
+    $sc.Save()
 }
 
 try {
     $shell = New-Object -ComObject WScript.Shell
 
-    # Einziger Desktop-Shortcut seit 1.0.17. Updates laeuft `wsl-ai-start.sh`
-    # selbst an (minor silent per git pull, major via elevated PS-Spawn) —
-    # der separate "agentbox-update"-Shortcut ist entfallen.
-    #
     # Target-Strategie:
     #   wt.exe vorhanden   → `wt.exe --title agentbox wsl.exe -d agentbox-host …`
     #                        → sauberer UTF-8/ANSI/Alt-Screen-Host, kein Encoding-
@@ -1064,26 +1104,42 @@ try {
     # `-d agentbox-host` ist hier KRITISCH: ohne explizite Distro greift wsl.exe
     # die Default-Distro, und wenn der User docker-desktop hat, landet der Klick
     # in der docker-VM und nicht in der agentbox-Distro.
-    $shortcut = $shell.CreateShortcut($shortcutPath)
-    if ($hasWt) {
-        $shortcut.TargetPath = "wt.exe"
-        $shortcut.Arguments = "--title agentbox wsl.exe -d agentbox-host -e bash -li -c agentbox"
-    } else {
-        $shortcut.TargetPath = "wsl.exe"
-        $shortcut.Arguments = "-d agentbox-host -e bash -li -c agentbox"
+
+    # 1) Desktop-Shortcut
+    try {
+        New-AgentboxShortcut -Shell $shell -Path $shortcutPath -UseWt $hasWt
+        if (Test-Path -LiteralPath $shortcutPath) {
+            Write-Host "[OK] Desktop-Shortcut erstellt: $shortcutPath" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] Desktop-Shortcut wurde laut COM gespeichert, ist aber nicht auf Disk." -ForegroundColor Yellow
+            Write-Host "       Moeglicherweise OneDrive-Redirect-Problem oder Dateisystem-Berechtigung." -ForegroundColor Gray
+            Write-Host "       Start-Menue-Shortcut unten sollte trotzdem funktionieren." -ForegroundColor Gray
+        }
+    } catch {
+        Write-Host "[WARN] Desktop-Shortcut konnte nicht erstellt werden: $($_.Exception.Message)" -ForegroundColor Yellow
     }
-    $shortcut.WorkingDirectory = "%USERPROFILE%"
-    $shortcut.Description = "agentbox — Portable Sandboxed AI Agent Runner"
-    $shortcut.IconLocation = "wsl.exe,0"
-    $shortcut.Save()
-    Write-Host "[OK] Desktop-Shortcut erstellt: $shortcutPath" -ForegroundColor Green
+
+    # 2) Start-Menue-Shortcut (Safety-Net: Win-Taste + "agentbox" findet ihn
+    #    immer, auch wenn der Desktop-Pfad verbogen ist)
+    try {
+        New-AgentboxShortcut -Shell $shell -Path $startShortcutPath -UseWt $hasWt
+        if (Test-Path -LiteralPath $startShortcutPath) {
+            Write-Host "[OK] Start-Menue-Shortcut erstellt: $startShortcutPath" -ForegroundColor Green
+            Write-Host "     (Win-Taste druecken + 'agentbox' tippen)" -ForegroundColor Gray
+        } else {
+            Write-Host "[WARN] Start-Menue-Shortcut wurde laut COM gespeichert, ist aber nicht auf Disk." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "[WARN] Start-Menue-Shortcut konnte nicht erstellt werden: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
     if (-not $hasWt) {
-        Write-Host "     (Fallback auf wsl.exe direkt — Windows Terminal fehlt)" -ForegroundColor Gray
+        Write-Host "     (Shortcuts fallen auf wsl.exe direkt zurueck — Windows Terminal fehlt)" -ForegroundColor Gray
     }
 
     [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
 } catch {
-    Write-Host "WARNUNG: Desktop-Shortcut konnte nicht erstellt werden." -ForegroundColor Yellow
+    Write-Host "WARNUNG: Shortcut-Erstellung komplett fehlgeschlagen." -ForegroundColor Yellow
     Write-Host $_.Exception.Message -ForegroundColor Yellow
 }
 

@@ -543,10 +543,54 @@ _run_agent_update() {
     echo "  $_cmd: ${_local:-?} -> $_remote"
     # Install-Command vom Host weitergegeben → wir respektieren User-Custom-
     # isations (z.B. eine andere npm-Registry oder ein Version-Pin).
-    if timeout 120 bash -c "$_install" >/tmp/agent-update.log 2>&1; then
+    #
+    # Wichtige Haerte-Schrauben (sonst Report von JUC in 1.0.17: Start
+    # haengt bei "claude: 2.1.105 -> 2.1.109 seit 2 Minuten"):
+    #   - stdin < /dev/null: verhindert dass npm/pip auf einen interaktiven
+    #     Prompt wartet (z.B. "y/n for ...") und unendlich blockt. Ohne das
+    #     haengt der Update-Run stumm, weil Output ins tmp-Log gepiped ist.
+    #   - timeout -k 10 180: 180s Grace, danach SIGTERM; wenn der Child das
+    #     ignoriert, 10s spaeter SIGKILL. Vorher war es plain `timeout 120`
+    #     ohne kill-Eskalation, da konnte der Child ewig weiterhaengen.
+    #   - NPM_CONFIG_AUDIT/FUND/PROGRESS=false: spart auf jedem npm-Run
+    #     5-30s. Audit ist fuer uns wertlos (ephemere Sandbox, kein
+    #     persistenter Security-Report), Fund sind Spendennoten, Progress
+    #     macht im Silent-Mode sowieso nichts.
+    #   - Heartbeat-Subshell: User sieht alle 15s einen Fortschritts-Ping,
+    #     damit klar ist dass der Start nicht tot ist. Wird mit trap EXIT
+    #     sauber abgeraeumt, auch wenn die Funktion frueh zurueckkehrt.
+    (
+        _hb_n=0
+        while sleep 15; do
+            _hb_n=$((_hb_n+1))
+            echo "    ... noch beim Aktualisieren ($((_hb_n*15))s)"
+        done
+    ) &
+    _hb_pid=$!
+    trap "kill $_hb_pid 2>/dev/null || true; wait $_hb_pid 2>/dev/null || true" RETURN
+
+    NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_PROGRESS=false \
+        timeout -k 10 180 bash -c "$_install" < /dev/null >/tmp/agent-update.log 2>&1
+    _update_rc=$?
+
+    kill "$_hb_pid" 2>/dev/null || true
+    wait "$_hb_pid" 2>/dev/null || true
+    trap - RETURN
+
+    if [ "$_update_rc" = "0" ]; then
         echo "[OK] $_cmd aktualisiert auf $_remote"
     else
-        echo "[WARN] $_cmd Update fehlgeschlagen — Sandbox bleibt auf ${_local:-?}. Letzte Log-Zeilen:"
+        # 124 = SIGTERM nach Timeout; 137 = SIGKILL nach -k grace; alles
+        # andere ist ein echter npm/pip-Fehler (Registry, Disk, Deps, …).
+        case "$_update_rc" in
+            124|137)
+                echo "[WARN] $_cmd Update Timeout ($_update_rc nach 180s+) — Sandbox bleibt auf ${_local:-?}."
+                echo "       Wahrscheinlich langsame Registry oder grosse Dep-Tree. Letzte Log-Zeilen:"
+                ;;
+            *)
+                echo "[WARN] $_cmd Update fehlgeschlagen (rc=$_update_rc) — Sandbox bleibt auf ${_local:-?}. Letzte Log-Zeilen:"
+                ;;
+        esac
         tail -5 /tmp/agent-update.log 2>/dev/null | sed 's/^/         /' || true
     fi
     rm -f /tmp/agent-update.log
