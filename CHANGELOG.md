@@ -5,6 +5,54 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.14] - 2026-04-15
+
+### Fixed
+
+- **Claude Code Auto-Update schlug im Sandbox fehl ("✗ Auto-update
+  failed · Try claude doctor or npm i -g @anthropic-ai/claude-code").**
+  Architektur-Mismatch zwischen Template-Build und Sandbox-Run:
+  - Template-Build (`win-setup-core.ps1:453`) installiert Claude Code
+    via `npm install -g @anthropic-ai/claude-code@latest` als **root**.
+    Liegt damit unter `/usr/lib/node_modules/@anthropic-ai/claude-code/`
+    mit `root:root`.
+  - Sandbox-Run (`wsl-sandbox-init.sh:515`) startet den Agent als
+    unprivilegierter `$SANDBOX_USER`.
+  - Claude Code's eingebauter Self-Updater versucht im Hintergrund
+    `npm install -g ...` → schreibt auf root-owned Pfad → **EACCES**
+    → Fehlermeldung im Agent.
+
+  "Manchmal", weil der Updater nur dann anschlaegt, wenn Anthropic eine
+  neue Version released hat — die meisten Sessions sind schon aktuell,
+  deshalb nur ab und zu sichtbar.
+
+  Fix in `wsl-sandbox-init.sh`: Update-Schritt **als root uebernehmen**,
+  bevor auf den Sandbox-User gewechselt wird. Damit sind die Permissions
+  egal und Claude Code's Self-Updater hat zur Agent-Startzeit nichts
+  mehr zu tun. Implementation:
+  - Billiger Versions-Vergleich (`claude --version` lokal vs.
+    `npm view @anthropic-ai/claude-code version` remote, ~2s).
+  - Teures `npm install -g` nur wenn local und remote tatsaechlich diff
+    (was praktisch immer beim ersten Sandbox-Start nach einem Anthropic-
+    Release passiert, weil das gecachte Template noch die alte Version
+    ausliefert).
+  - **Bewusst ohne Skip-Marker:** jeder Sandbox-Start importiert die
+    Distro frisch aus dem gecachten Template, also ist die installierte
+    Claude-Code-Version immer der Stand des letzten Template-Builds.
+    Eine 24h-Skip-Logik wuerde fast jede Session auf einer veralteten
+    Version laufen lassen, statt sie zu verhindern.
+  - Steady-state-Overhead pro Session: ~2s. Bei tatsaechlich faelligem
+    Update: ~10-30s einmalig.
+  - Lauft vor dem `su - $SANDBOX_USER` und nach den iptables-Regeln,
+    d.h. das `npm install` muss durch genau dieselben Firewall-Rules
+    raus wie der Agent spaeter — ist aber unkritisch, weil
+    `registry.npmjs.org` ueber HTTPS/443 zu public IPs erreichbar ist
+    und damit unter die "alle non-private Routen erlauben"-Regel faellt.
+  - Non-Claude-Agents (codex/gemini/aider/goose) bleiben am bisherigen
+    Verhalten (nur Version anzeigen, kein Auto-Update). Wenn dieselbe
+    Update-Failure dort auftritt, kann der Block analog erweitert
+    werden — fuer jetzt scope-genau am User-Report gehalten.
+
 ## [1.0.13] - 2026-04-15
 
 ### Fixed

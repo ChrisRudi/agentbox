@@ -434,14 +434,55 @@ for _host in api.anthropic.com platform.claude.com; do
     fi
 done
 
-# --- CLI-Update-Check (schnell, max 10s) ---
+# --- Claude Code Self-Update (als root, vor dem Drop auf $SANDBOX_USER) ---
+# Hintergrund: Claude Code's eingebauter Auto-Updater laeuft im Sandbox als
+# unprivilegierter $SANDBOX_USER und versucht im Hintergrund
+#   npm install -g @anthropic-ai/claude-code@latest
+# auszufuehren. Ziel ist /usr/lib/node_modules/@anthropic-ai/claude-code/ —
+# beim Template-Build als root installiert, also root-owned. Der Sandbox-
+# User bekommt EACCES und Claude Code zeigt:
+#   ✗ Auto-update failed · Try claude doctor or npm i -g @anthropic-ai/claude-code
+# Sieht "manchmal" aus, weil der Updater nur dann anschlaegt, wenn Anthropic
+# eine neue Version released hat — sonst still.
+#
+# Loesung: Update hier als root machen, BEVOR auf den Sandbox-User gewechselt
+# wird. KEIN Skip-Marker: jeder Sandbox-Start importiert die Distro frisch
+# aus dem gecachten Template, d.h. die installierte Claude-Code-Version
+# entspricht dem Stand des letzten Template-Builds — eine 24h-Skip-Logik
+# wuerde fast jede Session auf einer veralteten Version laufen lassen.
+# Stattdessen: billiger Versions-Vergleich (`npm view`, ~1-2s) und das
+# teure `npm install` nur dann, wenn local und remote tatsaechlich diff.
+# Steady-state-Overhead pro Session: ~2s.
 echo ""
-echo "Pruefe CLI-Version..."
+if [ "$AGENT_CMD" = "claude" ] && command -v npm &> /dev/null; then
+    echo "Pruefe Claude Code auf Updates..."
+    _claude_local=$(timeout 5 claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+    _claude_remote=$(timeout 10 npm view @anthropic-ai/claude-code version 2>/dev/null | tr -d '[:space:]' || echo "")
 
-if command -v "$AGENT_CMD" &> /dev/null; then
-    timeout 10 "$AGENT_CMD" --version 2>/dev/null || echo "[INFO] $AGENT_CMD Version-Check uebersprungen"
+    if [ -z "$_claude_remote" ]; then
+        echo "[INFO] npm-Registry nicht erreichbar — Versions-Check uebersprungen (lokal: ${_claude_local:-?})"
+    elif [ -z "$_claude_local" ] || [ "$_claude_local" != "$_claude_remote" ]; then
+        echo "  ${_claude_local:-?} -> $_claude_remote"
+        if timeout 120 npm install -g --silent @anthropic-ai/claude-code@latest \
+                >/tmp/claude-update.log 2>&1; then
+            echo "[OK] Claude Code aktualisiert auf $_claude_remote"
+        else
+            echo "[WARN] Claude Code Update fehlgeschlagen — Sandbox bleibt auf ${_claude_local:-?}. Letzte Log-Zeilen:"
+            tail -5 /tmp/claude-update.log 2>/dev/null | sed 's/^/         /' || true
+        fi
+        rm -f /tmp/claude-update.log
+    else
+        echo "[OK] Claude Code aktuell ($_claude_local)"
+    fi
 else
-    echo "[WARN] Agent '$AGENT_CMD' nicht gefunden — ist er installiert?"
+    # Fuer Non-Claude-Agents (codex/gemini/aider/goose): nur Version anzeigen.
+    echo ""
+    echo "Pruefe CLI-Version..."
+    if command -v "$AGENT_CMD" &> /dev/null; then
+        timeout 10 "$AGENT_CMD" --version 2>/dev/null || echo "[INFO] $AGENT_CMD Version-Check uebersprungen"
+    else
+        echo "[WARN] Agent '$AGENT_CMD' nicht gefunden — ist er installiert?"
+    fi
 fi
 
 # --- SYSTEM_META_PROMPT.md kopieren falls vorhanden ---
