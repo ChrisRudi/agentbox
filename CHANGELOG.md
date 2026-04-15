@@ -5,6 +5,54 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.15] - 2026-04-15
+
+### Changed
+
+- **Agent Self-Update generalisiert: gilt jetzt fuer alle fuenf Agents,
+  nicht mehr nur Claude Code (Folgearbeit zum 1.0.14-Fix).** Strukturell
+  haben alle Agents (claude/codex/gemini/aider/goose) das gleiche
+  EACCES-Problem mit ihren eingebauten Self-Updatern, weil sie alle im
+  Template-Build als root in `/usr/lib/node_modules` (npm) bzw.
+  `/usr/lib/python3/dist-packages` (pip) installiert werden, zur
+  Sandbox-Laufzeit aber als unprivilegierter `$SANDBOX_USER` laufen.
+  1.0.14 hatte nur Claude Code abgedeckt, weil das der einzige aktuell
+  gemeldete Fall war — die anderen waren damit aber nicht fixed,
+  sondern nur "noch nicht hochgekommen".
+
+  Generalisierung in `wsl-sandbox-init.sh::_run_agent_update`:
+  - Funktioniert jetzt agent-agnostisch ueber alle fuenf Agents.
+  - Backend (npm vs. pip) und Package-Name werden aus `AGENT_INSTALL`
+    geparst (siehe Parsing-Beispiele im Code-Kommentar). Respektiert
+    `@scope/pkg@version` (npm scoped), `pkg@version` (npm unscoped) und
+    `pkg==version` (pip).
+  - Versions-Check-Backend per Type:
+    - npm → `npm view <pkg> version`
+    - pip → `pip3 index versions <pkg>` mit Fallback ueber die PyPI-
+      JSON-API (`/pypi/<pkg>/json`), weil `pip index versions` je nach
+      pip-Version eine Pre-Release-API ist und nicht garantiert greift.
+  - Install-Command wird vom Host als `AGENT_INSTALL` durchgereicht
+    statt im Sandbox-Script hardcoded — damit respektiert das Update
+    User-Customisations in `config.json` (z.B. private Registry,
+    Version-Pin).
+
+  Aenderungen am Param-Vertrag:
+  - `wsl-sandbox-init.sh` nimmt jetzt einen 9. Parameter `AGENT_INSTALL`
+    entgegen (leerer String = Update-Check skippen).
+  - `wsl-ai-start.sh::_load_enabled_agents` traegt zusaetzlich `agent_ids`
+    nach (analog zu `agents` und `agent_cmds`), damit nach der Agent-
+    Auswahl der Install-Command per `cfg_get "agent_<id>_install"`
+    aufgeloest werden kann.
+  - Beide Branches der Agent-Auswahl (Auto-Select bei einem aktiven
+    Agent, manuelle Auswahl) setzen `AGENT_ID`, danach wird einmal
+    `AGENT_INSTALL` aufgeloest und an `wsl-sandbox-init.sh` weiter-
+    gereicht.
+
+  Backwards-Compat: wenn jemand das neue `wsl-sandbox-init.sh` mit
+  einem alten `wsl-ai-start.sh` kombiniert (8 Params), bleibt
+  `AGENT_INSTALL` leer, der Update-Check wird stillschweigend
+  uebersprungen, der Agent startet wie bisher. Kein Crash.
+
 ## [1.0.14] - 2026-04-15
 
 ### Fixed

@@ -952,11 +952,13 @@ log_ok "Alte Status-Dateien bereinigt"
 _load_enabled_agents() {
     agents=()
     agent_cmds=()
+    agent_ids=()
     if type cfg_get_agents &> /dev/null; then
         while IFS=: read -r _aid _aname _acmd; do
             if [ -n "$_acmd" ]; then
                 agents+=("$_aname")
                 agent_cmds+=("$_acmd")
+                agent_ids+=("$_aid")
             fi
         done < <(cfg_get_agents)
     fi
@@ -964,6 +966,7 @@ _load_enabled_agents() {
     if [ ${#agents[@]} -eq 0 ]; then
         agents=("Claude Code" "OpenAI Codex")
         agent_cmds=("claude" "codex")
+        agent_ids=("claude" "codex")
     fi
 }
 
@@ -1093,6 +1096,7 @@ while true; do
     if [ ${#agents[@]} -eq 1 ] && [ -n "${agent_cmds[0]}" ]; then
         AGENT_NAME="${agents[0]}"
         AGENT_CMD="${agent_cmds[0]}"
+        AGENT_ID="${agent_ids[0]}"
         log_ok "Agent: $AGENT_NAME (automatisch gewaehlt — einziger aktiver Agent)"
         break
     fi
@@ -1125,9 +1129,19 @@ while true; do
 
     AGENT_NAME="${agents[$((agent_choice-1))]}"
     AGENT_CMD="${agent_cmds[$((agent_choice-1))]}"
+    AGENT_ID="${agent_ids[$((agent_choice-1))]}"
     log_ok "Agent: $AGENT_NAME"
     break
 done
+
+# Install-Command des gewaehlten Agents nachschlagen — wird gleich an
+# wsl-sandbox-init.sh weitergereicht, damit das Self-Update als root vor
+# dem Drop auf $SANDBOX_USER laufen kann (umgeht den EACCES auf
+# /usr/lib/node_modules bzw. /usr/lib/python3/dist-packages).
+AGENT_INSTALL=""
+if [ -n "${AGENT_ID:-}" ] && type cfg_get &> /dev/null; then
+    AGENT_INSTALL=$(cfg_get "agent_${AGENT_ID}_install" "")
+fi
 
 # --- Session-Lock pruefen ---
 # Bewusst _running statt _exists: ein abgebrochener wsl --import (z.B.
@@ -1369,7 +1383,7 @@ EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
     "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON" \
-    "$AUTH_BASE" || EXIT_CODE=$?
+    "$AUTH_BASE" "$AGENT_INSTALL" || EXIT_CODE=$?
 
 # --- Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then

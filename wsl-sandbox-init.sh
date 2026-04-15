@@ -15,10 +15,11 @@ AI_API_DOMAINS="${5:-api.anthropic.com api.openai.com generativelanguage.googlea
 CFG_REG_NODE="${6:-registry.npmjs.org}"
 CFG_REG_PYTHON="${7:-pypi.org files.pythonhosted.org}"
 AUTH_BASE_IN="${8:-}"
+AGENT_INSTALL="${9:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     echo "FEHLER: Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AI_APIS] [REG_NODE] [REG_PYTHON] [AUTH_BASE]"
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AI_APIS] [REG_NODE] [REG_PYTHON] [AUTH_BASE] [AGENT_INSTALL]"
     exit 1
 fi
 
@@ -434,56 +435,126 @@ for _host in api.anthropic.com platform.claude.com; do
     fi
 done
 
-# --- Claude Code Self-Update (als root, vor dem Drop auf $SANDBOX_USER) ---
-# Hintergrund: Claude Code's eingebauter Auto-Updater laeuft im Sandbox als
-# unprivilegierter $SANDBOX_USER und versucht im Hintergrund
-#   npm install -g @anthropic-ai/claude-code@latest
-# auszufuehren. Ziel ist /usr/lib/node_modules/@anthropic-ai/claude-code/ —
-# beim Template-Build als root installiert, also root-owned. Der Sandbox-
-# User bekommt EACCES und Claude Code zeigt:
-#   ✗ Auto-update failed · Try claude doctor or npm i -g @anthropic-ai/claude-code
-# Sieht "manchmal" aus, weil der Updater nur dann anschlaegt, wenn Anthropic
-# eine neue Version released hat — sonst still.
+# --- Agent Self-Update (als root, vor dem Drop auf $SANDBOX_USER) ---
+# Hintergrund: Die eingebauten Auto-Updater von Claude Code, Codex, Gemini
+# CLI etc. laufen im Sandbox als unprivilegierter $SANDBOX_USER und
+# versuchen im Hintergrund `npm install -g ...` bzw.
+# `pip3 install --upgrade ...` in die globalen Pfade — die wurden beim
+# Template-Build als root angelegt und sind root-owned. Folge: EACCES,
+# "Auto-update failed"-Meldung im Agent. "Manchmal", weil die Updater
+# nur dann anschlagen, wenn upstream eine neue Version released wurde.
 #
-# Loesung: Update hier als root machen, BEVOR auf den Sandbox-User gewechselt
-# wird. KEIN Skip-Marker: jeder Sandbox-Start importiert die Distro frisch
-# aus dem gecachten Template, d.h. die installierte Claude-Code-Version
-# entspricht dem Stand des letzten Template-Builds — eine 24h-Skip-Logik
-# wuerde fast jede Session auf einer veralteten Version laufen lassen.
-# Stattdessen: billiger Versions-Vergleich (`npm view`, ~1-2s) und das
-# teure `npm install` nur dann, wenn local und remote tatsaechlich diff.
-# Steady-state-Overhead pro Session: ~2s.
-echo ""
-if [ "$AGENT_CMD" = "claude" ] && command -v npm &> /dev/null; then
-    echo "Pruefe Claude Code auf Updates..."
-    _claude_local=$(timeout 5 claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-    _claude_remote=$(timeout 10 npm view @anthropic-ai/claude-code version 2>/dev/null | tr -d '[:space:]' || echo "")
+# Loesung: Update hier als root machen, BEVOR auf den Sandbox-User
+# gewechselt wird. KEIN Skip-Marker: jeder Sandbox-Start importiert die
+# Distro frisch aus dem gecachten Template, d.h. die installierte Agent-
+# Version entspricht dem Stand des letzten Template-Builds — eine 24h-
+# Skip-Logik wuerde fast jede Session auf einer veralteten Version
+# laufen lassen, statt sie zu verhindern. Stattdessen: billiger Versions-
+# Vergleich (npm view / pip index, ~1-2s) und das teure Install-Kommando
+# nur dann, wenn lokal und remote tatsaechlich diff sind. Steady-state-
+# Overhead pro Session: ~2s.
+#
+# Funktioniert generisch ueber alle Agents: AGENT_INSTALL (Param $9) ist
+# der vom Host aus config.json gelesene Install-Cmd des gewaehlten Agents.
+# Backend (npm/pip) und Package-Name werden daraus geparst.
+_run_agent_update() {
+    local _cmd="$AGENT_CMD"
+    local _install="$AGENT_INSTALL"
 
-    if [ -z "$_claude_remote" ]; then
-        echo "[INFO] npm-Registry nicht erreichbar — Versions-Check uebersprungen (lokal: ${_claude_local:-?})"
-    elif [ -z "$_claude_local" ] || [ "$_claude_local" != "$_claude_remote" ]; then
-        echo "  ${_claude_local:-?} -> $_claude_remote"
-        if timeout 120 npm install -g --silent @anthropic-ai/claude-code@latest \
-                >/tmp/claude-update.log 2>&1; then
-            echo "[OK] Claude Code aktualisiert auf $_claude_remote"
-        else
-            echo "[WARN] Claude Code Update fehlgeschlagen — Sandbox bleibt auf ${_claude_local:-?}. Letzte Log-Zeilen:"
-            tail -5 /tmp/claude-update.log 2>/dev/null | sed 's/^/         /' || true
-        fi
-        rm -f /tmp/claude-update.log
-    else
-        echo "[OK] Claude Code aktuell ($_claude_local)"
+    if [ -z "$_install" ]; then
+        echo "[INFO] Kein Update-Command fuer $_cmd in config.json — Versions-Check uebersprungen"
+        return
     fi
-else
-    # Fuer Non-Claude-Agents (codex/gemini/aider/goose): nur Version anzeigen.
-    echo ""
-    echo "Pruefe CLI-Version..."
-    if command -v "$AGENT_CMD" &> /dev/null; then
-        timeout 10 "$AGENT_CMD" --version 2>/dev/null || echo "[INFO] $AGENT_CMD Version-Check uebersprungen"
-    else
-        echo "[WARN] Agent '$AGENT_CMD' nicht gefunden — ist er installiert?"
+
+    # Backend (npm/pip) + Package-Name aus dem Install-Command parsen.
+    # Erwartete Formate (Defaults aus config.json):
+    #   npm install -g @anthropic-ai/claude-code@latest
+    #   npm install -g @openai/codex@latest
+    #   npm install -g @google/gemini-cli@latest
+    #   pip3 install aider-chat
+    #   pip3 install goose-ai
+    local _type _last _pkg
+    case "$_install" in
+        npm*) _type="npm" ;;
+        pip*) _type="pip" ;;
+        *)
+            echo "[INFO] $_cmd: unbekannter Install-Backend-Typ ('$_install') — Versions-Check uebersprungen"
+            return
+            ;;
+    esac
+
+    _last=$(echo "$_install" | awk '{print $NF}')
+    _pkg="$_last"
+    # @scope/pkg@version  -> @scope/pkg
+    if [[ "$_pkg" == @*/*@* ]]; then
+        _pkg="${_pkg%@*}"
+    # pkg@version (unscoped) -> pkg ; aber NICHT @scope/pkg ohne version anfassen
+    elif [[ "$_pkg" == *@* && "$_pkg" != @* ]]; then
+        _pkg="${_pkg%@*}"
     fi
-fi
+    # pip-style version-pin
+    _pkg="${_pkg%%==*}"
+
+    if [ -z "$_pkg" ]; then
+        echo "[INFO] $_cmd: konnte Package-Name nicht aus '$_install' extrahieren — Versions-Check uebersprungen"
+        return
+    fi
+
+    # Lokale Version (vom CLI selbst)
+    local _local _remote
+    _local=$(timeout 5 "$_cmd" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+
+    # Remote-Version (cheap, ~1-2s)
+    case "$_type" in
+        npm)
+            command -v npm &> /dev/null || {
+                echo "[INFO] $_cmd: npm fehlt im Sandbox — Versions-Check uebersprungen"
+                return
+            }
+            _remote=$(timeout 10 npm view "$_pkg" version 2>/dev/null | tr -d '[:space:]' || echo "")
+            ;;
+        pip)
+            command -v pip3 &> /dev/null || {
+                echo "[INFO] $_cmd: pip3 fehlt im Sandbox — Versions-Check uebersprungen"
+                return
+            }
+            _remote=$(timeout 10 pip3 index versions "$_pkg" 2>/dev/null \
+                       | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+            # Fallback ueber PyPI-JSON-API, falls `pip index versions`
+            # nicht greift (haengt von der pip-Version ab, ist Pre-Release-API).
+            if [ -z "$_remote" ] && command -v curl &> /dev/null && command -v python3 &> /dev/null; then
+                _remote=$(timeout 10 curl -fsSL "https://pypi.org/pypi/${_pkg}/json" 2>/dev/null \
+                           | python3 -c 'import json,sys;print(json.load(sys.stdin)["info"]["version"])' 2>/dev/null \
+                           | tr -d '[:space:]' || echo "")
+            fi
+            ;;
+    esac
+
+    if [ -z "$_remote" ]; then
+        echo "[INFO] $_cmd: $_type-Registry nicht erreichbar — Versions-Check uebersprungen (lokal: ${_local:-?})"
+        return
+    fi
+
+    if [ -n "$_local" ] && [ "$_local" = "$_remote" ]; then
+        echo "[OK] $_cmd aktuell ($_local)"
+        return
+    fi
+
+    echo "  $_cmd: ${_local:-?} -> $_remote"
+    # Install-Command vom Host weitergegeben → wir respektieren User-Custom-
+    # isations (z.B. eine andere npm-Registry oder ein Version-Pin).
+    if timeout 120 bash -c "$_install" >/tmp/agent-update.log 2>&1; then
+        echo "[OK] $_cmd aktualisiert auf $_remote"
+    else
+        echo "[WARN] $_cmd Update fehlgeschlagen — Sandbox bleibt auf ${_local:-?}. Letzte Log-Zeilen:"
+        tail -5 /tmp/agent-update.log 2>/dev/null | sed 's/^/         /' || true
+    fi
+    rm -f /tmp/agent-update.log
+}
+
+echo ""
+echo "Pruefe $AGENT_CMD auf Updates..."
+_run_agent_update
 
 # --- SYSTEM_META_PROMPT.md kopieren falls vorhanden ---
 META_PROMPT="/etc/agentbox/SYSTEM_META_PROMPT.md"
