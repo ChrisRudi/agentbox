@@ -127,7 +127,7 @@ function Import-AgentboxHostDistro {
     }
     $hostDir = Join-Path $env:LOCALAPPDATA "agentbox\host-distro"
     if (-not (Test-Path -LiteralPath $hostDir)) {
-        New-Item -ItemType Directory -LiteralPath $hostDir -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($hostDir) | Out-Null
     }
     # Falls eine alte $DistroName-Registrierung herumliegt (vorheriger Lauf),
     # zuerst abmelden — wsl --import scheitert sonst mit "already exists".
@@ -494,7 +494,7 @@ if (-not $baseDir) {
 }
 
 if (-not (Test-Path -LiteralPath $baseDir)) {
-    New-Item -ItemType Directory -LiteralPath $baseDir -Force | Out-Null
+    [System.IO.Directory]::CreateDirectory($baseDir) | Out-Null
     Write-Host "[OK] Basisordner erstellt: $baseDir" -ForegroundColor Green
 }
 

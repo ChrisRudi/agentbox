@@ -30,8 +30,20 @@ einer ephemeren WSL2-Sandbox auf Windows. Kern-Invarianten beim Ändern von Code
   `.claude/`-Ordners — es genügt also **ein** Mount. `~/.claude.json`
   hingegen enthält nur Feature-Flags + UserID, keine Credentials.
 - **PS 5.1 Kompatibilität** für Installer (`win-setup.ps1`, `install.ps1`,
-  `win-setup-core.ps1`): keine Here-Strings, kein `-Encoding utf8NoBOM`,
-  LF/CRLF-Fallen beachten.
+  `win-setup-core.ps1`, `win-task-runner.ps1`): keine Here-Strings, kein
+  `-Encoding utf8NoBOM`, LF/CRLF-Fallen beachten.
+  - **NIEMALS `New-Item -LiteralPath` verwenden.** `-LiteralPath` wurde bei
+    `New-Item` erst in PS 6 eingeführt, in PS 5.1 existiert der Parameter
+    **nicht** und der Aufruf crasht mit `NamedParameterNotFound`. Schon
+    zweimal aufgetreten (zuletzt 1.0.9-Regression). Fix für Directory-
+    Creation immer: `[System.IO.Directory]::CreateDirectory($path) | Out-Null`
+    — PS-5.1-kompatibel, idempotent wie `-Force`, und tilde-/umlaut-safe
+    (umgeht den PS-Provider komplett, gleicher Grund wie bei
+    `[System.IO.Directory]::Delete` statt `Remove-Item` auf Tilde-Pfaden).
+    Für andere Cmdlets (`Test-Path`, `Remove-Item`, `Get-Content`,
+    `Get-ChildItem`, `Copy-Item`, `Move-Item`, `Out-File`, `Expand-Archive`)
+    ist `-LiteralPath` in PS 5.1 OK und soll wegen Tilde-Safety genutzt
+    werden — die Regel gilt **nur** für `New-Item`.
 - **Agent startet in `/workspace`** (Bind-Mount des Projektordners), damit die
   Projekt-Root für den Agent sichtbar ist.
 

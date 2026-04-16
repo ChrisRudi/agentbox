@@ -126,7 +126,7 @@ function Move-TaskToHistory {
     )
 
     if (-not (Test-Path -LiteralPath $historyDir)) {
-        New-Item -ItemType Directory -LiteralPath $historyDir -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($historyDir) | Out-Null
     }
 
     $TaskData.status = $Status
@@ -206,7 +206,7 @@ function Invoke-BuildAction {
     }
     $outputPath = Join-Path $ProjectDir $outputDir
     if (-not (Test-Path -LiteralPath $outputPath)) {
-        New-Item -ItemType Directory -LiteralPath $outputPath -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($outputPath) | Out-Null
     }
 
     Write-Log "Fuehre Build aus: $buildCmd" "INFO"
@@ -427,7 +427,7 @@ if ($watch) {
     foreach ($projDir in $projectDirs) {
         $tasksDir = Join-Path $projDir.FullName "_tasks"
         if (-not (Test-Path -LiteralPath $tasksDir)) {
-            New-Item -ItemType Directory -LiteralPath $tasksDir -Force | Out-Null
+            [System.IO.Directory]::CreateDirectory($tasksDir) | Out-Null
         }
 
         $watcher = New-Object System.IO.FileSystemWatcher

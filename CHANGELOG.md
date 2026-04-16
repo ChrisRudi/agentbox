@@ -5,6 +5,40 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.20] - 2026-04-16
+
+### Fixed
+
+- **KRITISCH: Template-Build crasht bei jedem Setup-Lauf mit
+  `New-Item: Es wurde kein Parameter gefunden, der dem Parameternamen
+  "LiteralPath" entspricht"` (User-Report, Regression aus 1.0.9).** Der
+  1.0.9-Fix hatte zur Loesung des Tilde-Username-Bugs (`SCHLER~1`)
+  systematisch alle `*-Item -Path` auf `-LiteralPath` umgestellt —
+  inklusive `New-Item`. Was damals uebersehen wurde: `New-Item`
+  bekam den `-LiteralPath`-Parameter erst in PS 6. In PS 5.1 — dem
+  Ziel-Interpreter auf allen Windows-Hosts ohne pwsh — existiert der
+  Parameter schlicht nicht, der Aufruf crasht mit
+  `NamedParameterNotFound`. Getriggert wird der Pfad immer dann,
+  wenn `Test-Path` auf dem Ziel-Dir `false` liefert — also bei
+  Template-Rebuilds mit frischem `$env:TEMP\agentbox\setup` oder bei
+  Erst-Installs.
+
+  Fix: Alle 11 `New-Item -ItemType Directory -LiteralPath ...
+  -Force`-Aufrufe (in `win-setup-core.ps1`, `install.ps1`,
+  `win-task-runner.ps1`) durch `[System.IO.Directory]::CreateDirectory(...)
+  | Out-Null` ersetzt. Die .NET-API ist PS-5.1-kompatibel, idempotent
+  (entspricht `-Force`) und umgeht den PS-Provider komplett, womit
+  sie automatisch auch tilde-/umlaut-safe ist — gleicher Grund,
+  aus dem wir an der `Remove-Item`-Stelle bereits
+  `[System.IO.Directory]::Delete` nutzen.
+
+  Guard gegen Wiederholung: Regel in `CLAUDE.md` dokumentiert, dass
+  `New-Item -LiteralPath` in dieser Codebasis **verboten** ist und
+  stattdessen `[System.IO.Directory]::CreateDirectory` zu verwenden
+  ist. Fuer alle anderen Cmdlets (`Test-Path`, `Remove-Item`,
+  `Get-Content`, ...) bleibt `-LiteralPath` aus Tilde-Safety-Gruenden
+  die richtige Wahl.
+
 ## [1.0.19] - 2026-04-15
 
 ### Fixed

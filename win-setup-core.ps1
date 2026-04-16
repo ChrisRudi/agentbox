@@ -24,7 +24,7 @@ Write-Host ""
 # --import). Gleiche Regel wie fuer auth\ und host-distro\.
 $sandboxDir = Join-Path $env:LOCALAPPDATA "agentbox\sandbox"
 if (-not (Test-Path -LiteralPath $sandboxDir)) {
-    New-Item -ItemType Directory -LiteralPath $sandboxDir -Force | Out-Null
+    [System.IO.Directory]::CreateDirectory($sandboxDir) | Out-Null
 }
 $templatePath = Join-Path $sandboxDir "template.tar.gz"
 $tempBase = Join-Path $env:TEMP "agentbox"
@@ -151,7 +151,7 @@ function Write-AgentboxSeedIfEmpty {
     )
     $dir = Split-Path -Parent $Path
     if (-not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -LiteralPath $dir -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($dir) | Out-Null
     }
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $content = ($Lines -join "`n") + "`n"
@@ -190,7 +190,7 @@ function Merge-AgentboxClaudeSettings {
 
     $dir = Split-Path -Parent $Path
     if (-not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -LiteralPath $dir -Force | Out-Null
+        [System.IO.Directory]::CreateDirectory($dir) | Out-Null
     }
 
     # Fehlt oder leer/whitespace → Default schreiben
@@ -338,7 +338,7 @@ $ubuntuUrl = if ($config -and $config.ubuntu_image_url) { $config.ubuntu_image_u
 $downloadPath = Join-Path $tempBase "ubuntu-minimal.tar.xz"
 
 if (-not (Test-Path -LiteralPath $tempBase)) {
-    New-Item -ItemType Directory -LiteralPath $tempBase -Force | Out-Null
+    [System.IO.Directory]::CreateDirectory($tempBase) | Out-Null
 }
 
 if (-not (Test-Path -LiteralPath $downloadPath)) {
@@ -373,7 +373,8 @@ if ([System.IO.Directory]::Exists($tempSetup)) {
     # → SCHLER~1) mit InvalidArgument crasht, obwohl Test-Path true returnt.
     try { [System.IO.Directory]::Delete($tempSetup, $true) } catch { }
 }
-New-Item -ItemType Directory -LiteralPath $tempSetup -Force | Out-Null
+# New-Item kennt in PS 5.1 kein -LiteralPath (erst ab PS 6) — .NET-API nutzen.
+[System.IO.Directory]::CreateDirectory($tempSetup) | Out-Null
 
 # Output als String-Array einsammeln (nicht live ausgeben):
 # - Stderr-Zeilen werden stringifiziert → kein NativeCommandError
@@ -615,7 +616,7 @@ Write-Host ""
 Write-Host "Exportiere Template..." -ForegroundColor Cyan
 
 if (-not (Test-Path -LiteralPath $sandboxDir)) {
-    New-Item -ItemType Directory -LiteralPath $sandboxDir -Force | Out-Null
+    [System.IO.Directory]::CreateDirectory($sandboxDir) | Out-Null
 }
 
 # Export-Output schlucken (wsl schreibt "Der Vorgang wurde erfolgreich beendet."
