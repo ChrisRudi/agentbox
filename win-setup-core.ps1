@@ -581,6 +581,16 @@ if ($missingAgents.Count -gt 0) {
     Write-Host "FEHLER: Folgende aktivierte Agents wurden nicht installiert:" -ForegroundColor Red
     Write-Host "        $($missingAgents -join ', ')" -ForegroundColor Red
     Write-Host "        Template wird NICHT exportiert — Installation abgebrochen." -ForegroundColor Red
+    Write-Host ""
+    # Install-Log dumpen BEVOR die Distro unregistriert wird — sonst rate-spielen
+    # wir, ob npm/pip/Network/Prefix schuld war. Der installRc-Pfad oben dumpt
+    # das Log auch, hier brauchen wir es zusaetzlich, weil installRc=0 sein kann
+    # waehrend die Agent-Installs (mit `|| echo WARNUNG`-Fallback) heimlich
+    # gescheitert sind.
+    Write-Host "        Letzte 120 Zeilen aus /var/log/agentbox-install.log:" -ForegroundColor Yellow
+    $logTail = @(& wsl.exe -d $distroName -- tail -n 120 /var/log/agentbox-install.log 2>&1 | ForEach-Object { "$_" })
+    foreach ($line in $logTail) { Write-Host "        $line" -ForegroundColor DarkGray }
+    Write-Host ""
     Write-Host "        Deaktiviere die Agents in config.json oder pruefe die Install-Commands." -ForegroundColor Yellow
     & wsl.exe --unregister $distroName 2>&1 | Out-Null
     exit 1

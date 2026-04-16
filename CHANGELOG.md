@@ -5,6 +5,35 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.21] - 2026-04-16
+
+### Diagnostics
+
+- **Install-Log wird jetzt auch bei Agent-Verifikations-Failure ausgegeben.**
+  Bisheriger Zustand: nach 1.0.20 hat der User eine Setup-Failure gemeldet
+  mit `[OK] Pakete installiert` gefolgt von `[FEHLT] claude / codex /
+  gemini`. Die Distro wurde unmittelbar danach via `wsl --unregister` in den
+  Wind geschossen, mit ihr `/var/log/agentbox-install.log` — also keinerlei
+  Information warum die Agents fehlen.
+
+  Hintergrund: der `installRc != 0`-Pfad dumpt das Log-Tail bereits seit
+  1.0.18. Der `installRc == 0` + Agent-fehlt-Pfad nicht, weil die Annahme
+  war: wenn das Install-Script sauber durchlaeuft, sind die Binaries auch
+  da. Die Annahme stimmt nicht, weil die Agent-Install-Zeilen mit
+  `|| echo 'WARNUNG: …'` enden — eine npm/pip-Failure unterdrueckt set
+  -e und das Script exited 0, obwohl der Agent nie installiert wurde.
+
+  Fix: vor dem `wsl --unregister` im Verifikations-Failure-Pfad jetzt
+  ebenfalls `tail -n 120 /var/log/agentbox-install.log` ausgeben. Dann
+  sieht man beim naechsten Run, ob es ein npm-EACCES, ein nodesource-
+  GPG-Problem, Network-Timeout, PEP-668-Block (pip3) oder etwas anderes
+  ist — ohne erneut die ganze Distro neu bauen zu muessen.
+
+  Reine Diagnostik-Verbesserung, kein funktionaler Fix — die Root-Cause
+  des aktuellen User-Reports ist ohne Log-Output nicht bestimmbar.
+  Nach diesem Update bitte einmal `install.ps1` neu starten, dann
+  liegt der Log-Tail im Output.
+
 ## [1.0.20] - 2026-04-16
 
 ### Fixed
