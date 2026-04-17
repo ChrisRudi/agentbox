@@ -5,6 +5,37 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.8] - 2026-04-17
+
+### Fixed — Hotfix fuer Etappe-4-Regression
+
+Zwei Bugs aus dem 2.0.4-Refactor der Auth-Mount-Liste, die den
+agentbox-Start in eine Endlosschleife geschickt haben:
+
+- **`AGENTBOX_AUTH_AGENTS: unbound variable`** (`wsl-ai-start.sh:1069`):
+  Ich hatte die Variable im Zuge von 2.0.4 entfernt, aber den Log-
+  Verweis am Ende des Auth-Setup-Blocks uebersehen. Mit `set -u`
+  aktiv killte das den Start. Ersetzt durch `$AGENTBOX_AUTH_IDS`,
+  das parallel zur `AUTH_SPEC` in der neuen while-Loop aufgebaut
+  wird.
+- **`cfg_get_agents_all: command not found`** (`wsl-ai-start.sh:920`):
+  Wenn `lib/config.sh` auf dem Host aus irgendeinem Grund noch die
+  Pre-2.0.4-Version ist (OneDrive-Sync-Skew, teilweise erfolgreicher
+  Auto-Update-Pull), bricht der Aufruf der neuen Funktion mit einem
+  Fatal-Error. Jetzt wird `declare -F cfg_get_agents_all` vor dem
+  Aufruf geprueft; fehlt die Funktion, wird ein Hardcode-Shim mit
+  dem 5-Agent-Fallback inline injiziert — identisch zum
+  Fallback-Block in `lib/config.sh` selbst.
+
+### Notes
+
+- Betrifft nur User, die zwischen 2.0.3 und 2.0.8 auf die 2.0.4-Auth-
+  Refactor-Version gepullt haben. Frischer Install ist nie betroffen.
+- Nach Pull von 2.0.8 sollte der Start wieder durchlaufen, egal welche
+  lib/config.sh-Version gerade aktiv ist. Der Log zeigt:
+  `[OK] Auth-Cache: <pfad> (Logins persistiert: claude codex gemini aider goose)`
+- Kein Template-Rebuild. `.update_class` bleibt `minor`.
+
 ## [2.0.7] - 2026-04-17
 
 ### Added — `lib/config.ps1` (additiv)

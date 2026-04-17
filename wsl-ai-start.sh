@@ -906,7 +906,24 @@ fi
 # als Memory einsetzen. Agent-Liste + Home-relativer Auth-Dir kommen aus
 # config.json via cfg_get_agents_all (einzige Wahrheitsquelle; ersetzt
 # die frueher-hartcodierte Liste). Format pro Zeile: "id:auth_dir".
+#
+# Defensive: wenn lib/config.sh auf dem Host aus irgendeinem Grund
+# noch Pre-2.0.4 ist (OneDrive-Sync-Skew, partieller Pull), faellt
+# cfg_get_agents_all aus und `set -u` killt den Start. Wir shimmen
+# die Funktion in dem Fall mit einem Hardcode-Return ab — derselbe
+# Inhalt wie der 2.0.4-Fallback in lib/config.sh.
+if ! declare -F cfg_get_agents_all >/dev/null 2>&1; then
+    cfg_get_agents_all() {
+        echo "claude:.claude"
+        echo "codex:.codex"
+        echo "gemini:.gemini"
+        echo "aider:.aider"
+        echo "goose:.config/goose"
+    }
+fi
+
 AGENTBOX_AUTH_SPEC=""
+AGENTBOX_AUTH_IDS=""
 while IFS=: read -r _aid _adir; do
     [ -z "$_aid" ] && continue
     mkdir -p "$AUTH_BASE/$_aid"
@@ -914,8 +931,10 @@ while IFS=: read -r _aid _adir; do
     # Interop trennt uns Newlines nicht zuverlaessig ueber Argumente).
     if [ -z "$AGENTBOX_AUTH_SPEC" ]; then
         AGENTBOX_AUTH_SPEC="${_aid}=${_adir}"
+        AGENTBOX_AUTH_IDS="$_aid"
     else
         AGENTBOX_AUTH_SPEC="${AGENTBOX_AUTH_SPEC};${_aid}=${_adir}"
+        AGENTBOX_AUTH_IDS="$AGENTBOX_AUTH_IDS $_aid"
     fi
 done < <(cfg_get_agents_all)
 
@@ -924,6 +943,7 @@ done < <(cfg_get_agents_all)
 # die Auth-Persistenz komplett zu verlieren.
 if [ -z "$AGENTBOX_AUTH_SPEC" ]; then
     AGENTBOX_AUTH_SPEC="claude=.claude;codex=.codex;gemini=.gemini;aider=.aider;goose=.config/goose"
+    AGENTBOX_AUTH_IDS="claude codex gemini aider goose"
     for _aid in claude codex gemini aider goose; do
         mkdir -p "$AUTH_BASE/$_aid"
     done
@@ -1066,7 +1086,7 @@ _goose_status=$(_seed_if_empty "$AUTH_BASE/goose/config.yaml" "$_goose_default")
 
 log_ok "Auto-Approve-Seeds: claude=$_claude_status codex=$_codex_status goose=$_goose_status"
 
-log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_AGENTS)"
+log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_IDS)"
 
 # --- Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
