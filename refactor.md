@@ -76,32 +76,47 @@ und nach der `_migrate_from_control`-Schleife.
 Ziel: Befund D + E. Config-Parse + `Invoke-Native` + Log-Helper an einer
 Stelle. Keine Verhaltensänderung — reiner Refactor.
 
-- [ ] **3.1** Neue Datei `lib/config.ps1` anlegen mit:
-  - `Read-AgentboxConfig` (`Get-Content -LiteralPath ... -Raw |
-    ConvertFrom-Json`, try/catch, Default-Rückgabe bei Fehler).
-  - `Invoke-Native` (aus `install.ps1:27` extrahieren, minimal invasiv).
-  - `Write-AgentboxLog` (Wrapper mit Zeitstempel + Level).
-  - PS-5.1-kompatibel, `-LiteralPath`-safe wo möglich, nie
-    `New-Item -LiteralPath`.
-- [ ] **3.2** `install.ps1` (~Z.474), `win-setup-core.ps1` (~Z.78),
-  `win-task-runner.ps1` (~Z.32) auf die gemeinsame Library umstellen
-  via `. "$PSScriptRoot\lib\config.ps1"`.
-- [ ] **3.3** `win-setup-core.ps1:7` von `"Continue"` auf `"Stop"`
-  umstellen — nur **nachdem** die `Invoke-Native`-Wrapper überall dort
-  stehen, wo native Tools aufgerufen werden (wsl.exe, git.exe,
-  powershell.exe, winget.exe). **Vorsicht:** das ist die Etappe mit dem
-  höchsten Regressions-Risiko am Installer. Vor Commit: zeile-für-zeile
-  alle nativen Calls im Script identifizieren und wrappen.
-- [ ] **3.4** `win-task-runner.ps1:252-265` Native-Calls in
-  `Invoke-Native` einhüllen (latenter Crash-Fix).
-- [ ] **3.5** Smoke-Test durch User: `install.ps1` auf Clean-VM +
-  `install.ps1`-Update-Pfad auf vorhandener Installation.
-- [ ] **3.6** CHANGELOG-Eintrag.
+**Aufgeteilt in 5 Sub-Commits**, damit Regression pro Script revert-bar
+bleibt. Die `3.3`-/`3.4`-Items aus dem Ur-Plan sind bewusst auf eigene
+Sub-Steps verschoben.
 
-**Commit 3** (`minor`; nur `major` setzen falls Installer-Testlauf
-zeigt, dass Template-Rebuild erzwungen werden muss — normalerweise
-greift `template_schema` dafür, bumpen auf `5` wenn Build-Verhalten
-betroffen).
+### Teil A ✅ 2.0.7
+
+- [x] **3.A.1** `lib/config.ps1` angelegt: `Read-AgentboxConfig`,
+  `Invoke-Native`, `Write-AgentboxLog`. PS-5.1-kompatibel, keine
+  Here-Strings, keine PS-6-only-Parameter. Additiv — keine Call-Site
+  umgestellt.
+
+### Teil B (offen) — `install.ps1` opts-in
+
+- [ ] **3.B.1** `install.ps1` sourced `lib/config.ps1` (oben nahe
+  der bestehenden Funktions-Defs). Lokale `Invoke-Native` bleibt
+  als Fallback drin (Upgrade-Pfad-Safety).
+- [ ] **3.B.2** Config-Parse-Block bei Z.474 auf
+  `Read-AgentboxConfig` umstellen (nur diese **eine** Stelle).
+
+### Teil C (offen) — `win-setup-core.ps1` opts-in
+
+- [ ] **3.C.1** Source + Config-Parse (Z.76-82) → `Read-AgentboxConfig`.
+  `$ErrorActionPreference=Continue` bleibt, wird separat in einem
+  Folge-Commit bewertet (zu riskant zusammen mit dem Source-Switch).
+
+### Teil D (offen) — `win-task-runner.ps1` opts-in
+
+- [ ] **3.D.1** Source + Config-Parse (Z.30-36) → `Read-AgentboxConfig`.
+- [ ] **3.D.2** `Write-Log` durch Re-Export aus `Write-AgentboxLog`
+  ersetzen (oder beibehalten — Entscheidung je nach Call-Sites).
+- [ ] **3.D.3** Native-Calls Z.252-265 in `Invoke-Native` wrappen
+  (latenter Crash-Fix, Teil des Original-Plans Punkt 3.4).
+
+### Teil E (offen, sensibel) — `$ErrorActionPreference='Stop'`
+
+- [ ] **3.E.1** `win-setup-core.ps1:7` + alle Native-Calls dort in
+  `Invoke-Native` wrappen. **Nur nach** Teil C gruen ist. Hoechstes
+  Regressions-Risiko der Etappe.
+
+**Freigabe fuer naechste Teil:** nach User-Smoke-Test des aktuellen
+Teils auf Windows-Host (`install.ps1` clean + `install.ps1` update).
 
 ---
 
@@ -190,5 +205,9 @@ Ziel: Befund F, H. Niedrige Prio. Bewusst in Teil 1 + Teil 2 gesplittet.
 | 2026-04-17 | Etappe 4 (Agent-Liste aus Config) | 2.0.4 | done (Smoke-Test User offen) |
 | 2026-04-17 | Etappe 5 Teil 1 (`lib/log.sh` + Config-Topologie-Doku) | 2.0.5 | done |
 | 2026-04-17 | Etappe 5 Teil 2 (sandbox-init [OK]-Replace) | 2.0.6 | done |
-| — | Etappe 3 (`lib/config.ps1`) | — | offen |
+| 2026-04-17 | Etappe 3 Teil A (lib/config.ps1 additiv) | 2.0.7 | done |
+| — | Etappe 3 Teil B (install.ps1 opts-in) | — | offen |
+| — | Etappe 3 Teil C (win-setup-core.ps1 opts-in) | — | offen |
+| — | Etappe 3 Teil D (win-task-runner.ps1 opts-in) | — | offen |
+| — | Etappe 3 Teil E (Stop-Mode + Invoke-Native-Wrap) | — | offen (hoch-risk) |
 | — | Etappe 5 Teil 3 (Stderr-Split) | — | offen (Follow-up) |

@@ -5,6 +5,35 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.7] - 2026-04-17
+
+### Added — `lib/config.ps1` (additiv)
+
+Etappe 3 Teil A aus `refactor.md`. Rein additiv: neue Datei, keine
+Call-Site-Aenderungen, kein Installer-Pfad-Wechsel.
+
+- `lib/config.ps1`: drei PS-5.1-kompatible Helper als gemeinsame
+  Grundlage fuer `install.ps1`, `win-setup-core.ps1` und
+  `win-task-runner.ps1`:
+  - `Read-AgentboxConfig` — `Test-Path` + `Get-Content -LiteralPath`
+    + `ConvertFrom-Json`, silent bei Fehler, Drop-in fuer die drei
+    parallelen Inline-Bloecke.
+  - `Invoke-Native` — verbatim aus `install.ps1:27-38` extrahiert,
+    wrappt native Calls (`wsl.exe`/`git.exe`/...) unter
+    `$ErrorActionPreference='Continue'` und stellt den vorherigen
+    Wert wieder her.
+  - `Write-AgentboxLog` — Zeitstempel + Level + Farbe, kompatibel
+    zur bestehenden `Write-Log` in `win-task-runner.ps1:77-87`
+    (gleiche Level-Namen, gleiche Farben, gleiches Format).
+
+### Notes
+
+Dieser Commit stellt **keine** Call-Site um. Die bestehenden
+Inline-Bloecke bleiben unveraendert aktiv. Die Folge-Commits (Teil B
+= `install.ps1`, C = `win-setup-core.ps1`, D = `win-task-runner.ps1`)
+schalten je ein Script um, damit ein Regressions-Revert pro Script
+moeglich bleibt. `.update_class` `minor`, kein Template-Rebuild.
+
 ## [2.0.6] - 2026-04-17
 
 ### Changed — Sandbox-Init-Logging angeglichen
