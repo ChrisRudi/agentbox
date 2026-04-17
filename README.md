@@ -46,7 +46,7 @@ Lose the laptop? Buy a new one, run one command, log in. Your work is already th
 |-------|---------|---------|----------|
 | **Claude Code** (Anthropic) | Enabled | npm | — |
 | **OpenAI Codex** (OpenAI) | Enabled | npm | — |
-| **Gemini CLI** (Google) | Enabled | pip | — |
+| **Gemini CLI** (Google) | Enabled | npm | — |
 | **Aider** | Disabled | pip | Set `agent_aider_enabled` to `true` in `config.json` |
 | **Goose** (Block) | Disabled | pip | Set `agent_goose_enabled` to `true` in `config.json` |
 

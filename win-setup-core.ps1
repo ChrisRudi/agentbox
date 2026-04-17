@@ -470,7 +470,7 @@ foreach ($aid in $agentIds) {
             $installCmd = switch ($aid) {
                 "claude" { "npm install -g @anthropic-ai/claude-code@latest" }
                 "codex"  { "npm install -g @openai/codex@latest" }
-                "gemini" { "pip3 install google-gemini-cli" }
+                "gemini" { "npm install -g @google/gemini-cli@latest" }
                 "aider"  { "pip3 install aider-chat" }
                 "goose"  { "pip3 install goose-ai" }
             }

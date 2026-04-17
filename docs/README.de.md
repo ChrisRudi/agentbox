@@ -46,7 +46,7 @@ Laptop verloren? Neuen kaufen, einen Befehl, einloggen. Deine Arbeit ist schon d
 |-------|----------|-------------|------------|
 | **Claude Code** (Anthropic) | Aktiviert | npm | — |
 | **OpenAI Codex** (OpenAI) | Aktiviert | npm | — |
-| **Gemini CLI** (Google) | Aktiviert | pip | — |
+| **Gemini CLI** (Google) | Aktiviert | npm | — |
 | **Aider** | Deaktiviert | pip | `agent_aider_enabled` in `config.json` auf `true` setzen |
 | **Goose** (Block) | Deaktiviert | pip | `agent_goose_enabled` in `config.json` auf `true` setzen |
 

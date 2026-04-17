@@ -5,6 +5,40 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-04-17
+
+### Fixed — Konsistenz & Drift
+
+- **`.update_class` von `major` auf `minor` korrigiert.** 2.0.1 war eine
+  reine Build-Zeit-Optimierung; kein `install.ps1`-Rerun als Admin
+  notwendig. Der Bump auf `major` hatte User einen unnoetigen
+  `[1]/[2]`-UAC-Prompt eingebracht und die laufende Session beendet.
+  Faustregel siehe `CLAUDE.md` § Release-Prozess.
+
+- **Gemini-Install-Fallback angeglichen.** Der statische Fallback in
+  `win-setup-core.ps1` (aktiv nur wenn `agent_gemini_install` aus
+  `config.json` fehlt) zeigte `pip3 install google-gemini-cli`, waehrend
+  die Laufzeit-Installation via `config.json` das offizielle npm-Paket
+  `@google/gemini-cli@latest` nutzt. Fallback jetzt identisch. Doku-
+  Tabelle in `README.md` + `docs/README.de.md` ebenfalls auf **npm**
+  gezogen — sie behaupteten bisher `pip` und widersprachen damit
+  `config.json`.
+
+### Added
+
+- **`refactor.md` im Repo-Root.** Session-uebergreifender
+  Architektur-Aufraeum-Plan mit 5 Etappen (Drift-Fixes, Regression-
+  Repair, zentrale PS-Lib, Agent-Liste aus Config ziehen, Log-Refactor).
+  CLAUDE.md verweist jetzt oben drauf, damit neue Sessions die naechste
+  offene Etappe finden.
+
+### Notes
+
+Kein Template-Rebuild-Zwang — `template_schema` bleibt bei `3`, weil
+der tatsaechliche Install-Command aus `config.json`
+(`agent_gemini_install`) sich nicht aendert und damit auch der
+Config-Hash identisch bleibt. Nur Fallback-/Doku-Drift beseitigt.
+
 ## [2.0.1] - 2026-04-17
 
 ### Added — Build-Beschleunigung (Template-Rebuild ~2-4 min schneller)
