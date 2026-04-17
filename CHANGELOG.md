@@ -5,6 +5,39 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.9] - 2026-04-17
+
+### Changed — install.ps1 nutzt lib/config.ps1 an post-Clone-Stelle
+
+Etappe 3 Teil B aus `refactor.md`. Minimaler Einstieg in die
+PS-Migration: **nur** der Config-Parse bei Z.955+ (`$installConfig`
+fuer `.wslconfig`) wird umgestellt. Die Pre-Clone-Stelle bei Z.474
+bleibt auf Inline-Muster — lib/config.ps1 liegt zu dem Zeitpunkt
+strukturell noch nicht auf Disk (der Repo-Clone folgt erst).
+
+Pattern: `Get-Command Read-AgentboxConfig -ErrorAction
+SilentlyContinue` als Fuehrungs-Guard. Wenn die Funktion noch nicht
+geladen ist, wird `$controlDir/lib/config.ps1` Test-Path-guarded und
+try/catch-wrapped gesourced. Gelingt das, nutzt der Aufruf die Lib;
+scheitert es, faellt der Block auf das urspruengliche
+`Get-Content | ConvertFrom-Json`-Muster zurueck. Die Logik ist
+zeile-fuer-zeile revert-bar (einfach den neuen Wrapper-Block
+ersetzen durch die drei alten Zeilen).
+
+### Notes
+
+- Verhalten auf existierender Installation: identisch. Alte Nutzer
+  ziehen lib/config.ps1 via Auto-Update (2.0.7+), und der Installer
+  bei manuellem Rerun nimmt den neuen Pfad, ohne dass sich die
+  Semantik aendert.
+- Frische `irm | iex`-Installation: der Clone-Schritt bringt
+  lib/config.ps1 mit rein, also ist die Lib zum Zeitpunkt Z.955
+  garantiert da.
+- Kein Template-Rebuild, kein Installer-Struktur-Wechsel.
+  `.update_class` bleibt `minor`.
+- Etappe 3 Teil C (`win-setup-core.ps1`) und Teil D
+  (`win-task-runner.ps1`) folgen als separate Commits.
+
 ## [2.0.8] - 2026-04-17
 
 ### Fixed — Hotfix fuer Etappe-4-Regression

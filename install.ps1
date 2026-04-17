@@ -952,14 +952,32 @@ $ErrorActionPreference = $prevErrBashrcPhase
 Write-Host ""
 Write-Host "Pruefe WSL Ressourcen-Limits..." -ForegroundColor Cyan
 
-# Werte aus config.json lesen (nach Clone verfuegbar)
+# Werte aus config.json lesen (nach Clone verfuegbar). Wenn die
+# gemeinsame Helper-Lib mitgepullt wurde (2.0.7+), nutzen wir
+# Read-AgentboxConfig; sonst faellt der try/catch-Block unten auf das
+# aeltere Inline-Muster zurueck. Das Sourcen ist Test-Path-guarded +
+# try/catch-wrapped, damit eine defekte oder fehlende Lib den
+# Installer nie blockiert.
+if (-not (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue)) {
+    $agentboxLibConfig = Join-Path $controlDir "lib\config.ps1"
+    if (Test-Path -LiteralPath $agentboxLibConfig) {
+        try { . $agentboxLibConfig } catch {
+            Write-Host "[INFO] lib/config.ps1 konnte nicht geladen werden — nutze Inline-Fallback." -ForegroundColor Gray
+        }
+    }
+}
+
 $installConfig = $null
 $installConfigPath = Join-Path $controlDir "config.json"
-try {
-    if (Test-Path -LiteralPath $installConfigPath) {
-        $installConfig = Get-Content -LiteralPath $installConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
-    }
-} catch { }
+if (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue) {
+    $installConfig = Read-AgentboxConfig -ConfigPath $installConfigPath -Quiet
+} else {
+    try {
+        if (Test-Path -LiteralPath $installConfigPath) {
+            $installConfig = Get-Content -LiteralPath $installConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        }
+    } catch { }
+}
 
 $resMem  = if ($installConfig -and $installConfig.resources_memory)     { $installConfig.resources_memory }     else { "4GB" }
 $resCpu  = if ($installConfig -and $installConfig.resources_processors) { $installConfig.resources_processors } else { 2 }
