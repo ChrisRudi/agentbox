@@ -11,8 +11,9 @@ NTFS via 9P-Protokoll). Das ist 3-10x langsamer als natives ext4 im
 WSL2-VM. Jeder `git status`, jeder `npm install`, jedes Datei-Read/Write
 geht durch:
 
-```
-App -> Linux VFS -> 9P Client -> Hyper-V VMBus -> 9P Server -> Windows I/O -> NTFS -> Disk
+```text
+App -> Linux VFS -> 9P Client -> Hyper-V VMBus -> 9P Server
+    -> Windows I/O -> NTFS -> Disk
 ```
 
 Das 1.x-Tuning (noatime, iptables-Reorder, DNS, chown-Eliminierung) hat
@@ -21,10 +22,10 @@ die schlimmsten Bremsen rausgenommen, kann aber den fundamentalen
 
 ### Gemessene Zahlen (User-Benchmark 1.0.28)
 
-| Filesystem         | Write     | Read (cached) | Files/s |
-|--------------------|-----------|---------------|---------|
-| ext4 (`/tmp`)      | 495 MB/s  | 6.2 GB/s      | 500     |
-| DrvFs (`/workspace`) | 44 MB/s | 161 MB/s      | 125     |
+| Filesystem           | Write    | Read (cached) | Files/s |
+|----------------------|----------|---------------|---------|
+| ext4 (`/tmp`)        | 495 MB/s | 6.2 GB/s      | 500     |
+| DrvFs (`/workspace`) | 44 MB/s  | 161 MB/s      | 125     |
 
 **Faktor: 4-11x langsamer auf DrvFs.**
 
@@ -54,7 +55,7 @@ merkmal das kein Konkurrent hat.
    `__pycache__`, Build-Artefakte) lebt auf dem ext4-Filesystem der
    Sandbox-vhdx. **Kein Sync nötig, kein Crash-Risiko für Quellcode.**
 
-   ```
+   ```text
    /workspace/
      src/           <- Bind-Mount von DrvFs (sicher, OneDrive-synced)
      node_modules/  <- ext4 im vhdx (schnell, ephemer, recreatable)
@@ -69,7 +70,7 @@ merkmal das kein Konkurrent hat.
 
 ### Architektur-Entwurf
 
-```
+```text
 Installer (install.ps1, einmalig):
   1. Template bauen:     wsl --import template-build <tmpdir> <ubuntu.tar.xz>
                          [Node, Python, Agent-CLIs installieren - wie bisher]
@@ -195,23 +196,23 @@ Sandbox-Ende:
 
 ### Phase 2: vhdx-Template (der grosse Umbau)
 
-4. PoC: `wsl --export --vhd` + Copy + `wsl --import-in-place` manuell
+1. PoC: `wsl --export --vhd` + Copy + `wsl --import-in-place` manuell
    testen
-5. `win-setup-core.ps1`: Template als vhdx exportieren
-6. `wsl-ai-start.sh`: vhdx-Copy + import-in-place statt tar.gz-import
-7. Fallback: wenn vhdx-Pfad fehlschlägt, 1.x tar.gz beibehalten
+2. `win-setup-core.ps1`: Template als vhdx exportieren
+3. `wsl-ai-start.sh`: vhdx-Copy + import-in-place statt tar.gz-import
+4. Fallback: wenn vhdx-Pfad fehlschlägt, 1.x tar.gz beibehalten
 
 ### Phase 3: Hybrid-Workspace
 
-8. `wsl-sandbox-init.sh`: Quellcode per Bind-Mount (wie 1.x), aber
+1. `wsl-sandbox-init.sh`: Quellcode per Bind-Mount (wie 1.x), aber
    `node_modules`/`.git`/`dist` auf ext4 im vhdx belassen
-9. Session-Ende: kein rsync nötig (Quellcode war immer auf DrvFs)
+2. Session-Ende: kein rsync nötig (Quellcode war immer auf DrvFs)
 
 ### Phase 4: Feinschliff
 
-10. `.update_class = major` für das Release
-11. Benchmarks: vorher/nachher-Vergleich publizieren (README)
-12. Competitive Claim: "5-10x faster I/O than stock WSL2/Docker"
+1. `.update_class = major` für das Release
+2. Benchmarks: vorher/nachher-Vergleich publizieren (README)
+3. Competitive Claim: "5-10x faster I/O than stock WSL2/Docker"
 
 ## Nicht in 2.0 (Later)
 
