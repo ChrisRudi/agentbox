@@ -50,6 +50,21 @@ PROJECT_PATH=$(_to_linux_path "$WIN_PROJECT_PATH")
 CACHE_PATH=$(_to_linux_path "$WIN_CACHE_PATH")
 AUTH_BASE=$(_to_linux_path "$AUTH_BASE_IN")
 
+# --- Logging-Helper (inline, weil das Script in der Sandbox laeuft und
+# /sandbox-init.sh kein Sourcing aus _control/lib/ kann — _control/ ist
+# bewusst nicht in der Sandbox gemounted). Verhalten identisch zu
+# lib/log.sh: alle Levels auf stdout, Farben immer aktiv. ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
+log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
+
 echo "=== agentbox Sandbox-Init ==="
 echo "Projekt: $PROJECT_PATH"
 echo "Agent: $AGENT_CMD"
@@ -66,7 +81,7 @@ SANDBOX_HOME="/home/$SANDBOX_USER"
 
 if ! id "$SANDBOX_USER" &>/dev/null; then
     useradd -m -s /bin/bash "$SANDBOX_USER" 2>/dev/null || true
-    echo "[OK] Sandbox-User '$SANDBOX_USER' angelegt"
+    log_ok "Sandbox-User '$SANDBOX_USER' angelegt"
 fi
 
 # Kein /etc/wsl.conf-Write hier: die Datei greift erst nach Distro-Neustart,
@@ -94,28 +109,28 @@ mkdir -p "$WORKSPACE/_tasks"
 if [ -d "$PROJECT_PATH/src" ]; then
     mount --bind "$PROJECT_PATH/src" "$WORKSPACE/src"
     mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/src"
-    echo "[OK] Mount: src/ (read-write, nosymfollow, nodev, noatime)"
+    log_ok "Mount: src/ (read-write, nosymfollow, nodev, noatime)"
 else
     # Falls kein src/ Ordner existiert, Projektroot mounten
     mount --bind "$PROJECT_PATH" "$WORKSPACE/src"
     mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/src"
-    echo "[OK] Mount: Projektroot -> src/ (read-write, nosymfollow, nodev, noatime)"
+    log_ok "Mount: Projektroot -> src/ (read-write, nosymfollow, nodev, noatime)"
 fi
 
 # assets/ (read-only)
 if [ -d "$PROJECT_PATH/assets" ]; then
     mount --bind "$PROJECT_PATH/assets" "$WORKSPACE/assets"
     mount -o remount,bind,ro,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/assets"
-    echo "[OK] Mount: assets/ (read-only, nosymfollow, nodev, noatime)"
+    log_ok "Mount: assets/ (read-only, nosymfollow, nodev, noatime)"
 else
-    echo "[INFO] Kein assets/ Ordner — ueberspringe Mount"
+    log_info "Kein assets/ Ordner — ueberspringe Mount"
 fi
 
 # _tasks/ (read-write)
 if [ -d "$PROJECT_PATH/_tasks" ]; then
     mount --bind "$PROJECT_PATH/_tasks" "$WORKSPACE/_tasks"
     mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/_tasks"
-    echo "[OK] Mount: _tasks/ (read-write, nosymfollow, nodev, noatime)"
+    log_ok "Mount: _tasks/ (read-write, nosymfollow, nodev, noatime)"
 fi
 
 # CLAUDE.md (read-write, Einzeldatei-Mount)
@@ -123,7 +138,7 @@ if [ -f "$PROJECT_PATH/CLAUDE.md" ]; then
     touch "$WORKSPACE/CLAUDE.md"
     mount --bind "$PROJECT_PATH/CLAUDE.md" "$WORKSPACE/CLAUDE.md"
     mount -o remount,bind,rw "$WORKSPACE/CLAUDE.md" 2>/dev/null || true
-    echo "[OK] Mount: CLAUDE.md (read-write)"
+    log_ok "Mount: CLAUDE.md (read-write)"
 fi
 
 # project.json (read-only)
@@ -131,7 +146,7 @@ if [ -f "$PROJECT_PATH/project.json" ]; then
     touch "$WORKSPACE/project.json"
     mount --bind "$PROJECT_PATH/project.json" "$WORKSPACE/project.json"
     mount -o remount,bind,ro "$WORKSPACE/project.json"
-    echo "[OK] Mount: project.json (read-only)"
+    log_ok "Mount: project.json (read-only)"
 fi
 
 # Sanity-Check: kann in /workspace/src tatsaechlich geschrieben werden?
@@ -141,10 +156,10 @@ fi
 # nichts ueber die tatsaechliche Beschreibbarkeit aus).
 _ws_test="$WORKSPACE/src/.workspace_write_test_$$"
 if (echo agentbox-test > "$_ws_test") 2>/dev/null; then
-    echo "[OK] Workspace-Write-Test: src/ ist beschreibbar"
+    log_ok "Workspace-Write-Test: src/ ist beschreibbar"
     rm -f "$_ws_test" 2>/dev/null
 else
-    echo "[FEHLER] Workspace-Write-Test: src/ ist nicht beschreibbar (Read-only filesystem?)"
+    log_error "Workspace-Write-Test: src/ ist nicht beschreibbar (Read-only filesystem?)"
     echo "         mount-Ausgabe fuer /workspace/src:"
     mount | grep -F "$WORKSPACE/src" | sed 's/^/           /'
 fi
@@ -201,7 +216,7 @@ _overlay_bind_ext4() {
 
     if mount --bind "$_ext4_path" "$_src_path" 2>/dev/null; then
         mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$_src_path" 2>/dev/null || true
-        echo "[OK] Hybrid-Overlay (ext4): src/$_sub"
+        log_ok "Hybrid-Overlay (ext4): src/$_sub"
         return 0
     fi
     return 1
@@ -235,7 +250,7 @@ if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
         mount --bind "$CACHE_PATH/npm" "$NPM_CACHE"
         mount -o remount,nosymfollow,nodev,noatime,nodiratime "$NPM_CACHE"
         chown "$SANDBOX_USER:$SANDBOX_USER" "$NPM_CACHE" 2>/dev/null || true
-        echo "[OK] Mount: npm-Cache (persistent, noatime)"
+        log_ok "Mount: npm-Cache (persistent, noatime)"
     fi
 
     # pip-Cache
@@ -245,10 +260,10 @@ if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
         mount --bind "$CACHE_PATH/pip" "$PIP_CACHE"
         mount -o remount,nosymfollow,nodev,noatime,nodiratime "$PIP_CACHE"
         chown "$SANDBOX_USER:$SANDBOX_USER" "$PIP_CACHE" 2>/dev/null || true
-        echo "[OK] Mount: pip-Cache (persistent, noatime)"
+        log_ok "Mount: pip-Cache (persistent, noatime)"
     fi
 else
-    echo "[INFO] Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
+    log_info "Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
 fi
 
 # --- Auth-State der Agent-CLIs bind-mounten (persistiert Logins) ---
@@ -285,7 +300,7 @@ _auth_mount_agent() {
     if [ -n "$_win_src" ] && \
        mount -t drvfs "$_win_src" "$_dst" \
              -o "metadata,uid=$_uid,gid=$_gid,umask=077" 2>/dev/null; then
-        echo "[OK] Mount: $_agent Auth-State ($_home_rel) [drvfs uid=$_uid]"
+        log_ok "Mount: $_agent Auth-State ($_home_rel) [drvfs uid=$_uid]"
         return 0
     fi
 
@@ -296,10 +311,10 @@ _auth_mount_agent() {
     if mount --bind "$_src" "$_dst" 2>/dev/null; then
         mount -o remount,nosymfollow,nodev "$_dst" 2>/dev/null || true
         chown -R "$SANDBOX_USER:$SANDBOX_USER" "$_dst" 2>/dev/null || true
-        echo "[WARN] Mount: $_agent Auth-State ($_home_rel) [bind-Fallback — Permissions ggf. broken]"
+        log_warn "Mount: $_agent Auth-State ($_home_rel) [bind-Fallback — Permissions ggf. broken]"
         return 0
     fi
-    echo "[WARN] $_agent Auth-Mount fehlgeschlagen — Login wird nicht persistiert"
+    log_warn "$_agent Auth-Mount fehlgeschlagen — Login wird nicht persistiert"
     return 1
 }
 
@@ -354,7 +369,7 @@ if [ ! -f "$_CLAUDE_JSON" ] && [ -d "$_CLAUDE_BACKUPS" ]; then
         cp "$_newest_backup" "$_CLAUDE_JSON" 2>/dev/null || true
         chown "$SANDBOX_USER:$SANDBOX_USER" "$_CLAUDE_JSON" 2>/dev/null || true
         chmod 600 "$_CLAUDE_JSON" 2>/dev/null || true
-        echo "[OK] .claude.json aus Backup wiederhergestellt: $(basename "$_newest_backup")"
+        log_ok ".claude.json aus Backup wiederhergestellt: $(basename "$_newest_backup")"
     fi
 fi
 
@@ -409,10 +424,10 @@ echo "Isoliere Sandbox von Windows-Dateisystem..."
 mount -t tmpfs tmpfs_sandbox /mnt -o size=1k,mode=000,nosuid,nodev,noexec 2>/dev/null || true
 # Verifizieren
 if [ -e /mnt/c/Users ] 2>/dev/null; then
-    echo "[FEHLER] Windows-Laufwerke NICHT isoliert — /mnt/c/Users noch erreichbar!"
+    log_error "Windows-Laufwerke NICHT isoliert — /mnt/c/Users noch erreichbar!"
     exit 1
 else
-    echo "[OK] Windows-Laufwerke isoliert (tmpfs ueber /mnt)"
+    log_ok "Windows-Laufwerke isoliert (tmpfs ueber /mnt)"
 fi
 
 # --- DNS-Fallback sicherstellen ---
@@ -446,9 +461,9 @@ GAIEOF
 
 # DNS testen
 if getent hosts api.anthropic.com >/dev/null 2>&1; then
-    echo "[OK] DNS funktioniert (api.anthropic.com aufgeloest)"
+    log_ok "DNS funktioniert (api.anthropic.com aufgeloest)"
 else
-    echo "[WARN] DNS-Resolution schlaegt fehl — siehe Log"
+    log_warn "DNS-Resolution schlaegt fehl — siehe Log"
     sed 's/^/       /' /etc/resolv.conf
 fi
 
@@ -465,9 +480,9 @@ echo "Wende Netzwerk-Tuning an (TCP BBR, TFO, Socket-Buffer, MTU)..."
 # Paketverlust. WSL2-NAT fuegt einen extra Hop ein, BBR kompensiert.
 modprobe tcp_bbr 2>/dev/null || true
 if sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1; then
-    echo "[OK] TCP Congestion Control: bbr"
+    log_ok "TCP Congestion Control: bbr"
 else
-    echo "[INFO] TCP BBR nicht verfuegbar — bleibe bei Kernel-Default (cubic)"
+    log_info "TCP BBR nicht verfuegbar — bleibe bei Kernel-Default (cubic)"
 fi
 
 # TCP Fast Open — spart einen Roundtrip pro neuer HTTPS-Connection
@@ -488,7 +503,7 @@ sysctl -w net.ipv4.tcp_wmem="4096 131072 16777216" >/dev/null 2>&1 || true
 # TFO+BBR-Gewinne vor Fragmentierungs-Stalls.
 sysctl -w net.ipv4.tcp_mtu_probing=1 >/dev/null 2>&1 || true
 
-echo "[OK] Netzwerk-Tuning angewendet (rmem/wmem=16MB, TFO=3, PMTU-Probing)"
+log_ok "Netzwerk-Tuning angewendet (rmem/wmem=16MB, TFO=3, PMTU-Probing)"
 
 # --- Lokaler DNS-Cache (dnsmasq) ---
 # Optional: wenn dnsmasq im Template installiert ist, lokalen Cache
@@ -525,12 +540,12 @@ options timeout:1 attempts:2 single-request-reopen
 RESOLVEOF
         chmod 644 /etc/resolv.conf
         chattr +i /etc/resolv.conf 2>/dev/null || true
-        echo "[OK] DNS-Cache: dnsmasq auf 127.0.0.1 aktiv (cache-size=1000)"
+        log_ok "DNS-Cache: dnsmasq auf 127.0.0.1 aktiv (cache-size=1000)"
     else
-        echo "[INFO] dnsmasq-Start fehlgeschlagen — direkte Upstream-Resolver aktiv"
+        log_info "dnsmasq-Start fehlgeschlagen — direkte Upstream-Resolver aktiv"
     fi
 else
-    echo "[INFO] dnsmasq nicht installiert — direkte Upstream-Resolver aktiv"
+    log_info "dnsmasq nicht installiert — direkte Upstream-Resolver aktiv"
 fi
 
 # --- iptables-Regeln anwenden ---
@@ -554,7 +569,7 @@ elif [ -f "$WORKSPACE/project.json" ]; then
         | head -1 | sed 's/.*"type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo "generic")
 fi
 
-echo "[INFO] Projekttyp: $PROJECT_TYPE"
+log_info "Projekttyp: $PROJECT_TYPE"
 
 # Basis-Regeln setzen (immer).
 # Reihenfolge ist Performance-kritisch — iptables traversiert linear pro
@@ -593,16 +608,16 @@ iptables -A OUTPUT -j NFLOG --nflog-prefix "agentbox-blocked: " --nflog-group 1 
     || iptables -A OUTPUT -j LOG --log-prefix "agentbox-blocked: " --log-level 4 2>/dev/null || true
 iptables -A OUTPUT -j DROP 2>/dev/null || true
 
-echo "[OK] Firewall-Regeln angewendet (HTTPS erlaubt, private Netze blockiert)"
+log_ok "Firewall-Regeln angewendet (HTTPS erlaubt, private Netze blockiert)"
 
 # --- Konnektivitaets-Test: beide Anthropic-Hosts ---
 echo ""
 echo "Teste Netzwerk-Konnektivitaet..."
 for _host in api.anthropic.com platform.claude.com; do
     if getent hosts "$_host" >/dev/null 2>&1; then
-        echo "[OK] DNS: $_host aufgeloest"
+        log_ok "DNS: $_host aufgeloest"
     else
-        echo "[WARN] DNS: $_host NICHT aufgeloest"
+        log_warn "DNS: $_host NICHT aufgeloest"
     fi
 done
 
@@ -633,7 +648,7 @@ _run_agent_update() {
     local _install="$AGENT_INSTALL"
 
     if [ -z "$_install" ]; then
-        echo "[INFO] Kein Update-Command fuer $_cmd in config.json — Versions-Check uebersprungen"
+        log_info "Kein Update-Command fuer $_cmd in config.json — Versions-Check uebersprungen"
         return
     fi
 
@@ -649,7 +664,7 @@ _run_agent_update() {
         npm*) _type="npm" ;;
         pip*) _type="pip" ;;
         *)
-            echo "[INFO] $_cmd: unbekannter Install-Backend-Typ ('$_install') — Versions-Check uebersprungen"
+            log_info "$_cmd: unbekannter Install-Backend-Typ ('$_install') — Versions-Check uebersprungen"
             return
             ;;
     esac
@@ -667,7 +682,7 @@ _run_agent_update() {
     _pkg="${_pkg%%==*}"
 
     if [ -z "$_pkg" ]; then
-        echo "[INFO] $_cmd: konnte Package-Name nicht aus '$_install' extrahieren — Versions-Check uebersprungen"
+        log_info "$_cmd: konnte Package-Name nicht aus '$_install' extrahieren — Versions-Check uebersprungen"
         return
     fi
 
@@ -679,14 +694,14 @@ _run_agent_update() {
     case "$_type" in
         npm)
             command -v npm &> /dev/null || {
-                echo "[INFO] $_cmd: npm fehlt im Sandbox — Versions-Check uebersprungen"
+                log_info "$_cmd: npm fehlt im Sandbox — Versions-Check uebersprungen"
                 return
             }
             _remote=$(timeout 10 npm view "$_pkg" version 2>/dev/null | tr -d '[:space:]' || echo "")
             ;;
         pip)
             command -v pip3 &> /dev/null || {
-                echo "[INFO] $_cmd: pip3 fehlt im Sandbox — Versions-Check uebersprungen"
+                log_info "$_cmd: pip3 fehlt im Sandbox — Versions-Check uebersprungen"
                 return
             }
             _remote=$(timeout 10 pip3 index versions "$_pkg" 2>/dev/null \
@@ -702,12 +717,12 @@ _run_agent_update() {
     esac
 
     if [ -z "$_remote" ]; then
-        echo "[INFO] $_cmd: $_type-Registry nicht erreichbar — Versions-Check uebersprungen (lokal: ${_local:-?})"
+        log_info "$_cmd: $_type-Registry nicht erreichbar — Versions-Check uebersprungen (lokal: ${_local:-?})"
         return
     fi
 
     if [ -n "$_local" ] && [ "$_local" = "$_remote" ]; then
-        echo "[OK] $_cmd aktuell ($_local)"
+        log_ok "$_cmd aktuell ($_local)"
         return
     fi
 
@@ -764,19 +779,19 @@ _run_agent_update() {
     wait "$_hb_pid" 2>/dev/null || true
 
     if [ "$_update_rc" = "0" ]; then
-        echo "[OK] $_cmd aktualisiert auf $_remote"
+        log_ok "$_cmd aktualisiert auf $_remote"
     else
         # 124 = SIGTERM nach Timeout; 137 = SIGKILL nach -k grace; alles
         # andere ist ein echter npm/pip-Fehler (Registry, Disk, Deps, …).
         case "$_update_rc" in
             124|137)
-                echo "[WARN] $_cmd Update Timeout (rc=$_update_rc, > 300s) — Sandbox bleibt auf ${_local:-?}."
+                log_warn "$_cmd Update Timeout (rc=$_update_rc, > 300s) — Sandbox bleibt auf ${_local:-?}."
                 echo "       Wahrscheinlich langsame Registry oder noch kalter Cache."
                 echo "       Nach dem ersten erfolgreichen Run ist der Cache warm und der naechste"
                 echo "       Update-Run laeuft in wenigen Sekunden durch."
                 ;;
             *)
-                echo "[WARN] $_cmd Update fehlgeschlagen (rc=$_update_rc) — Sandbox bleibt auf ${_local:-?}. Letzte Log-Zeilen:"
+                log_warn "$_cmd Update fehlgeschlagen (rc=$_update_rc) — Sandbox bleibt auf ${_local:-?}. Letzte Log-Zeilen:"
                 ;;
         esac
         tail -5 /tmp/agent-update.log 2>/dev/null | sed 's/^/         /' || true

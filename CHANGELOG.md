@@ -5,6 +5,31 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.6] - 2026-04-17
+
+### Changed — Sandbox-Init-Logging angeglichen
+
+Etappe 5 Teil 2 aus `refactor.md`.
+
+- `wsl-sandbox-init.sh`: die ~34 `echo "[OK] ..."` / `"[INFO] ..."` /
+  `"[WARN] ..."` / `"[FEHLER] ..."`-Zeilen wurden durch
+  `log_ok`/`log_info`/`log_warn`/`log_error` ersetzt. Dadurch
+  bekommt der Sandbox-Init jetzt die gleichen ANSI-Farben wie
+  `wsl-ai-start.sh` (zuvor: nur im Host-Part gruen/gelb/rot, in der
+  Sandbox plain).
+- Die `log_*`-Funktionen sind **inline** am Anfang von
+  `wsl-sandbox-init.sh` definiert (nicht aus `lib/log.sh` gesourced),
+  weil das Script in der ephemeren Distro laeuft und `_control/lib/`
+  dort nicht gemounted ist — bewusst: keine neue Mount-Route nur fuer
+  Logging. Kleine Duplikation mit `lib/log.sh` im Kauf genommen.
+
+### Notes
+
+Semantisch identisches Output-Format (`[LEVEL] message`) — Scripts
+oder Hooks, die nach den Prefixen grep'en, bleiben unveraendert
+funktionsfaehig. Kein Template-Rebuild noetig, kein Installer-Pfad-
+Wechsel. `.update_class` bleibt `minor`.
+
 ## [2.0.5] - 2026-04-17
 
 ### Changed — Logging-Helper zentralisiert, Config-Topologie dokumentiert

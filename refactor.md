@@ -149,19 +149,22 @@ Ziel: Befund F, H. Niedrige Prio. Bewusst in Teil 1 + Teil 2 gesplittet.
   (`config.json` vs. `type_defaults.json`, `lib/config.sh` als
   kanonische Lese-Schnittstelle).
 
-### Teil 2 (offen)
+### Teil 2 ✅ 2.0.6
 
-- [ ] **5.2b** `wsl-sandbox-init.sh` → Bulk-Replace der plain
-  `echo "[OK] ..."`/`"[WARN] ..."`-Zeilen durch `log_ok`/`log_warn`.
-  Achtung: das Script laeuft in der Sandbox und hat keinen Zugriff
-  auf `_control/lib/`. Optionen: log-Funktionen inlinen (kleine
-  Duplikation, aber selbsterhaltend), oder `lib/log.sh` als separaten
-  Param uebergeben und temporaer schreiben. Entscheidung offen.
-- [ ] **5.4** Stderr-Split fuer WARN/ERROR als Folge-Ticket
-  (semantisch sauberer, aber potenziell pipe-breaking — nicht mit
-  5.2b mischen).
+- [x] **5.2b** `wsl-sandbox-init.sh` → 34 `echo "[LEVEL] ..."`-Zeilen
+  auf `log_ok`/`log_info`/`log_warn`/`log_error` umgestellt.
+  Entscheidung: `log_*`-Funktionen **inline** am Scriptanfang
+  (identisch zu `lib/log.sh`), weil `_control/` bewusst nicht in die
+  Sandbox gemounted wird. Kleine Duplikation mit `lib/log.sh`
+  akzeptiert — keine neue Mount-Route nur fuer Logging.
 
-**Commit 5 Teil 1** = 2.0.5.
+### Teil 3 (offen, Folge-Ticket)
+
+- [ ] **5.4** Stderr-Split fuer WARN/ERROR — semantisch sauberer,
+  aber potenziell pipe-breaking fuer bestehende User-Scripts. Separate
+  Etappe, damit Revert trivial bleibt.
+
+**Commit 5 Teil 1** = 2.0.5. **Commit 5 Teil 2** = 2.0.6.
 
 ---
 
@@ -186,5 +189,6 @@ Ziel: Befund F, H. Niedrige Prio. Bewusst in Teil 1 + Teil 2 gesplittet.
 | 2026-04-17 | 1.3 + Etappe 2 | 2.0.3 | done (Smoke-Test User offen) |
 | 2026-04-17 | Etappe 4 (Agent-Liste aus Config) | 2.0.4 | done (Smoke-Test User offen) |
 | 2026-04-17 | Etappe 5 Teil 1 (`lib/log.sh` + Config-Topologie-Doku) | 2.0.5 | done |
+| 2026-04-17 | Etappe 5 Teil 2 (sandbox-init [OK]-Replace) | 2.0.6 | done |
 | — | Etappe 3 (`lib/config.ps1`) | — | offen |
-| — | Etappe 5 Teil 2 (sandbox-init [OK]-Replace, Stderr-Split) | — | offen |
+| — | Etappe 5 Teil 3 (Stderr-Split) | — | offen (Follow-up) |
