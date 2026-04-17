@@ -1448,5 +1448,8 @@ if ($startNow) {
         Invoke-Native { & wsl.exe -d agentbox-host -e bash -li -c "agentbox" }
     }
 } else {
-    Write-Host "OK — manuell starten via Desktop-Shortcut oder 'wsl -d agentbox-host' + 'agentbox'." -ForegroundColor Gray
+    Write-Host "OK — manuell starten via Desktop-Shortcut (oder Win-Taste + 'agentbox')." -ForegroundColor Gray
 }
+
+# Installer fertig — PS-Fenster kann zu.
+exit 0

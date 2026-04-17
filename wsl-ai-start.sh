@@ -110,41 +110,12 @@ print(f\"Session: {d.get('id','')}  Agent: {d.get('agent','')}  Projekt: {d.get(
 fi
 
 # --- Auto-Modus (aus .bashrc) ---
+# Kein Prompt: wer agentbox-host per Shortcut/`wsl -d agentbox-host -e bash
+# -li -c agentbox` oeffnet, will starten — nicht gefragt werden. Der
+# "agentbox starten? [J/n]"-Countdown war redundant und hat den Start
+# jedes Mal um auto_start_timeout Sekunden verzoegert.
+# Fuer Plain-Shell ohne agentbox: `wsl -d agentbox-host --cd ~`.
 if [ "$AUTO_MODE" = true ]; then
-
-    # Auto-Start-Timeout aus Config (Fallback: 5s)
-    _auto_timeout=5
-    _cfg_file="${AI_PROJECTS_ROOT:-}/_control/config.json"
-    if [ -f "$_cfg_file" ] && command -v python3 &> /dev/null; then
-        _auto_timeout=$(python3 -c "
-import json
-try:
-    with open('$_cfg_file') as f:
-        v = json.load(f).get('auto_start_timeout', 5)
-    print(int(v) if 1 <= int(v) <= 60 else 5)
-except:
-    print(5)
-" 2>/dev/null || echo 5)
-    fi
-
-    echo ""
-    echo -e "\033[0;36magentbox starten? [J/n]\033[0m (automatisch in ${_auto_timeout}s)"
-    if read -r -t "$_auto_timeout" answer; then
-        # Windows-Terminals schicken gern CRLF; `read -r` strippt nur LF,
-        # das CR bleibt und macht aus "n" ein "n\r" → matchte vorher kein
-        # case-Pattern, und der User landete entgegen seiner Eingabe im
-        # agentbox-Start. Trailing CR und Whitespace wegraeumen, dann
-        # case-insensitiv vergleichen.
-        answer="${answer%$'\r'}"
-        answer="${answer#"${answer%%[![:space:]]*}"}"
-        answer="${answer%"${answer##*[![:space:]]}"}"
-        case "$answer" in
-            n|N|nein|Nein|NEIN|no|No|NO)
-                echo "OK — normales Terminal."
-                exit 0
-                ;;
-        esac
-    fi
     echo ""
 fi
 
