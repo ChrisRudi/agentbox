@@ -144,6 +144,83 @@ else
     mount | grep -F "$WORKSPACE/src" | sed 's/^/           /'
 fi
 
+# --- Hybrid-Workspace: Heavy-I/O auf ext4 (agentbox 2.0) ---
+#
+# Ausgangslage: /workspace/src ist per Bind-Mount auf DrvFs (Windows-NTFS
+# via 9P) — crash-safe + OneDrive-synced, aber 4-11x langsamer als ext4.
+# Heavy-I/O-Verzeichnisse (node_modules, dist, Build-Artefakte) erzeugen
+# zehntausende Dateien pro Install/Build. Auf DrvFs = 125 files/s, auf
+# ext4 = 500 files/s.
+#
+# Loesung: fuer jedes bekannt-ephemere Verzeichnis einen leeren ext4-
+# Ordner unter /var/agentbox-overlay/ anlegen und per bind-mount UEBER
+# den DrvFs-Pfad mounten. Schreibvorgaenge des Agents gehen dann auf
+# ext4 (schnell), die DrvFs-Version bleibt unberuehrt darunter liegen.
+#
+# Trade-off: Inhalte in diesen Verzeichnissen sind SESSION-EPHEMER —
+# bei Session-Ende gehen sie verloren (die Distro wird unregistered,
+# das vhdx-Filesystem verschwindet). Fuer node_modules/dist/build ist
+# das akzeptabel (jederzeit aus package.json/requirements.txt regener-
+# ierbar). Quellcode (src/...) bleibt sicher auf DrvFs.
+#
+# Kein Overlay fuer .git: zu riskant, wuerde Commit-History opfern.
+OVERLAY_ROOT="/var/agentbox-overlay"
+mkdir -p "$OVERLAY_ROOT" 2>/dev/null || true
+# tmpfs-Mount als Safety-Net, falls jemand OVERLAY_ROOT bewusst mit anderer
+# Quelle befuellen wuerde — wir wollen sicher auf ext4 sein.
+# (Kein tmpfs benutzen, weil das in RAM landet — ext4 im vhdx ist schon das
+# schnellste Filesystem hier, und RAM ist knapp bei 4GB-Default.)
+
+_overlay_bind_ext4() {
+    # $1 = subdir relativ zu /workspace/src (z.B. "node_modules")
+    local _sub="$1"
+    local _src_path="$WORKSPACE/src/$_sub"
+    local _ext4_path="$OVERLAY_ROOT/$_sub"
+
+    # Ext4-Zielordner vorbereiten (leer, auf Wurzel-FS des vhdx).
+    mkdir -p "$_ext4_path" 2>/dev/null || return 1
+    chown "$SANDBOX_USER:$SANDBOX_USER" "$_ext4_path" 2>/dev/null || true
+
+    # Mount-Punkt sicherstellen: wenn der Agent spaeter z.B. `npm install`
+    # macht und /workspace/src/node_modules noch nicht existiert, wuerde
+    # npm den Ordner auf DrvFs anlegen. Wir schaffen den Pfad praeemptiv
+    # (auf DrvFs) und ueberlagern ihn gleich wieder mit ext4 — der
+    # DrvFs-Ordner existiert dann zwar, bleibt aber durch den Overmount
+    # unsichtbar und leer.
+    if [ ! -d "$_src_path" ]; then
+        if ! mkdir -p "$_src_path" 2>/dev/null; then
+            # Src ist read-only oder nicht beschreibbar — stillen Skip.
+            return 1
+        fi
+    fi
+
+    if mount --bind "$_ext4_path" "$_src_path" 2>/dev/null; then
+        mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$_src_path" 2>/dev/null || true
+        echo "[OK] Hybrid-Overlay (ext4): src/$_sub"
+        return 0
+    fi
+    return 1
+}
+
+# Liste der ephemeren Verzeichnisse. Bewusst konservativ: nur Ordner, die
+# von package managern / Build-Systemen vollstaendig aus deklarativen
+# Sources (package.json, requirements.txt, pyproject.toml, Cargo.toml)
+# regeneriert werden koennen. Kein .git, keine src/-Unterordner.
+for _ephemeral_sub in \
+    node_modules \
+    .next \
+    dist \
+    build \
+    out \
+    target \
+    __pycache__ \
+    .pytest_cache \
+    .mypy_cache \
+    .ruff_cache \
+    ; do
+    _overlay_bind_ext4 "$_ephemeral_sub" || true
+done
+
 # --- Paket-Cache mounten (persistiert ueber Sessions) ---
 if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
     # npm-Cache
@@ -350,6 +427,87 @@ if getent hosts api.anthropic.com >/dev/null 2>&1; then
 else
     echo "[WARN] DNS-Resolution schlaegt fehl — siehe Log"
     sed 's/^/       /' /etc/resolv.conf
+fi
+
+# --- Netzwerk-Tuning 2.0 ---
+# Ziel: Host-Level-Performance fuer HTTPS (npm/pip/AI-APIs, git push).
+# WSL2-Default-Kernelparameter sind konservativ; die Adjustments sind
+# additiv (alles hinter `|| true`) — wenn der Kernel etwas nicht
+# unterstuetzt (alte WSL2-Builds, fehlendes tcp_bbr-Modul), bleibt das
+# stillschweigende Verhalten der 1.x-Defaults erhalten.
+echo ""
+echo "Wende Netzwerk-Tuning an (TCP BBR, TFO, Socket-Buffer, MTU)..."
+
+# TCP BBR Congestion Control — Googles Algorithmus, robust gegen
+# Paketverlust. WSL2-NAT fuegt einen extra Hop ein, BBR kompensiert.
+modprobe tcp_bbr 2>/dev/null || true
+if sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1; then
+    echo "[OK] TCP Congestion Control: bbr"
+else
+    echo "[INFO] TCP BBR nicht verfuegbar — bleibe bei Kernel-Default (cubic)"
+fi
+
+# TCP Fast Open — spart einen Roundtrip pro neuer HTTPS-Connection
+# (Client+Server). Wert 3 = sowohl ausgehende als auch eingehende
+# Connections nutzen TFO. Jeder npm/pip/git/AI-API-Call profitiert.
+sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1 || true
+
+# Socket-Buffer — WSL2-Defaults sind ~200 KB. Auf 16 MB heben, damit
+# BDP (Bandwidth-Delay-Product) fuer ~1 Gbps-Links nicht limitiert ist.
+# Das sind Maximalwerte, Auto-Tuning skaliert on-demand darunter.
+sysctl -w net.core.rmem_max=16777216 >/dev/null 2>&1 || true
+sysctl -w net.core.wmem_max=16777216 >/dev/null 2>&1 || true
+sysctl -w net.ipv4.tcp_rmem="4096 131072 16777216" >/dev/null 2>&1 || true
+sysctl -w net.ipv4.tcp_wmem="4096 131072 16777216" >/dev/null 2>&1 || true
+
+# PMTU-Discovery — bei MTU-Mismatches (VPN, Corporate-Proxies) nicht
+# hart droppen, sondern TCP-Segmentgroesse auto-reduzieren. Schuetzt
+# TFO+BBR-Gewinne vor Fragmentierungs-Stalls.
+sysctl -w net.ipv4.tcp_mtu_probing=1 >/dev/null 2>&1 || true
+
+echo "[OK] Netzwerk-Tuning angewendet (rmem/wmem=16MB, TFO=3, PMTU-Probing)"
+
+# --- Lokaler DNS-Cache (dnsmasq) ---
+# Optional: wenn dnsmasq im Template installiert ist, lokalen Cache
+# vor 8.8.8.8/1.1.1.1 schalten. npm/pip machen 50-200 DNS-Queries pro
+# Install — Cache reduziert Latenz von 28ms auf <1ms fuer wiederholte
+# Lookups. Bei fehlender Installation: direkter Upstream wie 1.x.
+if command -v dnsmasq >/dev/null 2>&1; then
+    # Bestehenden dnsmasq aus dem Weg raeumen
+    pkill -f '^dnsmasq' 2>/dev/null || true
+
+    mkdir -p /var/run/dnsmasq 2>/dev/null || true
+    cat > /etc/dnsmasq.conf << 'DNSMASQEOF'
+# agentbox DNS-Cache — laeuft nur auf 127.0.0.1
+listen-address=127.0.0.1
+bind-interfaces
+no-resolv
+no-hosts
+cache-size=1000
+neg-ttl=60
+domain-needed
+bogus-priv
+server=8.8.8.8
+server=1.1.1.1
+server=8.8.4.4
+DNSMASQEOF
+
+    if dnsmasq --conf-file=/etc/dnsmasq.conf 2>/dev/null; then
+        # resolv.conf auf Localhost umbiegen. immutable-Flag vorher loesen.
+        chattr -i /etc/resolv.conf 2>/dev/null || true
+        cat > /etc/resolv.conf << 'RESOLVEOF'
+nameserver 127.0.0.1
+nameserver 8.8.8.8
+options timeout:1 attempts:2 single-request-reopen
+RESOLVEOF
+        chmod 644 /etc/resolv.conf
+        chattr +i /etc/resolv.conf 2>/dev/null || true
+        echo "[OK] DNS-Cache: dnsmasq auf 127.0.0.1 aktiv (cache-size=1000)"
+    else
+        echo "[INFO] dnsmasq-Start fehlgeschlagen — direkte Upstream-Resolver aktiv"
+    fi
+else
+    echo "[INFO] dnsmasq nicht installiert — direkte Upstream-Resolver aktiv"
 fi
 
 # --- iptables-Regeln anwenden ---

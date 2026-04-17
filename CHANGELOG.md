@@ -5,6 +5,68 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-17
+
+### Added — Performance-Architektur
+
+Massiv-Umbau auf Hybrid-Architektur (vhdx-Template + ext4-Overlays) und
+Netzwerk-Tuning. Der tar.gz-/DrvFs-Pfad bleibt als transparenter
+Fallback erhalten — bei aelteren WSL-Versionen oder fehlgeschlagenem
+vhdx-Import laeuft alles wie in 1.x.
+
+- **vhdx-Template-Fastpath** — `win-setup-core.ps1` exportiert zusaetzlich
+  zum tar.gz eine `template.vhdx` via `wsl --export --vhd`. Beim Session-
+  Start in `wsl-ai-start.sh` wird die vhdx per File-Copy (~3-5s auf SSD)
+  dupliziert und per `wsl --import-in-place` (<1s) als Distro registriert.
+  Gesamter Sandbox-Start: ~5s statt 30-120s bei tar.gz-Extract.
+  Fallback transparent auf tar.gz wenn `--export --vhd` oder
+  `--import-in-place` nicht verfuegbar (WSL <2.0.x). Best-Effort: schlaegt
+  der vhdx-Export fehl, wird stillschweigend nur das tar.gz gepflegt.
+
+- **Hybrid-Workspace (ext4-Overlays fuer Heavy-I/O)** — in
+  `wsl-sandbox-init.sh` werden fuer bekannt-ephemere Verzeichnisse
+  (`node_modules`, `.next`, `dist`, `build`, `out`, `target`,
+  `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`) leere
+  ext4-Ordner unter `/var/agentbox-overlay/` angelegt und ueber den
+  DrvFs-Pfad im Workspace bind-gemountet. Schreibvorgaenge des Agents
+  gehen auf ext4 (500 files/s vs 125 files/s auf DrvFs), Quellcode-
+  Writes (`src/...`) gehen weiter direkt auf DrvFs/OneDrive. Kein
+  Overlay fuer `.git` — zu riskant fuer Commit-History.
+
+- **TCP BBR Congestion Control** — `sysctl -w
+  net.ipv4.tcp_congestion_control=bbr` in `wsl-sandbox-init.sh`, per
+  `modprobe tcp_bbr` mit Fallback auf Kernel-Default.
+
+- **TCP Fast Open (TFO)** — `net.ipv4.tcp_fastopen=3`, spart einen
+  Roundtrip pro HTTPS-Connection (npm/pip/git/AI-API).
+
+- **Socket-Buffer-Tuning** — `rmem_max`/`wmem_max`/`tcp_rmem`/`tcp_wmem`
+  auf 16 MB (default ~200 KB). Entspricht BDP fuer ~1 Gbps-Links.
+
+- **Lokaler DNS-Cache via dnsmasq** — `dnsmasq-base` ins Template
+  installiert, `wsl-sandbox-init.sh` startet dnsmasq auf 127.0.0.1 und
+  biegt `/etc/resolv.conf` dorthin um. DNS-Latenz fuer wiederholte
+  Lookups (npm/pip machen 50-200 pro Install) faellt von ~28ms auf <1ms.
+  Fallback auf direkte Upstream-Resolver, wenn `dnsmasq` nicht
+  installiert oder der Start fehlschlaegt.
+
+- **PMTU-Probing** — `net.ipv4.tcp_mtu_probing=1`, schuetzt TFO+BBR-
+  Gewinne vor Fragmentierungs-Stalls bei VPN/Corporate-Proxies.
+
+### Changed
+
+- `.update_class` auf `major` — Release braucht `install.ps1`-Rerun als
+  Admin, damit das neue Template (mit `dnsmasq-base`) gebaut und die
+  vhdx erzeugt wird. Ohne Rebuild bleibt der tar.gz-Pfad der 1.x-
+  Semantik aktiv (kein Regression-Risiko, aber keine 2.0-Gewinne).
+
+### Migration
+
+Bestehende 1.x-Installationen: `install.ps1` erneut als Admin laufen
+lassen. Der Template-Rebuild passiert automatisch (Config-Hash aendert
+sich durch `dnsmasq-base` und die neuen sysctls). Kein manuelles
+Aufraeumen noetig.
+
 ## [1.0.25] - 2026-04-17
 
 ### Fixed

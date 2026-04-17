@@ -27,6 +27,11 @@ if (-not (Test-Path -LiteralPath $sandboxDir)) {
     [System.IO.Directory]::CreateDirectory($sandboxDir) | Out-Null
 }
 $templatePath = Join-Path $sandboxDir "template.tar.gz"
+# agentbox 2.0: zusaetzlich ein vhdx-Template fuer den schnellen Session-
+# Start (import-in-place statt tar.gz-Extract). Additiv: das tar.gz bleibt
+# der authoritative Cache, das vhdx ist Best-Effort und wird beim Start
+# bevorzugt, faellt aber auf tar.gz zurueck wenn WSL zu alt oder vhdx fehlt.
+$templateVhdPath = Join-Path $sandboxDir "template.vhdx"
 $tempBase = Join-Path $env:TEMP "agentbox"
 $tempSetup = Join-Path $tempBase "setup"
 $distroName = "agentbox-template-build"
@@ -94,6 +99,11 @@ Write-Host "[OK] WSL2 aktiv" -ForegroundColor Green
 function Get-AgentboxConfigHash {
     param($cfg)
     $parts = @()
+    # Template-Schema-Version: hier hochzaehlen wenn sich am Template-Build-
+    # Skript etwas aendert, das unabhaengig von config.json einen Rebuild
+    # erzwingen soll (neue apt-Pakete, Agent-Install-Command-Patches etc.).
+    # 2 = 2.0.0 (dnsmasq-base hinzugefuegt).
+    $parts += "template_schema=2"
     if ($cfg) {
         $parts += ($cfg.PSObject.Properties |
             Where-Object { $_.Name -match '^agent_' -or $_.Name -in @('ubuntu_image_url','nodejs_setup_url') } |
@@ -497,7 +507,7 @@ apt-get update
 # apt-utils zuerst, damit debconf keine 'delaying package configuration'-
 # Warnung mehr auf stderr schreibt (die PS 5.1 als Fehler interpretiert).
 apt-get install -y -qq --no-install-recommends apt-utils
-apt-get install -y -qq --no-install-recommends bash curl wget git iptables ca-certificates dnsutils
+apt-get install -y -qq --no-install-recommends bash curl wget git iptables ca-certificates dnsutils dnsmasq-base
 
 step "       [2/5] Node.js installieren..."
 curl -fsSL __NODEJS_URL__ -o /tmp/nodesource_setup.sh
@@ -636,6 +646,32 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "FEHLER: Template-Export fehlgeschlagen." -ForegroundColor Red
     & wsl.exe --unregister $distroName 2>&1 | Out-Null
     exit 1
+}
+
+# --- agentbox 2.0: zusaetzlich vhdx exportieren (Best-Effort) ---
+# `wsl --export --vhd` ist ab WSL 2.0.x (2023) verfuegbar. Bei aelteren
+# WSL-Versionen schlaegt der Call fehl — wir loggen nur und machen weiter
+# ohne vhdx. Der tar.gz-Fallback bleibt authoritative.
+if (Test-Path -LiteralPath $templateVhdPath) {
+    try { [System.IO.File]::Delete($templateVhdPath) } catch { }
+}
+$vhdExportOut = @(& wsl.exe --export --vhd $distroName $templateVhdPath 2>&1 | ForEach-Object { "$_" })
+if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $templateVhdPath)) {
+    $vhdSize = [math]::Round((Get-Item $templateVhdPath).Length / 1MB, 1)
+    Write-Host "[OK] Template-VHDX exportiert: $templateVhdPath ($vhdSize MB)" -ForegroundColor Green
+} else {
+    # vhdx nicht verfuegbar — nicht fatal, 1.x-Pfad (tar.gz) funktioniert weiter.
+    Write-Host "[INFO] VHDX-Export nicht verfuegbar (WSL zu alt?) — Session-Start nutzt tar.gz-Pfad" -ForegroundColor Gray
+    if ($vhdExportOut.Count -gt 0) {
+        foreach ($line in $vhdExportOut) {
+            $clean = ($line -replace "`0", "").Trim()
+            if ($clean) { Write-Host "       $clean" -ForegroundColor DarkGray }
+        }
+    }
+    # Halb-erzeugte Datei wegraeumen, falls da.
+    if (Test-Path -LiteralPath $templateVhdPath) {
+        try { [System.IO.File]::Delete($templateVhdPath) } catch { }
+    }
 }
 
 # Config-Hash speichern (fuer naechsten Skip-Check)

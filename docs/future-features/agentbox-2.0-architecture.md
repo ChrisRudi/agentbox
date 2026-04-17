@@ -1,4 +1,8 @@
-# Future Feature: agentbox 2.0 — Performance-Architektur
+# agentbox 2.0 — Performance-Architektur
+
+> **Status: in 2.0.0 implementiert.** Der tar.gz-/DrvFs-Pfad bleibt als
+> transparenter Fallback erhalten — bei aelteren WSL-Versionen oder
+> fehlgeschlagenem vhdx-Import laeuft alles wie in 1.x.
 
 ## Problem (1.x)
 

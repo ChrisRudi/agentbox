@@ -268,6 +268,12 @@ fi
 mkdir -p "$AGENTBOX_LOCAL_ROOT" 2>/dev/null || true
 
 TEMPLATE_PATH="$AGENTBOX_LOCAL_ROOT/sandbox/template.tar.gz"
+# agentbox 2.0: vhdx-Fastpath. Wenn das Template-Build eine vhdx erzeugt
+# hat (WSL 2.0.x+), nutzen wir die fuer Session-Start (Copy + import-in-
+# place statt tar.gz-Extract, ~5s statt 30-120s). Fehlt die Datei oder
+# versteht die WSL-Installation kein --import-in-place, faellt der
+# Start-Pfad transparent auf tar.gz zurueck.
+TEMPLATE_VHD_PATH="$AGENTBOX_LOCAL_ROOT/sandbox/template.vhdx"
 CACHE_DIR="$AGENTBOX_LOCAL_ROOT/cache"
 SESSIONS_DIR="$AGENTBOX_LOCAL_ROOT/sessions"
 AUTH_BASE="$AGENTBOX_LOCAL_ROOT/auth"
@@ -381,6 +387,13 @@ _agentbox_cleanup() {
     if [ -n "${DISTRO_NAME:-}" ] && _wsl_distro_exists "$DISTRO_NAME"; then
         wsl.exe --terminate "$DISTRO_NAME" >/dev/null 2>&1 || true
         wsl.exe --unregister "$DISTRO_NAME" >/dev/null 2>&1 || true
+    fi
+    # vhdx-Fastpath hinterlaesst die session.vhdx im %TEMP%\agentbox\...\-
+    # Ordner, weil `wsl --unregister` bei `--import-in-place`-Distros die
+    # Datei nicht loescht (sie gehoert dem User, nicht WSL). Best-effort
+    # entfernen; der naechste Start wischt den Ordner ohnehin neu.
+    if [ -n "${LINUX_TEMP_DIR:-}" ] && [ -d "$LINUX_TEMP_DIR" ]; then
+        rm -f "$LINUX_TEMP_DIR/session.vhdx" 2>/dev/null || true
     fi
     return $_ec
 }
@@ -1307,19 +1320,25 @@ METAEOF
 log_ok "Session-Snapshot erstellt: $SESSION_ID"
 
 # --- Sandbox-Distro importieren ---
-# `wsl --import` extrahiert das template.tar.gz in das Ziel-Verzeichnis —
-# das kostet beim ersten Start pro Rechner typischerweise 30-120 Sekunden
-# (Template ist ~1 GB gepackt, ~3 GB entpackt, abhaengig von aktivierten
-# Agents). Auf langsamen SSDs oder bei OneDrive-gebundenen AppData-Pfaden
-# kann es laenger dauern. Kein Hang, kein Bug — inhaerent zur "ephemere
-# Distro pro Session"-Architektur. Wir zeigen den Hinweis, damit der User
-# nicht auf Ctrl+C drueckt wenn die Zeile ein paar Minuten steht.
+# agentbox 2.0: Zwei Pfade je nach Template-Format.
+#
+# Fast-Path (vhdx): existiert template.vhdx, kopieren wir sie auf einen
+# session-spezifischen Pfad (~3-5s File-Copy auf SSD) und registrieren sie
+# per `wsl --import-in-place` (<1s). Gesamt: ~5s Sandbox-Start.
+#
+# Legacy-Path (tar.gz): `wsl --import` extrahiert template.tar.gz in das
+# Ziel-Verzeichnis — 30-120s pro Start, weil tar.gz-Extract I/O-gebunden
+# und auf DrvFs besonders langsam ist. Bleibt als Fallback fuer WSL-
+# Versionen ohne --import-in-place / ohne vhdx-Export.
 echo ""
-log_info "Importiere Sandbox-Distro (extrahiert template.tar.gz, 30-120s)..."
 
 # Windows-Pfad fuer WSL-Import
 WIN_PROJECT_DIR=$(wslpath -w "$PROJECT_DIR" 2>/dev/null || echo "$PROJECT_DIR")
 WIN_TEMPLATE=$(wslpath -w "$TEMPLATE_PATH" 2>/dev/null || echo "$TEMPLATE_PATH")
+WIN_TEMPLATE_VHD=""
+if [ -f "$TEMPLATE_VHD_PATH" ]; then
+    WIN_TEMPLATE_VHD=$(wslpath -w "$TEMPLATE_VHD_PATH" 2>/dev/null || echo "$TEMPLATE_VHD_PATH")
+fi
 
 # Windows-Temp-Verzeichnis ermitteln (USERNAME in WSL != Windows).
 # Mehrstufig wie _resolve_agentbox_local_root: PowerShell zuerst (UTF-8-faehig,
@@ -1374,12 +1393,50 @@ wsl.exe -l -q 2>/dev/null | tr -d '\000\r' | while IFS= read -r _d; do
     esac
 done
 
-# `if !` statt `cmd; if [ $? -ne 0 ]` — letzteres waere unter set -e tot.
-if ! wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1; then
-    log_error "WSL-Import fehlgeschlagen."
-    exit 1
+# --- Import: Fast-Path (vhdx, import-in-place) bevorzugt, tar.gz-Fallback ---
+_agentbox_import_ok=0
+if [ -n "$WIN_TEMPLATE_VHD" ] && [ -f "$TEMPLATE_VHD_PATH" ]; then
+    log_info "Importiere Sandbox-Distro (vhdx fast-path, ~5s)..."
+    # Session-spezifische vhdx-Kopie im WIN_TEMP_DIR. Die Template-vhdx
+    # selbst darf nicht direkt als Distro registriert werden — import-in-
+    # place macht die Datei exklusiv-lock, parallele Sessions bzw. der
+    # naechste Start wuerden dann EBUSY sehen.
+    SESSION_VHD_LINUX="$LINUX_TEMP_DIR/session.vhdx"
+    WIN_SESSION_VHD="${WIN_TEMP_DIR}\\session.vhdx"
+
+    # Copy: via Linux cp, nicht via PowerShell — spart einen Interop-Hop
+    # und nutzt Kernel-Copy direkt auf DrvFs.
+    if cp -f "$TEMPLATE_VHD_PATH" "$SESSION_VHD_LINUX" 2>/dev/null; then
+        # Exit-Code vor Pipe einfangen (`| tr` waere sonst last in pipe
+        # und maskiert wsl-Failure). Output separat bereinigen.
+        _vhd_import_out=$(wsl.exe --import-in-place "$DISTRO_NAME" "$WIN_SESSION_VHD" 2>&1 | tr -d '\000' || true)
+        _vhd_import_rc=${PIPESTATUS[0]}
+        if [ "$_vhd_import_rc" -eq 0 ]; then
+            _agentbox_import_ok=1
+            log_ok "Sandbox-Distro importiert (vhdx): $DISTRO_NAME"
+        else
+            log_info "import-in-place fehlgeschlagen (rc=$_vhd_import_rc) — fallback auf tar.gz"
+            if [ -n "$_vhd_import_out" ]; then
+                echo "$_vhd_import_out" | sed 's/^/       /'
+            fi
+            # Halb-registrierte Distro aufraeumen
+            wsl.exe --unregister "$DISTRO_NAME" 2>&1 | tr -d '\000' >/dev/null || true
+            rm -f "$SESSION_VHD_LINUX" 2>/dev/null || true
+        fi
+    else
+        log_info "vhdx-Copy fehlgeschlagen — fallback auf tar.gz"
+    fi
 fi
-log_ok "Sandbox-Distro importiert: $DISTRO_NAME"
+
+if [ "$_agentbox_import_ok" -ne 1 ]; then
+    log_info "Importiere Sandbox-Distro (extrahiert template.tar.gz, 30-120s)..."
+    # `if !` statt `cmd; if [ $? -ne 0 ]` — letzteres waere unter set -e tot.
+    if ! wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1; then
+        log_error "WSL-Import fehlgeschlagen."
+        exit 1
+    fi
+    log_ok "Sandbox-Distro importiert (tar.gz): $DISTRO_NAME"
+fi
 
 # --- Sandbox-Init-Skript kopieren ---
 # Zielpfad erst leeren, dann neu befuellen — so bleibt garantiert kein
