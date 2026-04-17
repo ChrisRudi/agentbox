@@ -4,7 +4,7 @@
     <strong>AI coding agents have full access to your filesystem.<br>agentbox changes that.</strong>
   </p>
   <p align="center">
-    <a href="#installation">Installation</a> · <a href="#supported-agents">Agents</a> · <a href="#daily-usage">Usage</a> · <a href="#security-model">Security</a> · <a href="#configuration">Config</a>
+    <a href="#installation">Installation</a> · <a href="#supported-agents">Agents</a> · <a href="#daily-usage">Usage</a> · <a href="#vs-code-integration-optional">VS Code</a> · <a href="#security-model">Security</a> · <a href="#configuration">Config</a>
   </p>
   <p align="center">
     🌍 <a href="./docs/README.de.md">Deutsch</a>
@@ -73,8 +73,9 @@ Same command. If agentbox is already installed, it pulls the latest version and 
 2. WSL2 template is built (Ubuntu Minimal + Node.js + Python3 + enabled AI CLIs)
 3. Windows Event Source and Scheduled Task are created
 4. WSL `.bashrc` is configured (auto-start)
-5. Desktop shortcut `agentbox.lnk` is created
-6. `.wslconfig` with resource limits is set (configurable via `config.json`)
+5. You're asked once: Windows Terminal / VS Code / both? (see [VS Code Integration](#vs-code-integration-optional))
+6. Desktop shortcut `agentbox.lnk` is created (plus `agentbox (VS Code).lnk` if you picked VS Code)
+7. `.wslconfig` with resource limits is set (configurable via `config.json`)
 
 Duration: approx. 3–5 minutes, one-time only. Updates are faster.
 </details>
@@ -190,6 +191,31 @@ Selection [1]: 1
 
 Only agents that are both **enabled** in `config.json` and **installed** in the template are shown.
 
+## VS Code Integration (Optional)
+
+Want to watch the agent edit files in **real-time**? agentbox can use VS Code as the launcher instead of (or alongside) Windows Terminal.
+
+On the first `install.ps1` run you're asked once:
+
+```
+Pick launcher for the agentbox shortcut:
+  [1] Windows Terminal  (default — lean, proven)
+  [2] VS Code           (live file-watch + agent-terminal in the editor)
+  [3] Both              (two shortcuts — you decide per click)
+```
+
+Pick **[2]** (or **[3]**) and agentbox wires everything for you — including `winget`-installing VS Code itself if it's missing (user-scope, no admin):
+
+- An `agentbox` **terminal profile** is smart-merged into your user `settings.json` (existing settings untouched; JSONC with comments is left alone and shown as a copy-paste snippet).
+- A **workspace file** (`agentbox.code-workspace`) opens your project root (`AI_Projects_Source\`) in VS Code.
+- A task with `runOn: folderOpen` starts the agent in a **dedicated terminal panel** the moment the workspace opens — confirm VS Code's one-time "trust this workspace" prompt and it's hands-off from there.
+
+**Result on double-click:** VS Code opens → agent boots in the terminal panel → every file the agent writes shows up **live** in the Explorer tree, auto-reloads in the editor, and shows diffs in the Git gutter. No container setup, no VS Code Server, no browser tab — native Windows fsnotify picks up the changes through the WSL bind-mount.
+
+Unlike other "agentbox"-style projects that rely on Docker devcontainers (extension dance, trust prompts, devcontainer.json to maintain) or VS Code Server in a browser tab, this is your **local native VS Code** — zero plugins required, zero container overhead on file I/O.
+
+To change later, edit `launch_ui` in `config.json` (`wt` | `vscode` | `both`) and re-run `install.ps1`. The choice persists across updates.
+
 ## Security Model
 
 ### Filesystem Isolation
@@ -277,6 +303,7 @@ All settings live in `config.json` (optional — all values have built-in defaul
 | `auto_start_timeout` | `5` | Auto-start countdown (seconds) |
 | `auto_update` | `true` | Check for updates at startup |
 | `auto_update_interval_hours` | `24` | Hours between update checks |
+| `launch_ui` | `""` (prompts once) | Shortcut target: `wt` (Windows Terminal), `vscode` (VS Code with live file-watch), or `both` |
 | `event_log_source` | `AIProjects` | Windows Event Log source name |
 | `scheduled_task_name` | `agentbox-task-runner` | Windows Scheduled Task name |
 

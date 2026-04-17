@@ -4,7 +4,7 @@
     <strong>AI-Coding-Agenten haben vollen Zugriff auf dein Dateisystem.<br>agentbox ändert das.</strong>
   </p>
   <p align="center">
-    <a href="#installation">Installation</a> · <a href="#unterstützte-agenten">Agenten</a> · <a href="#tägliche-nutzung">Nutzung</a> · <a href="#sicherheitsmodell">Sicherheit</a> · <a href="#konfiguration">Config</a>
+    <a href="#installation">Installation</a> · <a href="#unterstützte-agenten">Agenten</a> · <a href="#tägliche-nutzung">Nutzung</a> · <a href="#vs-code-integration-optional">VS Code</a> · <a href="#sicherheitsmodell">Sicherheit</a> · <a href="#konfiguration">Config</a>
   </p>
   <p align="center">
     🌍 <a href="../README.md">English</a>
@@ -73,8 +73,9 @@ Gleicher Befehl. Wenn agentbox bereits installiert ist, wird die neueste Version
 2. WSL2-Template wird gebaut (Ubuntu-Minimal + Node.js + Python3 + aktivierte AI-CLIs)
 3. Windows Event-Source und Scheduled Task werden angelegt
 4. WSL `.bashrc` wird konfiguriert (Auto-Start)
-5. Desktop-Shortcut `agentbox.lnk` wird erstellt
-6. `.wslconfig` mit Ressourcen-Limits gesetzt (konfigurierbar über `config.json`)
+5. Einmalige Abfrage: Windows Terminal / VS Code / beide? (siehe [VS Code Integration](#vs-code-integration-optional))
+6. Desktop-Shortcut `agentbox.lnk` wird erstellt (plus `agentbox (VS Code).lnk` bei VS-Code-Wahl)
+7. `.wslconfig` mit Ressourcen-Limits gesetzt (konfigurierbar über `config.json`)
 
 Dauer: ca. 3-5 Minuten, einmalig. Updates sind schneller.
 </details>
@@ -190,6 +191,31 @@ Auswahl [1]: 1
 
 Es werden nur Agenten angezeigt, die in `config.json` **aktiviert** und im Template **installiert** sind.
 
+## VS Code Integration (optional)
+
+Du willst dem Agenten **live** zuschauen, wie er Dateien bearbeitet? agentbox kann VS Code als Launcher verwenden — statt oder parallel zu Windows Terminal.
+
+Beim ersten `install.ps1`-Lauf wirst du einmalig gefragt:
+
+```
+Launcher fuer den agentbox-Shortcut waehlen:
+  [1] Windows Terminal (Default, schlank, bewaehrt)
+  [2] VS Code          (Live-Filewatch + Agent-Terminal im Editor)
+  [3] Beide            (zwei Shortcuts — du entscheidest pro Klick)
+```
+
+Bei **[2]** (oder **[3]**) verdrahtet agentbox alles für dich — inklusive `winget`-Install von VS Code selbst falls nicht vorhanden (user-scope, kein Admin):
+
+- Ein **Terminal-Profil `agentbox`** wird per Smart-Merge in deine User-`settings.json` geschrieben (bestehende Settings bleiben unangetastet; JSONC mit Kommentaren wird nicht verändert, stattdessen bekommst du das Snippet zum Selbst-Einfügen auf der Konsole).
+- Eine **Workspace-Datei** (`agentbox.code-workspace`) öffnet in VS Code deinen Projekt-Root (`AI_Projects_Source\`).
+- Ein Task mit `runOn: folderOpen` startet den Agent in einem **dedicated Terminal-Panel**, sobald das Workspace geöffnet wird — einmal "trust this workspace" bestätigen, danach läuft's ohne weitere Interaktion.
+
+**Effekt beim Doppelklick:** VS Code öffnet sich → Agent läuft im Terminal-Panel → jede Datei die der Agent schreibt erscheint **live** im Explorer-Tree, reloaded sich automatisch im Editor, und zeigt Diffs in der Git-Gutter. Kein Container-Setup, kein VS Code Server, kein Browser-Tab — Windows-nativer fsnotify greift die Änderungen über den WSL-Bind-Mount ab.
+
+Andere "agentbox"-Projekte setzen auf Docker-Devcontainer (Extension-Tanz, Trust-Prompts, `.devcontainer/devcontainer.json`-Pflege) oder VS Code Server im Browser-Tab. Hier ist's dein **lokaler nativer VS Code** — null Plugins nötig, null Container-Overhead beim File-I/O.
+
+Später ändern: `launch_ui` in `config.json` (`wt` | `vscode` | `both`) setzen und `install.ps1` neu laufen lassen. Die Wahl überlebt Updates.
+
 ## Sicherheitsmodell
 
 ### Dateisystem-Isolation
@@ -277,6 +303,7 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 | `auto_start_timeout` | `5` | Auto-Start-Countdown (Sekunden) |
 | `auto_update` | `true` | Beim Start nach Updates suchen |
 | `auto_update_interval_hours` | `24` | Stunden zwischen Update-Checks |
+| `launch_ui` | `""` (Abfrage beim ersten Run) | Shortcut-Ziel: `wt` (Windows Terminal), `vscode` (VS Code mit Live-Filewatch) oder `both` |
 | `event_log_source` | `AIProjects` | Windows Event-Log-Quellname |
 | `scheduled_task_name` | `agentbox-task-runner` | Windows Scheduled-Task-Name |
 
