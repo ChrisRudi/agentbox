@@ -105,26 +105,33 @@ betroffen).
 
 ---
 
-## Etappe 4 — Agent-Liste konsolidieren (Befund C) (`minor`)
+## Etappe 4 — Agent-Liste konsolidieren (Befund C) (`minor`) ✅ 2.0.4
 
-Ziel: `wsl-sandbox-init.sh` nutzt `lib/config.sh` für Auth-Mount und
-Auto-Approve statt hartcodierte Listen.
+Ziel: Auth-Mount zieht Agent-Liste aus `config.json`, nicht mehr
+hartcodiert. `wsl-sandbox-init.sh` hat kein eigenes Config-Parsing,
+stattdessen Uebergabe via neuen 7. Parameter.
 
-- [ ] **4.1** `lib/config.sh` um `cfg_get_agents_all` erweitern (gibt
-  **alle** Agents, enabled + disabled, mit Auth-Dir-Default aus).
-- [ ] **4.2** Neuen Config-Key pro Agent einführen:
-  `agent_<id>_auth_dir` (Default-Konvention: `.<id>`, Goose-Ausnahme
-  `.config/goose` → als explizite Config gesetzt).
-- [ ] **4.3** `wsl-sandbox-init.sh:306-312` auf `cfg_get_agents`-
-  Iteration umstellen, `_auth_mount_agent` aus dem Loop rausrufen.
-- [ ] **4.4** Auto-Approve-Flag-Block (~Z.841) analog auf Config
-  umziehen: neuer Key `agent_<id>_auto_approve_flag`, Default leer.
-  Aider/Gemini bekommen ihren bestehenden Flag als Config-Default.
-- [ ] **4.5** Smoke-Test: je eine Session mit zwei Agents (`claude`
-  und `goose` — extreme Ends der Auth-Dir-Konvention).
-- [ ] **4.6** CHANGELOG-Eintrag.
+- [x] **4.1** `lib/config.sh`: `cfg_get_agents_all` gibt alle Agents
+  mit `id:auth_dir` aus (Default `.<id>`, Goose-Ausnahme aus Config).
+- [x] **4.2** `config.json` → `agent_goose_auth_dir: ".config/goose"`.
+- [x] **4.3** `wsl-ai-start.sh`: baut `AGENTBOX_AUTH_SPEC` aus
+  `cfg_get_agents_all`, legt AUTH_BASE-Unterordner an, uebergibt die
+  Spec als `$7` an sandbox-init.
+- [x] **4.3b** `wsl-sandbox-init.sh:305-` auf `AUTH_SPEC`-Iteration
+  umgestellt; Legacy-Hardcode als Fallback wenn Spec leer.
+- [ ] **4.4** Auto-Approve-Flag-Block (`wsl-sandbox-init.sh:~841`)
+  analog Config-driven: **bewusst skipped**. Block enthaelt nur 2
+  Eintraege (Gemini/Aider) und ist bewusst hartcoded fuer Injection-
+  Safety. Config-Treiber kostet hier mehr als er einspart; Erhalt
+  begruendet im bestehenden Code-Kommentar.
+- [ ] **4.5** Smoke-Test durch User: Session mit `claude` (default
+  auth_dir), Session mit `goose` (explizite Config). Wenn beide
+  Auth-Persistenz zeigen, 4.5 gruen.
+- [x] **4.6** CHANGELOG 2.0.4 + refactor.md Fortschritt.
 
-**Commit 4** (`minor`).
+**Commit 4** = 2.0.4. Template-Rebuild wird beim naechsten
+`install.ps1`-Rerun einmalig ausgeloest, weil der neue Goose-Auth-Dir-
+Key in den Config-Hash faellt — `template_schema` nicht extra gebumpt.
 
 ---
 
@@ -165,6 +172,6 @@ Ziel: Befund F, H. Niedrige Prio.
 |-------|--------|--------|--------|
 | 2026-04-17 | 1.1 + 1.2 | 2.0.2 | done |
 | 2026-04-17 | 1.3 + Etappe 2 | 2.0.3 | done (Smoke-Test User offen) |
+| 2026-04-17 | Etappe 4 (Agent-Liste aus Config) | 2.0.4 | done (Smoke-Test User offen) |
 | — | Etappe 3 (`lib/config.ps1`) | — | offen |
-| — | Etappe 4 (Agent-Liste aus Config) | — | offen |
 | — | Etappe 5 (Log-Refactor + Doku) | — | offen |

@@ -13,10 +13,15 @@ WIN_CACHE_PATH="${3:-}"
 SANDBOX_USER="${4:-agent}"
 AUTH_BASE_IN="${5:-}"
 AGENT_INSTALL="${6:-}"
+# $7 = AUTH_SPEC: semicolon-getrennte id=auth_dir-Paare, z.B.
+#      "claude=.claude;codex=.codex;gemini=.gemini;aider=.aider;goose=.config/goose"
+# Wenn leer (aelterer wsl-ai-start.sh oder config.sh ohne python3), faellt
+# die Auth-Mount-Schleife unten auf die Legacy-Hardcode-Liste zurueck.
+AUTH_SPEC="${7:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     echo "FEHLER: Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL]"
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC]"
     exit 1
 fi
 
@@ -303,13 +308,31 @@ _auth_mount_agent() {
 # Ordner bereits liegt und wir die User-Session-History nicht ueberschreiben.
 CLAUDE_AUTH_PERSISTED=false
 if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
-    if _auth_mount_agent claude ".claude"; then
-        CLAUDE_AUTH_PERSISTED=true
+    # AUTH_SPEC kommt aus wsl-ai-start.sh (cfg_get_agents_all -> config.json).
+    # Format: "id=auth_dir;id=auth_dir;..." — Semikolon-getrennt.
+    # Leer → Legacy-Hardcode-Fallback (aelterer Host-Script oder config.sh
+    # ohne python3 und ohne config.json).
+    _auth_spec_effective="$AUTH_SPEC"
+    if [ -z "$_auth_spec_effective" ]; then
+        _auth_spec_effective="claude=.claude;codex=.codex;gemini=.gemini;aider=.aider;goose=.config/goose"
     fi
-    _auth_mount_agent codex  ".codex"  || true
-    _auth_mount_agent gemini ".gemini" || true
-    _auth_mount_agent aider  ".aider"  || true
-    _auth_mount_agent goose  ".config/goose" || true
+    # Array statt `set --`, damit urspruengliche Positional-Parameter
+    # ($1-$7) unberuehrt bleiben.
+    IFS=';' read -ra _auth_pairs <<< "$_auth_spec_effective"
+    for _pair in "${_auth_pairs[@]}"; do
+        [ -z "$_pair" ] && continue
+        _aid="${_pair%%=*}"
+        _adir="${_pair#*=}"
+        [ -z "$_aid" ] && continue
+        [ -z "$_adir" ] && _adir=".$_aid"
+        if [ "$_aid" = "claude" ]; then
+            if _auth_mount_agent "$_aid" "$_adir"; then
+                CLAUDE_AUTH_PERSISTED=true
+            fi
+        else
+            _auth_mount_agent "$_aid" "$_adir" || true
+        fi
+    done
 fi
 
 # --- ~/.claude.json aus Backup wiederherstellen ---

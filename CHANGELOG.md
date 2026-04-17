@@ -5,6 +5,48 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4] - 2026-04-17
+
+### Changed — Agent-Auth-Mount aus Config, nicht mehr hartcodiert
+
+Etappe 4 aus `refactor.md`. Befund C: die 5-Agent-Liste war an vier
+Stellen parallel hartcodiert; ein 6. Agent haette vier Dateien
+angefasst. Jetzt zieht die Auth-Persistenz ihre Agent-Liste aus
+`config.json`.
+
+- `lib/config.sh`: neue Funktion `cfg_get_agents_all`. Liefert **alle**
+  in `config.json` bekannten Agents (enabled + disabled) als
+  `id:auth_dir`-Zeilen. Default fuer `auth_dir` ist `.<id>` — matcht
+  Claude/Codex/Gemini/Aider. Abweichler muessen `agent_<id>_auth_dir`
+  explizit setzen.
+- `config.json`: neuer Key `agent_goose_auth_dir: ".config/goose"`
+  (der einzige Agent mit abweichendem Home-Pfad).
+- `wsl-ai-start.sh`: die harte Liste `AGENTBOX_AUTH_AGENTS="claude codex
+  gemini aider goose"` ist weg. Stattdessen baut das Script ein
+  `AGENTBOX_AUTH_SPEC="id=auth_dir;id=auth_dir;..."` aus
+  `cfg_get_agents_all`, legt die Per-Agent-Unterordner unter `AUTH_BASE`
+  entsprechend an und uebergibt die Spec als 7. Parameter an
+  `wsl-sandbox-init.sh`.
+- `wsl-sandbox-init.sh`: akzeptiert `AUTH_SPEC` als 7. Parameter,
+  parst semikolon-separiert in ein Bash-Array und iteriert darueber
+  statt die 5 `_auth_mount_agent`-Calls hartzucoden. Leer → Legacy-
+  Hardcode-Fallback, damit aeltere Host-Scripts oder fehlendes python3
+  die Auth-Persistenz nicht komplett kaputt machen.
+
+### Notes
+
+- Neuer Agent hinzufuegen = nur noch `config.json`-Block ergaenzen.
+  Mount-Code muss nicht mehr angefasst werden.
+- Template wird beim naechsten `install.ps1`-Rerun einmalig neu
+  gebaut, weil der neue Config-Key `agent_goose_auth_dir` in den
+  Config-Hash faellt (`Get-AgentboxConfigHash` matcht `^agent_`).
+  Einmaliger Rebuild; kein Installer-Pfad-Aenderung. `.update_class`
+  bleibt `minor`.
+- Auto-Approve-Flag-Block in `wsl-sandbox-init.sh:~841` (Befund C
+  Teil 2) wurde bewusst **nicht** angefasst — er ist mit nur 2
+  Eintraegen (Gemini+Aider) klein und bewusst hartgecodet fuer
+  Injection-Safety. Config-Treiber kostet dort mehr als er bringt.
+
 ## [2.0.3] - 2026-04-17
 
 ### Fixed — `agentbox --list-sessions` / `--compare` repariert

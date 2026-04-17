@@ -55,6 +55,7 @@
   "agent_goose_command": "goose",
   "agent_goose_install": "pip3 install goose-ai",
   "agent_goose_enabled": false,
+  "agent_goose_auth_dir": ".config/goose",
 
   "auto_update": true,
   "auto_update_interval_hours": 24,

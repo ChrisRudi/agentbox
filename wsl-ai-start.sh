@@ -897,12 +897,31 @@ fi
 # --- Auth-State anlegen (persistiert Agent-Logins ueber Sessions) ---
 # AUTH_BASE wurde bereits oben aus AGENTBOX_LOCAL_ROOT abgeleitet; hier
 # nur noch die Per-Agent-Unterordner anlegen und die globale CLAUDE.md
-# als Memory einsetzen. Agent-IDs muessen zu den Keys in _auth_mount_agent()
-# in wsl-sandbox-init.sh passen (Home-relative Pfade stehen dort).
-AGENTBOX_AUTH_AGENTS="claude codex gemini aider goose"
-for _aid in $AGENTBOX_AUTH_AGENTS; do
+# als Memory einsetzen. Agent-Liste + Home-relativer Auth-Dir kommen aus
+# config.json via cfg_get_agents_all (einzige Wahrheitsquelle; ersetzt
+# die frueher-hartcodierte Liste). Format pro Zeile: "id:auth_dir".
+AGENTBOX_AUTH_SPEC=""
+while IFS=: read -r _aid _adir; do
+    [ -z "$_aid" ] && continue
     mkdir -p "$AUTH_BASE/$_aid"
-done
+    # AUTH_SPEC fuer sandbox-init: id=auth_dir, Semikolon-getrennt (wsl.exe
+    # Interop trennt uns Newlines nicht zuverlaessig ueber Argumente).
+    if [ -z "$AGENTBOX_AUTH_SPEC" ]; then
+        AGENTBOX_AUTH_SPEC="${_aid}=${_adir}"
+    else
+        AGENTBOX_AUTH_SPEC="${AGENTBOX_AUTH_SPEC};${_aid}=${_adir}"
+    fi
+done < <(cfg_get_agents_all)
+
+# Defensiver Fallback: sollte cfg_get_agents_all (z.B. ohne python3 + ohne
+# config.json) leer liefern, nutzen wir die Legacy-Hardcode-Liste statt
+# die Auth-Persistenz komplett zu verlieren.
+if [ -z "$AGENTBOX_AUTH_SPEC" ]; then
+    AGENTBOX_AUTH_SPEC="claude=.claude;codex=.codex;gemini=.gemini;aider=.aider;goose=.config/goose"
+    for _aid in claude codex gemini aider goose; do
+        mkdir -p "$AUTH_BASE/$_aid"
+    done
+fi
 # SYSTEM_META_PROMPT.md als globale Claude-Code-Memory im Claude-Auth-
 # Ordner ablegen (Claude Code laedt ~/.claude/CLAUDE.md automatisch als
 # globalen Kontext). Ueberschreiben ist bewusst: das ist der agentbox-
@@ -1534,7 +1553,8 @@ SANDBOX_USER=$(cfg_get "sandbox_user" "agent")
 EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
-    "$SANDBOX_USER" "$AUTH_BASE" "$AGENT_INSTALL" || EXIT_CODE=$?
+    "$SANDBOX_USER" "$AUTH_BASE" "$AGENT_INSTALL" \
+    "$AGENTBOX_AUTH_SPEC" || EXIT_CODE=$?
 
 # --- Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then

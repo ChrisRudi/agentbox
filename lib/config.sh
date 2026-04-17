@@ -97,6 +97,54 @@ except:
     done < "$AGENTBOX_CONFIG"
 }
 
+# cfg_get_agents_all
+# Gibt ALLE in config.json bekannten Agenten (enabled + disabled) als
+# "id:auth_dir" pro Zeile aus. Default fuer auth_dir: ".<id>" — gilt fuer
+# Claude/Codex/Gemini/Aider, deren CLIs nach ~/.<id>/ schreiben. Agenten
+# mit abweichendem Pfad (z.B. Goose: ~/.config/goose) muessen den Key
+# `agent_<id>_auth_dir` in config.json setzen. Wird von wsl-ai-start.sh
+# gerufen, um AUTH_BASE-Unterordner anzulegen und AUTH_SPEC an
+# wsl-sandbox-init.sh zu uebergeben — statt hartcodierter Listen.
+cfg_get_agents_all() {
+    if [ ! -f "$AGENTBOX_CONFIG" ]; then
+        # Fallback: Legacy-Hardcode-Liste, damit Bootstrapping ohne
+        # config.json nicht schweigend bricht.
+        echo "claude:.claude"
+        echo "codex:.codex"
+        echo "gemini:.gemini"
+        echo "aider:.aider"
+        echo "goose:.config/goose"
+        return
+    fi
+
+    if command -v python3 &> /dev/null; then
+        python3 -c "
+import json, re
+try:
+    with open('$AGENTBOX_CONFIG') as f:
+        data = json.load(f)
+    ids = set()
+    for k in data:
+        m = re.match(r'agent_(.+)_name', k)
+        if m:
+            ids.add(m.group(1))
+    for aid in sorted(ids):
+        auth_dir = data.get(f'agent_{aid}_auth_dir') or f'.{aid}'
+        print(f'{aid}:{auth_dir}')
+except:
+    pass
+" 2>/dev/null
+        return
+    fi
+
+    # Fallback ohne python3: Legacy-Hardcode.
+    echo "claude:.claude"
+    echo "codex:.codex"
+    echo "gemini:.gemini"
+    echo "aider:.aider"
+    echo "goose:.config/goose"
+}
+
 # cfg_get_agents
 # Gibt aktivierte Agenten als "id:name:command" pro Zeile aus
 cfg_get_agents() {
