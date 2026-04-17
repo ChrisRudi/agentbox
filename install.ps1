@@ -515,7 +515,15 @@ if ($isInstalled) {
     $localVersion = ""
     $localVersionFile = Join-Path $controlDir ".version"
     if (Test-Path -LiteralPath $localVersionFile) {
-        $localVersion = (Get-Content -LiteralPath $localVersionFile -Raw -ErrorAction SilentlyContinue).Trim()
+        # Defensive: PS 5.1 liefert bei `Get-Content -Raw` auf einer leeren
+        # oder zerstoerten Datei (z.B. OneDrive-Placeholder, 0 Bytes nach
+        # einem abgebrochenen Update) `$null` zurueck — `.Trim()` darauf
+        # crasht mit "method on null", und weil das nicht in try/catch steht,
+        # kommt der Stacktrace ueber iex beim User an als
+        # "InvokeMethodOnNull" (User-Report 1.0.23, Win10 Build 19045).
+        # Nullcheck statt naiver Method-Chain.
+        $vRaw = Get-Content -LiteralPath $localVersionFile -Raw -ErrorAction SilentlyContinue
+        if ($vRaw) { $localVersion = $vRaw.Trim() }
     }
 
     $remoteVersion = ""

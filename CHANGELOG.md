@@ -5,6 +5,33 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.24] - 2026-04-17
+
+### Fixed
+
+- **KRITISCH: `install.ps1` crasht auf Win10 + PS 5.1 mit `iex :
+  InvokeMethodOnNull` nach "agentbox bereits installiert — pruefe
+  Update..." (User-Report, Build 19045).** Der Versionsvergleich
+  liest `.version` via `(Get-Content -Raw -ErrorAction SilentlyContinue).Trim()`.
+  PS 5.1 hat die Eigenheit, bei `-Raw` auf einer leeren oder
+  zerstoerten Datei (0 Bytes, OneDrive-Placeholder nicht
+  heruntergeladen, abgebrochener ZIP-Copy) `$null` statt `""`
+  zurueckzuliefern. `.Trim()` darauf crasht mit
+  `RuntimeException: method invocation on null`. Weil der Call
+  NICHT in try/catch steht, bubble-t das ueber iex zum User als
+  "iex : InvokeMethodOnNull" mit Position im Einzeiler — ohne
+  Hinweis wo im Script der Fehler war.
+
+  Fix: Null-Check zwischen Read und Trim. Wenn `.version` leer oder
+  `$null` zurueckkommt, bleibt `$localVersion = ""` (wie ohnehin
+  oben initialisiert), der Versions-Vergleich landet dann bei
+  "lokal != remote" → Update wird gepullt → `.version` wird
+  ueberschrieben. Self-healing.
+
+  Zeile 524 (`(Invoke-WebRequest ...).Content.Trim()`) ist
+  hiervon nicht betroffen, weil sie bereits in einem try/catch
+  laeuft und `$remoteVersion` auf `""` initialisiert ist.
+
 ## [1.0.23] - 2026-04-17
 
 ### Removed
