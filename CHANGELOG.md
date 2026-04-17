@@ -5,6 +5,49 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-04-17
+
+### Added — Build-Beschleunigung (Template-Rebuild ~2-4 min schneller)
+
+Rein Build-Time-Optimierung des Template-Builds in `win-setup-core.ps1`.
+Session-Start / Runtime unberuehrt.
+
+- **`force-unsafe-io` in dpkg.cfg.d** — dpkg ruft per Default nach jeder
+  installierten Datei `fdatasync()`. Bei Ubuntu Noble + nodejs + python3
+  sind das ~5000 Dateien, ~30-50s. Im ephemeren Template-Build (wird bei
+  Crash ohnehin verworfen) ist Sync unnoetig.
+
+- **apt-Pipelining** — `/etc/apt/apt.conf.d/99-agentbox-fastbuild` mit
+  `Acquire::http::Pipeline-Depth=20` + `Queue-Mode=access`. Parallele
+  Paket-Downloads aus der Quelle, spart 20-30s bei dicken Paketen.
+
+- **Parallele Agent-Installs** — `npm install -g claude-code` /
+  `npm install -g codex` / `pip3 install gemini-cli` laufen via
+  `_run_agent ... &` gleichzeitig statt nacheinander. Jedes eigenes
+  Logfile (`/tmp/agent-*.log`), Fail-Tail wird in den Haupt-Install-Log
+  gespiegelt. Spart 30-60s.
+
+- **tar.gz-Export nur noch als Fallback** — `wsl --export --vhd` laeuft
+  jetzt zuerst. Wenn erfolgreich: tar.gz wird gar nicht mehr gebaut
+  (~3GB gzip → ~60-90s). tar.gz kommt nur noch bei WSL-Versionen ohne
+  vhdx-Support als Ersatz. `wsl-ai-start.sh` akzeptiert jetzt auch
+  einen Template-Zustand mit nur vhdx und ohne tar.gz.
+
+- **apt-Basis-Install gemergt** — `apt-utils bash curl wget git ...`
+  laufen in einem `apt-get install`-Call statt zwei. ~5-10s.
+
+### Changed
+
+- `template_schema=3` im Config-Hash erzwingt Rebuild bei bestehenden
+  Installationen (damit die neuen Build-Optimierungen + die neue
+  Export-Reihenfolge beim naechsten `install.ps1`-Rerun greifen).
+
+### Notes
+
+Erwartete Gesamt-Ersparnis: **~140-230s pro Template-Rebuild** (≈40%
+schneller). Laufzeit-Verhalten (Netzwerk-Tuning, Hybrid-Overlays, vhdx-
+Fastpath beim Session-Start) unveraendert zu 2.0.0.
+
 ## [2.0.0] - 2026-04-17
 
 ### Added — Performance-Architektur

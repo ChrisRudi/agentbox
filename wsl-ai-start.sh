@@ -609,8 +609,11 @@ except:
 fi
 
 # --- Template pruefen ---
-if [ ! -f "$TEMPLATE_PATH" ]; then
-    log_error "template.tar.gz nicht gefunden: $TEMPLATE_PATH"
+# Seit 2.0: vhdx ist das primaere Format (Session-Start via import-in-
+# place), tar.gz nur Fallback falls --export --vhd beim Build nicht
+# verfuegbar war. Mindestens eines von beiden muss da sein.
+if [ ! -f "$TEMPLATE_PATH" ] && [ ! -f "$TEMPLATE_VHD_PATH" ]; then
+    log_error "Kein Template gefunden — weder $TEMPLATE_VHD_PATH noch $TEMPLATE_PATH"
     if [ -f "$TEMPLATE_PATH_OLD" ]; then
         echo "       Alte Version gefunden unter $TEMPLATE_PATH_OLD —"
         echo "       Migration fehlgeschlagen. Bitte manuell nach"
@@ -1429,6 +1432,16 @@ if [ -n "$WIN_TEMPLATE_VHD" ] && [ -f "$TEMPLATE_VHD_PATH" ]; then
 fi
 
 if [ "$_agentbox_import_ok" -ne 1 ]; then
+    # Seit 2.0 wird tar.gz nur noch gebaut wenn der vhdx-Export beim
+    # Build-Schritt fehlschlug. Wenn vhdx hier schon einmal klemmt UND
+    # kein tar.gz vorliegt, hat der User keinen Fallback — sauber abbrechen.
+    if [ ! -f "$TEMPLATE_PATH" ]; then
+        log_error "Kein Import-Pfad moeglich: vhdx-Import schlug fehl und es existiert"
+        echo "       kein tar.gz-Fallback ($TEMPLATE_PATH)."
+        echo "       Bitte win-setup.ps1 als Admin neu ausfuehren — der Template-"
+        echo "       Build entscheidet dort automatisch welches Format nutzbar ist."
+        exit 1
+    fi
     log_info "Importiere Sandbox-Distro (extrahiert template.tar.gz, 30-120s)..."
     # `if !` statt `cmd; if [ $? -ne 0 ]` — letzteres waere unter set -e tot.
     if ! wsl.exe --import "$DISTRO_NAME" "$WIN_TEMP_DIR" "$WIN_TEMPLATE" 2>&1; then

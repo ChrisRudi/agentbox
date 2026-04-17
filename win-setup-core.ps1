@@ -103,7 +103,10 @@ function Get-AgentboxConfigHash {
     # Skript etwas aendert, das unabhaengig von config.json einen Rebuild
     # erzwingen soll (neue apt-Pakete, Agent-Install-Command-Patches etc.).
     # 2 = 2.0.0 (dnsmasq-base hinzugefuegt).
-    $parts += "template_schema=2"
+    # 3 = 2.0.1 (Build-Beschleunigung: force-unsafe-io, apt-Pipelining,
+    #            parallele Agent-Installs; vhdx-Export primaer, tar.gz-
+    #            Fallback nur bei vhdx-Fail).
+    $parts += "template_schema=3"
     if ($cfg) {
         $parts += ($cfg.PSObject.Properties |
             Where-Object { $_.Name -match '^agent_' -or $_.Name -in @('ubuntu_image_url','nodejs_setup_url') } |
@@ -310,14 +313,18 @@ Initialize-AgentboxAutoApproveDefaults
 $configHashFile = Join-Path $sandboxDir ".config_hash"
 $currentHash = Get-AgentboxConfigHash -cfg $config
 
-if ((Test-Path -LiteralPath $templatePath) -and (Test-Path -LiteralPath $configHashFile)) {
+$haveTarGz = Test-Path -LiteralPath $templatePath
+$haveVhd   = Test-Path -LiteralPath $templateVhdPath
+if (($haveTarGz -or $haveVhd) -and (Test-Path -LiteralPath $configHashFile)) {
     $savedHash = ""
     try { $savedHash = (Get-Content -LiteralPath $configHashFile -Raw -ErrorAction SilentlyContinue).Trim() } catch {}
     if ($savedHash -eq $currentHash) {
-        $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
+        # Welches Format aktuell im Cache? vhdx hat Vorrang (2.0-Fastpath).
+        $shownPath = if ($haveVhd) { $templateVhdPath } else { $templatePath }
+        $templateSize = [math]::Round((Get-Item $shownPath).Length / 1MB, 1)
         Write-Host ""
         Write-Host "[OK] Template bereits aktuell — ueberspringe Build" -ForegroundColor Green
-        Write-Host "     Pfad: $templatePath ($templateSize MB)" -ForegroundColor Gray
+        Write-Host "     Pfad: $shownPath ($templateSize MB)" -ForegroundColor Gray
         Write-Host "     Hash: $savedHash" -ForegroundColor Gray
         Write-Host "     Erzwinge Rebuild: loesche $configHashFile oder aendere config.json" -ForegroundColor Gray
 
@@ -470,11 +477,14 @@ foreach ($aid in $agentIds) {
         }
 
         if ($installCmd) {
-            # Jede Agent-Install-Zeile: erst Step-Marker auf fd 3 (Konsole),
-            # dann der Install-Command (stdout/stderr → Log-Datei), Fallback
-            # als Warning ebenfalls auf fd 3.
-            $agentInstallLines += "step '       - $agentName'"
-            $agentInstallLines += "$installCmd || echo 'WARNUNG: $agentName Installation fehlgeschlagen' >&3"
+            # _run_agent forkt den Install-Command als Background-Job
+            # (siehe Install-Skript unten). Name und Command werden als
+            # single-quote-geschuetzte Bash-Argumente uebergeben; Install-
+            # Commands aus config.json duerfen darum keine einfachen
+            # Anfuehrungszeichen enthalten.
+            $safeName = $agentName -replace "'", "'\''"
+            $safeCmd  = $installCmd -replace "'", "'\''"
+            $agentInstallLines += "_run_agent '$safeName' '$safeCmd'"
         }
     }
 }
@@ -502,12 +512,32 @@ exec 3>&1
 exec >>"$LOG" 2>&1
 step() { echo "$1" >&3; }
 
+# --- Build-Performance-Tuning ---
+# dpkg-fsync-Sync nach jedem Paket-File ausschalten. dpkg ruft sonst
+# pro installierter Datei fdatasync(), was bei Noble (~5000 Dateien nur
+# fuer nodejs+python3) 30-50s pro Build kostet. Sicher weil das Template
+# ohnehin verworfen wird wenn der Build stirbt — wir rebuilden dann.
+mkdir -p /etc/dpkg/dpkg.cfg.d
+echo 'force-unsafe-io' > /etc/dpkg/dpkg.cfg.d/99-agentbox-unsafe-io
+
+# apt-Pipelining: parallel Downloads aus der Paketquelle. Default ist
+# Pipeline-Depth=10; mit 20 + access-Queue-Mode werden mehrere Connections
+# parallel aufgebaut. Rettet 20-30s wenn mehrere Gigabytes an apt-Paketen
+# (nodejs+python3-Stack) gezogen werden.
+mkdir -p /etc/apt/apt.conf.d
+cat > /etc/apt/apt.conf.d/99-agentbox-fastbuild <<'APTCONF'
+Acquire::http::Pipeline-Depth "20";
+Acquire::Queue-Mode "access";
+Acquire::Retries "3";
+APTCONF
+
 step "       [1/5] System-Update..."
 apt-get update
-# apt-utils zuerst, damit debconf keine 'delaying package configuration'-
-# Warnung mehr auf stderr schreibt (die PS 5.1 als Fehler interpretiert).
-apt-get install -y -qq --no-install-recommends apt-utils
-apt-get install -y -qq --no-install-recommends bash curl wget git iptables ca-certificates dnsutils dnsmasq-base
+# Alle Basis-Pakete in einem Call: apt-utils muss trotzdem VORHAND sein
+# bevor debconf was anderes prompted, also nehmen wir apt-utils direkt in
+# diesen Call. Spart ~5s gegenueber zwei separaten apt-get install-Calls.
+apt-get install -y -qq --no-install-recommends \
+    apt-utils bash curl wget git iptables ca-certificates dnsutils dnsmasq-base
 
 step "       [2/5] Node.js installieren..."
 curl -fsSL __NODEJS_URL__ -o /tmp/nodesource_setup.sh
@@ -519,8 +549,41 @@ step "       [3/5] Python3 installieren..."
 apt-get install -y -qq --no-install-recommends python3 python3-pip python3-venv
 step "              $(python3 --version)"
 
-step "       [4/5] AI CLI-Tools installieren..."
+step "       [4/5] AI CLI-Tools installieren (parallel)..."
+# Parallele Agent-Installs: npm/pip sind I/O- und netzwerkgebunden, eine
+# einzelne Installation saturiert weder CPU noch Bandbreite. 3 parallele
+# Calls (Claude, Codex, Gemini) kompensieren Latenz + Unpack-Phasen.
+# Jeder Agent hat eigenes Logfile in /tmp/agent-*.log — Fehler-Messages
+# werden nach Abschluss rausgedumpt, damit der Hauptlog nicht interleaved.
+_run_agent() {
+    local _name="$1"
+    local _cmd="$2"
+    local _slug
+    _slug=$(echo "$_name" | tr ' /:.' '____')
+    local _logfile="/tmp/agent-${_slug}.log"
+    (
+        step "         - $_name (starte)"
+        if bash -c "$_cmd" > "$_logfile" 2>&1; then
+            step "         - $_name (fertig)"
+        else
+            local _rc=$?
+            step "       WARNUNG: $_name Installation fehlgeschlagen (rc=$_rc)" >&3
+            # Logfile-Tail in Haupt-Install-Log spiegeln fuer Diagnose
+            echo "=== $_name FAILED (rc=$_rc) ===" >&2
+            tail -n 40 "$_logfile" >&2 || true
+            echo "=== end $_name ===" >&2
+        fi
+    ) &
+}
+
 __AGENT_INSTALL_BLOCK__
+
+# Auf alle parallelen Installs warten, bevor das Template exportiert wird.
+# `wait` ohne Argumente wartet auf alle gespawnten Background-Jobs; wir
+# kuemmern uns hier nicht um individuelle Exit-Codes, weil der spaetere
+# "Agent-Binaries verifizieren"-Block (in PS) jeden erwarteten Agent
+# haerter pruefen wird und bei Fehlen den Template-Export abbricht.
+wait
 
 step "       [5/5] Aufraumen..."
 apt-get clean
@@ -632,6 +695,10 @@ if (Test-Path -LiteralPath $metaPromptSrc) {
 }
 
 # --- Template exportieren ---
+# agentbox 2.0: vhdx ist der primaere Pfad (Session-Start ~5s via import-
+# in-place). tar.gz bauen wir nur als Fallback, falls der vhdx-Export hier
+# fehlschlaegt (alte WSL-Version, kein `--export --vhd`-Support). Das
+# spart beim typischen Build 60-90s (gzip von ~3GB Template).
 Write-Host ""
 Write-Host "Exportiere Template..." -ForegroundColor Cyan
 
@@ -639,48 +706,55 @@ if (-not (Test-Path -LiteralPath $sandboxDir)) {
     [System.IO.Directory]::CreateDirectory($sandboxDir) | Out-Null
 }
 
-# Export-Output schlucken (wsl schreibt "Der Vorgang wurde erfolgreich beendet."
-# auf stderr — fuer sich harmlos, aber inkonsistent im Installer-Feed).
-& wsl.exe --export $distroName $templatePath 2>&1 | ForEach-Object { "$_" } | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "FEHLER: Template-Export fehlgeschlagen." -ForegroundColor Red
-    & wsl.exe --unregister $distroName 2>&1 | Out-Null
-    exit 1
+# Zielpfade vorab bereinigen — sonst gibt wsl --export die Fehlermeldung
+# "Datei existiert" statt zu ueberschreiben.
+foreach ($existing in @($templateVhdPath, $templatePath)) {
+    if (Test-Path -LiteralPath $existing) {
+        try { [System.IO.File]::Delete($existing) } catch { }
+    }
 }
 
-# --- agentbox 2.0: zusaetzlich vhdx exportieren (Best-Effort) ---
-# `wsl --export --vhd` ist ab WSL 2.0.x (2023) verfuegbar. Bei aelteren
-# WSL-Versionen schlaegt der Call fehl — wir loggen nur und machen weiter
-# ohne vhdx. Der tar.gz-Fallback bleibt authoritative.
-if (Test-Path -LiteralPath $templateVhdPath) {
-    try { [System.IO.File]::Delete($templateVhdPath) } catch { }
-}
+# --- Schritt 1: vhdx-Export (primaer) ---
 $vhdExportOut = @(& wsl.exe --export --vhd $distroName $templateVhdPath 2>&1 | ForEach-Object { "$_" })
-if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $templateVhdPath)) {
+$vhdOk = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $templateVhdPath)
+
+if ($vhdOk) {
     $vhdSize = [math]::Round((Get-Item $templateVhdPath).Length / 1MB, 1)
     Write-Host "[OK] Template-VHDX exportiert: $templateVhdPath ($vhdSize MB)" -ForegroundColor Green
 } else {
-    # vhdx nicht verfuegbar — nicht fatal, 1.x-Pfad (tar.gz) funktioniert weiter.
-    Write-Host "[INFO] VHDX-Export nicht verfuegbar (WSL zu alt?) — Session-Start nutzt tar.gz-Pfad" -ForegroundColor Gray
+    Write-Host "[INFO] VHDX-Export nicht verfuegbar (WSL zu alt?) — Fallback auf tar.gz" -ForegroundColor Gray
     if ($vhdExportOut.Count -gt 0) {
         foreach ($line in $vhdExportOut) {
             $clean = ($line -replace "`0", "").Trim()
             if ($clean) { Write-Host "       $clean" -ForegroundColor DarkGray }
         }
     }
-    # Halb-erzeugte Datei wegraeumen, falls da.
+    # Halb-erzeugte Datei wegraeumen
     if (Test-Path -LiteralPath $templateVhdPath) {
         try { [System.IO.File]::Delete($templateVhdPath) } catch { }
     }
+}
+
+# --- Schritt 2: tar.gz-Export (nur wenn vhdx fehlschlug) ---
+# Wenn vhdx sauber ist, sparen wir uns den tar.gz-Export. wsl-ai-start.sh
+# nutzt die vhdx per import-in-place. Veraltete tar.gz aus frueheren Builds
+# liegen hier ebenfalls schon geloescht (siehe oben) — wsl-ai-start.sh
+# erkennt an fehlender tar.gz einfach "kein Fallback" und bleibt auf vhdx.
+if (-not $vhdOk) {
+    & wsl.exe --export $distroName $templatePath 2>&1 | ForEach-Object { "$_" } | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "FEHLER: Weder vhdx- noch tar.gz-Export erfolgreich." -ForegroundColor Red
+        & wsl.exe --unregister $distroName 2>&1 | Out-Null
+        exit 1
+    }
+    $templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
+    Write-Host "[OK] Template exportiert (tar.gz-Fallback): $templatePath ($templateSize MB)" -ForegroundColor Green
 }
 
 # Config-Hash speichern (fuer naechsten Skip-Check)
 try {
     $currentHash | Out-File -LiteralPath $configHashFile -Encoding ascii -NoNewline
 } catch { }
-
-$templateSize = [math]::Round((Get-Item $templatePath).Length / 1MB, 1)
-Write-Host "[OK] Template exportiert: $templatePath ($templateSize MB)" -ForegroundColor Green
 
 # --- Temporaere Distro entfernen ---
 Write-Host "Entferne temporaere Build-Distro..." -ForegroundColor Cyan
