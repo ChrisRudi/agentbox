@@ -5,6 +5,37 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.25] - 2026-04-17
+
+### Fixed
+
+- **`wsl-ai-start.sh` crasht mit nacktem `Input/output error` wenn
+  OneDrive nicht laeuft und `_control/lib/config.sh` nur als Cloud-
+  Placeholder existiert (User-Report, Schueler-OneDrive-Setup).** Der
+  Standard-Install liegt in `%OneDrive%\AI_Projects_Source\` — Dateien
+  die laenger nicht angefasst wurden werden von Files-On-Demand zu
+  reinen Placeholdern degradiert. Solange OneDrive laeuft, hydratet es
+  diese bei Zugriff transparent. Wenn OneDrive aber nicht laeuft (User
+  hatte's explizit nicht gestartet), kann WSLs `/mnt/c`-Bridge die
+  Placeholder nicht laden — der `source`-Call returnt I/O error, und
+  der agentbox-Alias stirbt mit einer Meldung die fuer den User
+  voellig kontextfrei aussieht.
+
+  Fix: Preflight-Probelesen mit `head -c 1` vor dem `source`. Wenn
+  der Read scheitert UND der Pfad wie `/mnt/c/...OneDrive...`
+  aussieht, geben wir eine klare Diagnose + zwei konkrete Fix-Pfade
+  aus (OneDrive starten ODER im Explorer rechtsklick ->
+  "Immer auf diesem Geraet behalten"). Bei anderen Pfaden ein
+  generischer Hinweis auf Filesystem/Mount-Pruefung. Danach sauberer
+  `exit 1` statt Cascading-Failure.
+
+  Nicht-Fix: wir spiegeln `_control/` nicht nach
+  `%LOCALAPPDATA%\agentbox\control-cache\` (waere der robuste
+  Architektur-Fix, aber signifikante Refactor-Flaeche und OneDrive-
+  Versioning der Config ist ein bewusstes Feature). Erstmal nur
+  die Diagnose-Verbesserung — wenn das nochmal hochkommt, ziehen
+  wir den Mirror-Ansatz nach.
+
 ## [1.0.24] - 2026-04-17
 
 ### Fixed

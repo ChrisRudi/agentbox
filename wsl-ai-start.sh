@@ -161,6 +161,39 @@ CONTROL_DIR="$AI_PROJECTS_ROOT/_control"
 # --- config.json laden ---
 CONFIG_LIB="$CONTROL_DIR/lib/config.sh"
 if [ -f "$CONFIG_LIB" ]; then
+    # Preflight gegen OneDrive-Files-On-Demand: wenn _control/ in OneDrive
+    # liegt (Default-Setup) und OneDrive nicht laeuft, sind nicht-kuerzlich-
+    # angefasste Dateien nur als Cloud-Placeholder vorhanden. WSL's /mnt/c-
+    # Bridge kann solche Placeholder nicht on-demand hydraten — der `source`
+    # crasht dann mit "Input/output error" und eine kryptische Meldung
+    # landet beim User (User-Report 1.0.24, Schueler-OneDrive).
+    # Vor dem source einmal probelesen; wenn das scheitert, geben wir eine
+    # klare Anleitung aus statt den Fehler weiter zu reichen.
+    if ! head -c 1 "$CONFIG_LIB" >/dev/null 2>&1; then
+        echo ""
+        echo "FEHLER: '$CONFIG_LIB' konnte nicht gelesen werden (I/O error)."
+        echo ""
+        case "$CONFIG_LIB" in
+            /mnt/c/*[Oo]ne[Dd]rive*)
+                echo "Wahrscheinliche Ursache: OneDrive Files-On-Demand."
+                echo "Die Datei ist nur als Cloud-Placeholder vorhanden, und OneDrive"
+                echo "scheint nicht zu laufen — WSL kann sie nicht transparent holen."
+                echo ""
+                echo "Fix (einmalig):"
+                echo "  1) OneDrive starten (Startmenue -> OneDrive)"
+                echo "     ODER"
+                echo "  2) Im Windows Explorer rechtsklick auf den _control-Ordner"
+                echo "     -> 'Immer auf diesem Geraet behalten' (gruener Haken)"
+                echo "  3) agentbox nochmal starten"
+                ;;
+            *)
+                echo "Pfad liegt nicht in OneDrive — pruefe Dateisystem-Berechtigung"
+                echo "oder ob der Storage hinter '$CONFIG_LIB' ueberhaupt gemounted ist."
+                ;;
+        esac
+        echo ""
+        exit 1
+    fi
     . "$CONFIG_LIB"
 fi
 
