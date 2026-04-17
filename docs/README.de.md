@@ -272,10 +272,10 @@ Beide Whitelists sind konfigurierbar in `config.json`.
 
 Die Sandbox-Distro selbst ist wegwerfbar, aber zwei Schichten auf der Windows-Seite überleben Session-Grenzen und werden in jede neue Sandbox gebind-mountet:
 
-- **Paket-Caches**: `_control/cache/npm` und `_control/cache/pip` — damit `npm install` / `pip install` zwischen Sessions nicht neu laden. Trade-off: ein Agent könnte den Cache theoretisch für eine spätere Session vergiften.
+- **Paket-Caches**: `%LOCALAPPDATA%\agentbox\cache\npm` und `…\cache\pip` — damit `npm install` / `pip install` zwischen Sessions nicht neu laden. Trade-off: ein Agent könnte den Cache theoretisch für eine spätere Session vergiften.
 - **Agent-Auth-Ordner**: `%LOCALAPPDATA%\agentbox\auth\{claude,codex,gemini,aider,goose}` — damit du dich nicht bei jeder Session neu einloggen musst. Jeder Agent hat seinen eigenen Unterordner; während einer Session wird nur der des aktiven Agents gemountet, sie sehen sich also gegenseitig nicht.
 
-Lösche einen der beiden Trees auf der Windows-Seite für einen komplett frischen Start.
+Beide liegen unter `%LOCALAPPDATA%\agentbox\` (nicht in deinem `_control/`-Ordner), damit OneDrive keine Binär-Caches oder Tokens synchronisiert. Lösche einen der beiden Trees auf der Windows-Seite für einen komplett frischen Start.
 
 ## Konfiguration
 
@@ -376,25 +376,27 @@ Typische Einträge: der Agent hat versucht, deinen Windows-Host (`172.x`, `127.0
 
 ## Dateistruktur
 
+agentbox trennt **Code/Config** und **Runtime-State** absichtlich in zwei
+Trees — der erste ist versioniert und Cloud-sync-tauglich, der zweite
+binär/sensibel und bleibt lokal.
+
+**Versionierter Tree** (dein Projekt-Ordner, OneDrive-tauglich):
+
 ```
 AI_Projects_Source\                (oder eigener Pfad)
-+-- _control\
++-- _control\                      # Dieser Repo-Clone; syncht mit OneDrive
 |   +-- config.json                # Zentrale Konfiguration
 |   +-- install.ps1                # Bootstrap von GitHub
 |   +-- win-setup.ps1              # Einmalig: Template bauen
+|   +-- win-setup-core.ps1         # Template-Builder (wird von install.ps1 aufgerufen)
 |   +-- win-task-runner.ps1        # Build/Deploy Runner
 |   +-- wsl-ai-start.sh            # Projekt/Agent-Auswahl
 |   +-- wsl-sandbox-init.sh        # Sandbox-Initialisierung
 |   +-- type_defaults.json         # Typ-Erkennung + Defaults
 |   +-- SYSTEM_META_PROMPT.md      # Arbeitsvertrag für Agenten
+|   +-- refactor.md                # Architektur-Aufräum-Roadmap
 |   +-- lib\
-|   |   +-- config.sh              # Bash-Config-Helper
-|   +-- sandbox\
-|   |   +-- template.tar.gz        # Template-Distro
-|   +-- sessions\                   # Replay-Snapshots + Diffs
-|   +-- cache\
-|       +-- npm\                    # Persistenter npm-Cache
-|       +-- pip\                    # Persistenter pip-Cache
+|       +-- config.sh              # Bash-Config-Helper
 +-- MeinProjekt\
 |   +-- project.json
 |   +-- CLAUDE.md
@@ -402,6 +404,32 @@ AI_Projects_Source\                (oder eigener Pfad)
 |   +-- assets\
 |   +-- _tasks\
 ```
+
+**Runtime-Tree** (lokal, kommt nie in die Cloud):
+
+```
+%LOCALAPPDATA%\agentbox\
++-- sandbox\
+|   +-- template.vhdx              # Primär (WSL 2.0+); ~3-5s Copy auf SSD
+|   +-- template.tar.gz            # Fallback nur für WSL < 2.0.x
+|   +-- .config_hash               # Skip-Build-Check
++-- cache\
+|   +-- npm\                       # Persistenter npm-Cache
+|   +-- pip\                       # Persistenter pip-Cache
++-- sessions\                      # Replay-Snapshots + Diffs
++-- auth\
+|   +-- claude\                    # Claude Code OAuth + Tokens
+|   +-- codex\
+|   +-- gemini\
+|   +-- aider\
+|   +-- goose\
++-- host-distro\                   # Persistente Host-WSL-Distro (Default)
+```
+
+> Die Trennung ist hart: `_control/` enthält nur versionierte Scripts +
+> Config, nie Cache oder Token-Daten. OneDrive Files-on-Demand kann mit
+> Binär-State nichts anfangen, und Secrets haben per Default nichts in
+> der Cloud verloren.
 
 ## Voraussetzungen
 

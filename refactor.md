@@ -37,38 +37,37 @@ Keine Risiken am Installer-Pfad.
   - `template_schema` **nicht** gebumpt — der tatsächliche Install-
     Command aus `config.json` ändert sich nicht, nur der Fallback.
     Config-Hash damit identisch, kein erzwungener Rebuild.
-- [ ] **1.3** README-Dateistruktur auf 2.0-Layout umschreiben (Befund H2).
-  - `README.md:378-404` — File-Tree-Block: `_control/sandbox/` und
-    `_control/cache/` und `_control/sessions/` entfernen; separaten
-    `%LOCALAPPDATA%\agentbox\`-Block ergänzen mit
-    `sandbox/template.vhdx`, `cache/{npm,pip}`, `sessions/`, `auth/<agent>/`.
-  - `README.md:275` Cache-Pfade auf `%LOCALAPPDATA%\agentbox\cache\…`
-    korrigieren.
-  - `docs/README.de.md` analog.
+- [x] **1.3** README-Dateistruktur auf 2.0-Layout umschreiben (Befund H2). ✅ 2.0.3
+  - `README.md` + `docs/README.de.md` → zwei getrennte Trees
+    (versioniert vs. lokal), `%LOCALAPPDATA%\agentbox\` explizit
+    aufgeführt mit `sandbox/template.vhdx` als primary.
+  - Cache-Pfad-Passage im "What Persists"-Abschnitt angeglichen.
 
 **Commit 1** (`minor`): alle drei Sub-Tasks zusammen oder einzeln.
 
 ---
 
-## Etappe 2 — `--list-sessions` / `--compare` Regression-Fix (`minor`)
+## Etappe 2 — `--list-sessions` / `--compare` Regression-Fix (`minor`) ✅ 2.0.3
 
-Ziel: Befund B + H3. Broken-Feature reparieren.
+Ziel: Befund B + H3. Broken-Feature repariert.
 
-- [ ] **2.1** `_resolve_agentbox_local_root` + `SESSIONS_DIR`-Ableitung
-  aus `wsl-ai-start.sh` so refaktorieren, dass sie **vor** dem
-  Argparse-Loop laufen. Konkret: Block Z.206-279 vor den `while`-Loop
-  Z.15 ziehen. Die Migration (`_migrate_from_control`) darf da bleiben
-  wo sie ist — sie kollidiert nicht mit dem Argparse.
-- [ ] **2.2** In `--list-sessions`-Handler (Z.31) und `--compare`-Modus
-  (Z.73) das hartcodierte `_control/sessions` durch `$SESSIONS_DIR`
-  ersetzen.
-- [ ] **2.3** Smoke-Test (manuell durch User auf Host):
-  - `agentbox --list-sessions` zeigt die Sessions unter
-    `%LOCALAPPDATA%\agentbox\sessions\`.
-  - `agentbox --compare <a> <b>` öffnet den Diff.
-- [ ] **2.4** CHANGELOG-Eintrag.
+Gewählter Ansatz (anders als im Ur-Plan): **Argparse bleibt vorne,
+Execution wird deferred.** Das Hochziehen von `_resolve_agentbox_local_root`
+haette CONTROL_DIR + `cfg_get` vorgezogen, und damit die Reihenfolge
+`config.sh laden → base_path_override → CONTROL_DIR umsetzen`. Sauberer:
+Argparse sammelt nur Flags, die beiden Modi laufen nach `SESSIONS_DIR`
+und nach der `_migrate_from_control`-Schleife.
 
-**Commit 2** (`minor`).
+- [x] **2.1** Argparse-Loop entkoppelt: neues Flag `LIST_SESSIONS_MODE`;
+  `--compare` setzt wie bisher `COMPARE_MODE=true` + `COMPARE_SESSIONS`.
+- [x] **2.2** Deferred-Execution-Bloecke nach `mkdir -p
+  $AGENTBOX_LOCAL_ROOT/sessions` eingefuegt; beide nutzen
+  `$SESSIONS_DIR`.
+- [ ] **2.3** Smoke-Test durch User (auf Host): `agentbox
+  --list-sessions` + `--compare` gegen echten `%LOCALAPPDATA%`-State.
+- [x] **2.4** CHANGELOG-Eintrag 2.0.3.
+
+**Commit 2** = `minor`, siehe 2.0.3-Release.
 
 ---
 
@@ -165,8 +164,7 @@ Ziel: Befund F, H. Niedrige Prio.
 | Datum | Etappe | Commit | Status |
 |-------|--------|--------|--------|
 | 2026-04-17 | 1.1 + 1.2 | 2.0.2 | done |
-| — | 1.3 (README-Layout-Tree) | — | offen |
-| — | Etappe 2 (`--list-sessions`-Fix) | — | offen |
+| 2026-04-17 | 1.3 + Etappe 2 | 2.0.3 | done (Smoke-Test User offen) |
 | — | Etappe 3 (`lib/config.ps1`) | — | offen |
 | — | Etappe 4 (Agent-Liste aus Config) | — | offen |
 | — | Etappe 5 (Log-Refactor + Doku) | — | offen |

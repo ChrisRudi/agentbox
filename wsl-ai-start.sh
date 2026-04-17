@@ -7,8 +7,13 @@
 set -euo pipefail
 
 # --- Modus-Erkennung ---
+# Argumente werden hier nur eingesammelt; die Modi --list-sessions und
+# --compare lesen aus SESSIONS_DIR, welches erst nach
+# _resolve_agentbox_local_root (unten) definiert ist. Deshalb Ausfuehrung
+# deferred — siehe "--- Deferred Modi ---" weiter unten.
 AUTO_MODE=false
 REPLAY_SESSION=""
+LIST_SESSIONS_MODE=false
 COMPARE_MODE=false
 COMPARE_SESSIONS=()
 
@@ -28,29 +33,8 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         --list-sessions)
-            _sessions_dir="${AI_PROJECTS_ROOT:-}/_control/sessions"
-            if [ -d "$_sessions_dir" ]; then
-                echo "=== agentbox Sessions ==="
-                for s in "$_sessions_dir"/*/; do
-                    [ -d "$s" ] || continue
-                    _sid=$(basename "$s")
-                    _meta="$s/meta.json"
-                    if [ -f "$_meta" ] && command -v python3 &> /dev/null; then
-                        _info=$(python3 -c "
-import json
-with open('$_meta') as f:
-    d = json.load(f)
-print(f\"  {d.get('id','?'):20s}  {d.get('agent','?'):15s}  {d.get('project','?'):15s}  {d.get('timestamp','?')}\")
-" 2>/dev/null || echo "  $_sid")
-                        echo "$_info"
-                    else
-                        echo "  $_sid"
-                    fi
-                done
-            else
-                echo "Keine Sessions vorhanden."
-            fi
-            exit 0
+            LIST_SESSIONS_MODE=true
+            shift
             ;;
         --compare)
             COMPARE_MODE=true
@@ -67,47 +51,6 @@ print(f\"  {d.get('id','?'):20s}  {d.get('agent','?'):15s}  {d.get('project','?'
             ;;
     esac
 done
-
-# --- Compare-Modus: Zwei Sessions vergleichen ---
-if [ "$COMPARE_MODE" = true ]; then
-    _sessions_dir="${AI_PROJECTS_ROOT:-$HOME}/_control/sessions"
-    _s1="$_sessions_dir/${COMPARE_SESSIONS[0]}"
-    _s2="$_sessions_dir/${COMPARE_SESSIONS[1]}"
-
-    if [ ! -d "$_s1" ] || [ ! -d "$_s2" ]; then
-        echo "FEHLER: Session nicht gefunden."
-        [ ! -d "$_s1" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[0]}"
-        [ ! -d "$_s2" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[1]}"
-        exit 1
-    fi
-
-    # Meta-Infos lesen
-    for _sd in "$_s1" "$_s2"; do
-        _meta="$_sd/meta.json"
-        if [ -f "$_meta" ] && command -v python3 &> /dev/null; then
-            python3 -c "
-import json
-with open('$_meta') as f:
-    d = json.load(f)
-print(f\"Session: {d.get('id','')}  Agent: {d.get('agent','')}  Projekt: {d.get('project','')}  Zeit: {d.get('timestamp','')}\")
-" 2>/dev/null
-        fi
-    done
-
-    echo ""
-    echo "=== Diff-Vergleich ==="
-    echo ""
-
-    if [ -f "$_s1/changes.diff" ] && [ -f "$_s2/changes.diff" ]; then
-        diff --color=auto -u \
-            --label "${COMPARE_SESSIONS[0]}" "$_s1/changes.diff" \
-            --label "${COMPARE_SESSIONS[1]}" "$_s2/changes.diff" \
-            || true
-    else
-        echo "Keine Diffs vorhanden — wurde die Session mit Snapshot gestartet?"
-    fi
-    exit 0
-fi
 
 # --- Auto-Modus (aus .bashrc) ---
 # Kein Prompt: wer agentbox-host per Shortcut/`wsl -d agentbox-host -e bash
@@ -317,6 +260,73 @@ _migrate_from_control "$CONTROL_DIR/sessions" "$AGENTBOX_LOCAL_ROOT/sessions" "S
 mkdir -p "$AGENTBOX_LOCAL_ROOT/sandbox" "$AGENTBOX_LOCAL_ROOT/cache/npm" \
          "$AGENTBOX_LOCAL_ROOT/cache/pip" "$AGENTBOX_LOCAL_ROOT/sessions" \
          "$AGENTBOX_LOCAL_ROOT/auth" 2>/dev/null || true
+
+# --- Deferred Modi: --list-sessions, --compare ---
+# Diese Modi lesen aus $SESSIONS_DIR. Deshalb Ausfuehrung hier, nach
+# Path-Resolve + Migration — nicht mehr im Argparse-Loop.
+if [ "$LIST_SESSIONS_MODE" = true ]; then
+    if [ -d "$SESSIONS_DIR" ] && [ -n "$(ls -A "$SESSIONS_DIR" 2>/dev/null)" ]; then
+        echo "=== agentbox Sessions ==="
+        for s in "$SESSIONS_DIR"/*/; do
+            [ -d "$s" ] || continue
+            _sid=$(basename "$s")
+            _meta="$s/meta.json"
+            if [ -f "$_meta" ] && command -v python3 &> /dev/null; then
+                _info=$(python3 -c "
+import json
+with open('$_meta') as f:
+    d = json.load(f)
+print(f\"  {d.get('id','?'):20s}  {d.get('agent','?'):15s}  {d.get('project','?'):15s}  {d.get('timestamp','?')}\")
+" 2>/dev/null || echo "  $_sid")
+                echo "$_info"
+            else
+                echo "  $_sid"
+            fi
+        done
+    else
+        echo "Keine Sessions vorhanden."
+    fi
+    exit 0
+fi
+
+if [ "$COMPARE_MODE" = true ]; then
+    _s1="$SESSIONS_DIR/${COMPARE_SESSIONS[0]}"
+    _s2="$SESSIONS_DIR/${COMPARE_SESSIONS[1]}"
+
+    if [ ! -d "$_s1" ] || [ ! -d "$_s2" ]; then
+        echo "FEHLER: Session nicht gefunden."
+        [ ! -d "$_s1" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[0]}"
+        [ ! -d "$_s2" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[1]}"
+        exit 1
+    fi
+
+    # Meta-Infos lesen
+    for _sd in "$_s1" "$_s2"; do
+        _meta="$_sd/meta.json"
+        if [ -f "$_meta" ] && command -v python3 &> /dev/null; then
+            python3 -c "
+import json
+with open('$_meta') as f:
+    d = json.load(f)
+print(f\"Session: {d.get('id','')}  Agent: {d.get('agent','')}  Projekt: {d.get('project','')}  Zeit: {d.get('timestamp','')}\")
+" 2>/dev/null
+        fi
+    done
+
+    echo ""
+    echo "=== Diff-Vergleich ==="
+    echo ""
+
+    if [ -f "$_s1/changes.diff" ] && [ -f "$_s2/changes.diff" ]; then
+        diff --color=auto -u \
+            --label "${COMPARE_SESSIONS[0]}" "$_s1/changes.diff" \
+            --label "${COMPARE_SESSIONS[1]}" "$_s2/changes.diff" \
+            || true
+    else
+        echo "Keine Diffs vorhanden — wurde die Session mit Snapshot gestartet?"
+    fi
+    exit 0
+fi
 
 # Einmaliges Cleanup alter Desktop-Shortcut-Namen (1.0.17 hat auf EINEN
 # gemeinsamen `agentbox`-Shortcut konsolidiert — die separaten Installer/

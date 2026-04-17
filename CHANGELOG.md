@@ -5,6 +5,39 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3] - 2026-04-17
+
+### Fixed — `agentbox --list-sessions` / `--compare` repariert
+
+Die beiden Session-Kommandos hatten nach der 2.0-Layout-Migration
+ins Leere gegriffen: sie lasen noch aus dem alten Pfad
+`${AI_PROJECTS_ROOT}/_control/sessions`, waehrend Sessions seit 2.0
+unter `%LOCALAPPDATA%\agentbox\sessions\` liegen. Ergebnis: leere
+Liste bzw. "not found" bei Existenz.
+
+- `wsl-ai-start.sh`: Argparse-Loop entkoppelt von Execution. Die
+  `--list-sessions`- und `--compare`-Bloecke laufen jetzt erst, nachdem
+  `_resolve_agentbox_local_root` + `$SESSIONS_DIR` definiert und die
+  einmalige Migration aus `_control/sessions` durchgelaufen ist.
+  Konkret: neues Flag `LIST_SESSIONS_MODE`, ansonsten identische
+  Ausgabe- und Diff-Logik.
+
+### Changed — README-Dateistruktur auf 2.0-Layout
+
+Die File-Structure-Abschnitte in `README.md` und `docs/README.de.md`
+zeigten noch das Pre-2.0-Layout mit `_control/sandbox/`,
+`_control/cache/` und `_control/sessions/`. Das widersprach dem
+Architektur-Vertrag aus `CLAUDE.md` ("Runtime-State liegt strikt
+ausserhalb `_control/`"). Neu: zwei getrennte Trees — versioniert
+(`_control/` in OneDrive) und lokal (`%LOCALAPPDATA%\agentbox\`).
+Auch der "What Persists"-Abschnitt zeigt die Paket-Caches jetzt korrekt
+unter `%LOCALAPPDATA%\agentbox\cache\…`.
+
+### Notes
+
+Kein Template-Rebuild. Das ist ein reiner Runtime-/Doc-Fix. `.update_class`
+bleibt `minor`.
+
 ## [2.0.2] - 2026-04-17
 
 ### Fixed — Konsistenz & Drift
