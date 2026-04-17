@@ -342,19 +342,25 @@ if [ ! -f "$_legacy_shortcut_marker" ] && command -v powershell.exe &> /dev/null
     touch "$_legacy_shortcut_marker" 2>/dev/null || true
 fi
 
-# Farben
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Farben + log_*-Helper aus gemeinsamer Library laden (single source).
+# Wir tolerieren fehlende Datei (Pre-2.0.5-Upgrade-Pfad): wenn das Source
+# scheitert, weisen wir die alten Inline-Definitionen als Fallback zu.
+# Der Fallback bleibt als Kompatibilitaetsnetz bis mindestens 2.1 drin.
+if [ -f "$CONTROL_DIR/lib/log.sh" ]; then
+    . "$CONTROL_DIR/lib/log.sh"
+else
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'
+    NC='\033[0m'
+    log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
+    log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
+    log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+    log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
+fi
 
 # --- Hilfsfunktionen ---
-
-log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
-log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
 
 # Alle Projektordner unter AI_PROJECTS_ROOT (ohne _control), sortiert
 # nach letzter Aenderung (neueste zuerst).

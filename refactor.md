@@ -137,19 +137,31 @@ Key in den Config-Hash faellt — `template_schema` nicht extra gebumpt.
 
 ## Etappe 5 — Kosmetik / Doku (`minor`)
 
-Ziel: Befund F, H. Niedrige Prio.
+Ziel: Befund F, H. Niedrige Prio. Bewusst in Teil 1 + Teil 2 gesplittet.
 
-- [ ] **5.1** `lib/log.sh` anlegen mit `log_info`/`log_ok`/`log_warn`/
-  `log_error`. Aus `wsl-ai-start.sh:344-347` extrahieren.
-- [ ] **5.2** `wsl-sandbox-init.sh` + `lib/config.sh` sourcen
-  `lib/log.sh`, alle `echo "[OK] ..."` durch `log_ok "..."` ersetzen.
-  (Große Textänderung — kann in eigener Etappe sein.)
-- [ ] **5.3** `CLAUDE.md` um kurzen Abschnitt „Config-Topologie" ergänzen:
-  `config.json` = System/Agents/Resources, `type_defaults.json` =
-  Project-Type-Defaults. Verweis auf beide Dateien.
-- [ ] **5.4** CHANGELOG-Eintrag.
+### Teil 1 ✅ 2.0.5
 
-**Commit 5** (`minor`).
+- [x] **5.1** `lib/log.sh` angelegt mit `log_info`/`log_ok`/`log_warn`/
+  `log_error` + Farb-Vars. Aus `wsl-ai-start.sh:344-347` extrahiert.
+- [x] **5.2a** `wsl-ai-start.sh` sourced `lib/log.sh`. Inline-
+  Definitionen bleiben als Fallback fuer Pre-2.0.5-Upgrades.
+- [x] **5.3** `CLAUDE.md` → neue Section „Config-Topologie"
+  (`config.json` vs. `type_defaults.json`, `lib/config.sh` als
+  kanonische Lese-Schnittstelle).
+
+### Teil 2 (offen)
+
+- [ ] **5.2b** `wsl-sandbox-init.sh` → Bulk-Replace der plain
+  `echo "[OK] ..."`/`"[WARN] ..."`-Zeilen durch `log_ok`/`log_warn`.
+  Achtung: das Script laeuft in der Sandbox und hat keinen Zugriff
+  auf `_control/lib/`. Optionen: log-Funktionen inlinen (kleine
+  Duplikation, aber selbsterhaltend), oder `lib/log.sh` als separaten
+  Param uebergeben und temporaer schreiben. Entscheidung offen.
+- [ ] **5.4** Stderr-Split fuer WARN/ERROR als Folge-Ticket
+  (semantisch sauberer, aber potenziell pipe-breaking — nicht mit
+  5.2b mischen).
+
+**Commit 5 Teil 1** = 2.0.5.
 
 ---
 
@@ -173,5 +185,6 @@ Ziel: Befund F, H. Niedrige Prio.
 | 2026-04-17 | 1.1 + 1.2 | 2.0.2 | done |
 | 2026-04-17 | 1.3 + Etappe 2 | 2.0.3 | done (Smoke-Test User offen) |
 | 2026-04-17 | Etappe 4 (Agent-Liste aus Config) | 2.0.4 | done (Smoke-Test User offen) |
+| 2026-04-17 | Etappe 5 Teil 1 (`lib/log.sh` + Config-Topologie-Doku) | 2.0.5 | done |
 | — | Etappe 3 (`lib/config.ps1`) | — | offen |
-| — | Etappe 5 (Log-Refactor + Doku) | — | offen |
+| — | Etappe 5 Teil 2 (sandbox-init [OK]-Replace, Stderr-Split) | — | offen |

@@ -5,6 +5,39 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.5] - 2026-04-17
+
+### Changed — Logging-Helper zentralisiert, Config-Topologie dokumentiert
+
+Etappe 5 Teil 1 aus `refactor.md`.
+
+- **Neu: `lib/log.sh`.** `log_info`/`log_ok`/`log_warn`/`log_error` +
+  ANSI-Farb-Vars (`RED`/`GREEN`/`YELLOW`/`CYAN`/`NC`) jetzt an einer
+  zentralen Stelle. `wsl-ai-start.sh` sourced die Lib; inline-
+  Definitionen bleiben als Fallback drin, damit ein Pre-2.0.5-Clone
+  ohne `lib/log.sh` nicht sofort bricht (Upgrade-Pfad-Safety). Verhalten
+  identisch: alle Levels auf stdout, Farben immer aktiv. Ein Stderr-
+  Split fuer WARN/ERROR ist als Ticket vorgemerkt.
+
+- **CLAUDE.md: neue Section "Config-Topologie".** Dokumentiert die
+  Trennung `config.json` (System/Agents/Resources, faellt in den
+  Template-Config-Hash) vs. `type_defaults.json` (Projekt-Type-Defaults,
+  nur beim Erst-Anlegen einer `project.json` relevant). Schliesst
+  Befund H aus dem Refactor-Plan: keine Cross-File-Fallbacks, keine
+  ueberlappenden Keys, und die einzige Bash-Lese-Schnittstelle ist
+  `lib/config.sh` (`cfg_get` / `cfg_get_array` / `cfg_get_agents` /
+  `cfg_get_agents_all`).
+
+### Notes
+
+`wsl-sandbox-init.sh` benutzt weiterhin plain `echo "[OK] ..."` — der
+Bulk-Replace auf `log_ok` ist Etappe 5 Teil 2 und kommt in einem
+eigenen Commit, weil er ~20+ Zeilen anfasst und keinen eigenen
+strukturellen Wert hat.
+
+Kein Template-Rebuild, kein Installer-Pfad-Wechsel. `.update_class`
+bleibt `minor`.
+
 ## [2.0.4] - 2026-04-17
 
 ### Changed — Agent-Auth-Mount aus Config, nicht mehr hartcodiert

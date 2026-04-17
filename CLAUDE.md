@@ -59,6 +59,32 @@ einer ephemeren WSL2-Sandbox auf Windows. Kern-Invarianten beim Ändern von Code
 - **Agent startet in `/workspace`** (Bind-Mount des Projektordners), damit die
   Projekt-Root für den Agent sichtbar ist.
 
+## Config-Topologie
+
+Zwei JSON-Dateien im Repo-Root, bewusst getrennt:
+
+- **`config.json`** — System-/Agent-/Resources-Config. Alles was den
+  Sandbox-Lifecycle steuert (WSL-Resources, aktivierte Agents und ihre
+  Install-Commands, Update-Verhalten, Launcher-Wahl, Whitelists für
+  Build/Deploy). Der Config-Hash in `win-setup-core.ps1:Get-AgentboxConfigHash`
+  liest alle `agent_*`-Keys + `ubuntu_image_url`/`nodejs_setup_url` —
+  ein neuer Key hier forciert beim nächsten `install.ps1`-Rerun einen
+  Template-Rebuild.
+- **`type_defaults.json`** — Projekt-Type-Defaults. Nur was beim ersten
+  Anlegen eines neuen Projekt-Ordners in die generierte `project.json`
+  reinmuss (`working_dir`, `entry_point`, Build-Command-Vorlage je
+  Type). Ist für `wsl-ai-start.sh` bei Projekt-Auto-Detect relevant,
+  nicht für den Template-Build.
+
+Keine überlappenden Keys, keine Fallback-Kette zwischen den Dateien —
+wer Runtime-Steuerung sucht, sucht in `config.json`; wer eine
+Projekt-Template-Default braucht, in `type_defaults.json`.
+
+Bash-seitig ist die einzige Lese-Schnittstelle `lib/config.sh`
+(`cfg_get`, `cfg_get_array`, `cfg_get_agents`, `cfg_get_agents_all`) —
+kein direktes python/jq/sed-Gemurkse in Scripts. Neue Reader gehören
+in `lib/config.sh`, nicht ad-hoc an den Callsite.
+
 ## Git-Workflow
 
 - **Immer direkt auf `main` committen und pushen.** Keine Feature-Branches
