@@ -88,20 +88,20 @@ mkdir -p "$WORKSPACE/_tasks"
 # src/ (read-write)
 if [ -d "$PROJECT_PATH/src" ]; then
     mount --bind "$PROJECT_PATH/src" "$WORKSPACE/src"
-    mount -o remount,bind,rw,nosymfollow,nodev "$WORKSPACE/src"
-    echo "[OK] Mount: src/ (read-write, nosymfollow, nodev)"
+    mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/src"
+    echo "[OK] Mount: src/ (read-write, nosymfollow, nodev, noatime)"
 else
     # Falls kein src/ Ordner existiert, Projektroot mounten
     mount --bind "$PROJECT_PATH" "$WORKSPACE/src"
-    mount -o remount,bind,rw,nosymfollow,nodev "$WORKSPACE/src"
-    echo "[OK] Mount: Projektroot -> src/ (read-write, nosymfollow, nodev)"
+    mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/src"
+    echo "[OK] Mount: Projektroot -> src/ (read-write, nosymfollow, nodev, noatime)"
 fi
 
 # assets/ (read-only)
 if [ -d "$PROJECT_PATH/assets" ]; then
     mount --bind "$PROJECT_PATH/assets" "$WORKSPACE/assets"
-    mount -o remount,bind,ro,nosymfollow,nodev "$WORKSPACE/assets"
-    echo "[OK] Mount: assets/ (read-only, nosymfollow, nodev)"
+    mount -o remount,bind,ro,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/assets"
+    echo "[OK] Mount: assets/ (read-only, nosymfollow, nodev, noatime)"
 else
     echo "[INFO] Kein assets/ Ordner — ueberspringe Mount"
 fi
@@ -109,8 +109,8 @@ fi
 # _tasks/ (read-write)
 if [ -d "$PROJECT_PATH/_tasks" ]; then
     mount --bind "$PROJECT_PATH/_tasks" "$WORKSPACE/_tasks"
-    mount -o remount,bind,rw,nosymfollow,nodev "$WORKSPACE/_tasks"
-    echo "[OK] Mount: _tasks/ (read-write, nosymfollow, nodev)"
+    mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$WORKSPACE/_tasks"
+    echo "[OK] Mount: _tasks/ (read-write, nosymfollow, nodev, noatime)"
 fi
 
 # CLAUDE.md (read-write, Einzeldatei-Mount)
@@ -151,9 +151,9 @@ if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
         NPM_CACHE="/home/$SANDBOX_USER/.npm"
         mkdir -p "$NPM_CACHE"
         mount --bind "$CACHE_PATH/npm" "$NPM_CACHE"
-        mount -o remount,nosymfollow,nodev "$NPM_CACHE"
-        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$NPM_CACHE" 2>/dev/null || true
-        echo "[OK] Mount: npm-Cache (persistent)"
+        mount -o remount,nosymfollow,nodev,noatime,nodiratime "$NPM_CACHE"
+        chown "$SANDBOX_USER:$SANDBOX_USER" "$NPM_CACHE" 2>/dev/null || true
+        echo "[OK] Mount: npm-Cache (persistent, noatime)"
     fi
 
     # pip-Cache
@@ -161,9 +161,9 @@ if [ -n "$CACHE_PATH" ] && [ -d "$CACHE_PATH" ]; then
         PIP_CACHE="/home/$SANDBOX_USER/.cache/pip"
         mkdir -p "$PIP_CACHE"
         mount --bind "$CACHE_PATH/pip" "$PIP_CACHE"
-        mount -o remount,nosymfollow,nodev "$PIP_CACHE"
-        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$PIP_CACHE" 2>/dev/null || true
-        echo "[OK] Mount: pip-Cache (persistent)"
+        mount -o remount,nosymfollow,nodev,noatime,nodiratime "$PIP_CACHE"
+        chown "$SANDBOX_USER:$SANDBOX_USER" "$PIP_CACHE" 2>/dev/null || true
+        echo "[OK] Mount: pip-Cache (persistent, noatime)"
     fi
 else
     echo "[INFO] Kein Paket-Cache — Pakete werden bei Bedarf neu geladen"
@@ -629,7 +629,22 @@ if [ -f "$META_PROMPT" ]; then
 fi
 
 # --- Workspace-Berechtigungen setzen ---
-chown -R "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE" 2>/dev/null || true
+# Bewusst NICHT rekursiv (`chown -R`): der Workspace wird per Bind-Mount
+# von DrvFs befuellt, Permissions erbt er vom Quell-Dateisystem (bzw. von
+# den drvfs-mount-options uid/gid). Rekursives chown auf einem Workspace
+# mit 10.000+ Dateien (typisch fuer npm-Projekte) kostet auf DrvFs
+# 10-30 Sekunden pro Session — reine Verschwendung, weil DrvFs metadata-
+# basiertes Ownership ohnehin nur eingeschraenkt umsetzt. Wir chownen
+# nur den Mount-Point-Root und die direkten Unterverzeichnisse.
+chown "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE" 2>/dev/null || true
+chown "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE/src" "$WORKSPACE/assets" \
+    "$WORKSPACE/_tasks" 2>/dev/null || true
+if [ -f "$WORKSPACE/CLAUDE.md" ]; then
+    chown "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE/CLAUDE.md" 2>/dev/null || true
+fi
+if [ -f "$WORKSPACE/project.json" ]; then
+    chown "$SANDBOX_USER:$SANDBOX_USER" "$WORKSPACE/project.json" 2>/dev/null || true
+fi
 
 # --- Agent starten als Sandbox-User ---
 # Startverzeichnis: /workspace — das ist der sichtbare Projekt-Root. Alle

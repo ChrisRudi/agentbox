@@ -84,3 +84,104 @@ du `install.ps1` in einer Art änderst, die den Erst-Install-Pfad
 Bei fehlender `.update_class`-Datei default = `minor` (sicherer smooth-
 Upgrade-Pfad von Pre-1.0.17-Versionen). Fix für neue Releases: Datei
 anlegen und committen.
+
+## Roadmap: agentbox 2.0 — Performance-Architektur
+
+### Problem (1.x)
+
+Alle Projektdateien, Caches und Auth-State liegen auf **DrvFs** (Windows
+NTFS via 9P-Protokoll). Das ist 3-10x langsamer als natives ext4 im
+WSL2-VM. Jeder `git status`, jeder `npm install`, jedes Datei-Read/Write
+geht durch:
+
+```
+App → Linux VFS → 9P Client → Hyper-V VMBus → 9P Server → Windows I/O → NTFS → Disk
+```
+
+1.x-Tuning (noatime, iptables-Reorder, DNS, chown-Eliminierung) hat die
+schlimmsten Bremsen rausgenommen, kann aber den fundamentalen 9P-Overhead
+nicht beseitigen.
+
+### Lösung (2.0): ext4-VHD als Workspace-Cache
+
+**Kernidee:** eine sparse VHDX-Datei (~10 GB, startet bei ~4 KB auf Disk)
+in `%LOCALAPPDATA%\agentbox\` ablegen, als ext4 formatieren, und über
+`wsl --mount --vhd` als Block-Device direkt in die Sandbox mounten.
+Damit umgeht der Agent den 9P-Pfad komplett:
+
+```
+App → Linux VFS → ext4 (Block-Level) → Hyper-V VHD I/O → Disk
+```
+
+**Erwarteter Gewinn:** 5-10x schnellere I/O während der Agent-Session.
+
+### Architektur-Entwurf
+
+```
+Installer (install.ps1, einmalig):
+  1. Sparse VHDX erstellen:  New-VHD -Path $vhdPath -SizeBytes 10GB -Dynamic
+  2. Als ext4 formatieren:   wsl --mount --vhd $vhdPath --bare
+                             mkfs.ext4 /dev/sdX
+                             wsl --unmount $vhdPath
+
+Sandbox-Start (wsl-ai-start.sh, jede Session):
+  3. VHD mounten:            wsl --mount --vhd $vhdPath --bare
+  4. In Sandbox verfuegbar:  mount /dev/sdX /workspace-fast (ext4, noatime)
+  5. overlayfs:              mount -t overlay overlay /workspace/src \
+                               -o lowerdir=<DrvFs-Projekt>,
+                                  upperdir=/workspace-fast/upper,
+                                  workdir=/workspace-fast/work
+     → Reads gehen erst zum ext4-Upper, dann DrvFs-Lower (gecacht)
+     → Writes gehen NUR auf ext4 (Memory-/Block-Speed)
+
+Agent-Session:
+  6. Agent arbeitet auf /workspace/src (overlayfs-Merged-View)
+     → Near-native ext4 Performance
+
+Sandbox-Ende (wsl-sandbox-init.sh / wsl-ai-start.sh):
+  7. Upper-Layer-Diff auf DrvFs zuruecksyncen:
+     rsync -a /workspace-fast/upper/ <DrvFs-Projekt>/
+  8. VHD unmounten:  wsl --unmount $vhdPath
+  9. Sandbox unregistrieren (wie bisher)
+```
+
+### Offene Fragen / Risiken
+
+- **`wsl --mount` braucht Admin** auf Win10; auf Win11 22H2+ reicht die
+  `disk`-Gruppe. Muss getestet werden.
+- **overlayfs + DrvFs als Lower:** ob WSL2's Kernel (5.15+) das
+  unterstützt, muss mit einem Einzeiler getestet werden:
+  ```bash
+  mount -t overlay test \
+    -o lowerdir=/mnt/c/test,upperdir=/tmp/u,workdir=/tmp/w /tmp/m
+  ```
+- **Crash-Recovery:** wenn die Sandbox abstürzt vor dem Sync, sind
+  Änderungen im Upper-Layer weg. Mitigation: Agent committet in Git,
+  also sind nur uncommittete Edits betroffen (akzeptabel).
+- **VHD-Lifecycle:** wer räumt auf? Braucht Garbage-Collection für
+  verwaiste VHDs nach abgebrochenen Sessions.
+- **Speicherverbrauch:** sparse VHDX wächst dynamisch. Bei vielen
+  Projekten mit großen node_modules könnten 10 GB knapp werden. Evtl.
+  TRIM/discard regelmäßig.
+- **Fallback:** wenn `wsl --mount` fehlschlägt (Permissions, alter
+  Kernel), muss der 1.x-DrvFs-Pfad als Fallback erhalten bleiben.
+
+### Implementierungs-Reihenfolge
+
+1. **PoC:** VHD-Mount + overlayfs in einer Test-Sandbox manuell
+   ausprobieren (Einzeiler-Tests, kein Code)
+2. **install.ps1:** VHD-Erstellung + ext4-Formatierung im Installer
+3. **wsl-ai-start.sh:** VHD-Mount vor Sandbox-Import
+4. **wsl-sandbox-init.sh:** overlayfs statt direktem Bind-Mount
+5. **Sync-Logik:** rsync Upper→DrvFs am Session-Ende
+6. **Cleanup:** VHD-Unmount + Garbage-Collection
+7. **Fallback-Pfad:** wenn VHD-Mount fehlschlägt, 1.x-DrvFs-Bind-Mount
+8. **`.update_class = major`** für das Release (VHD-Erstellung braucht
+   initial install.ps1-Rerun)
+
+### Nicht in 2.0 (Later)
+
+- Template-Extraktion direkt auf VHD statt DrvFs-Temp-Dir (könnte
+  den 30-120s wsl-import auf ~5-15s drücken)
+- npm/pip-Cache auf VHD statt DrvFs (weiterer I/O-Gewinn)
+- Multi-Projekt-VHD-Pool (ein VHD pro Projekt, parallele Sessions)
