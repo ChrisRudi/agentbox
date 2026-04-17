@@ -985,7 +985,60 @@ swap=$resSwap
     }
 }
 
-# --- Windows Terminal sicherstellen ---
+# --- Launcher-UI bestimmen (wt vs vscode vs beide) ---
+# Seit 1.0.22: config.json-Key `launch_ui` steuert ob der Shortcut in
+# Windows Terminal (wt), VS Code mit agentbox-Terminalprofil (vscode),
+# oder beides oeffnet. Leerer Wert = erstes Mal auf dieser Maschine →
+# einmalig fragen, Wahl in config.json persistieren (User-Configs werden
+# bei ZIP-Updates gesichert + restored, Wahl ueberlebt also).
+$launchUi = ""
+if ($installConfig -and $installConfig.PSObject.Properties['launch_ui'] -and $installConfig.launch_ui) {
+    $launchUi = "$($installConfig.launch_ui)".Trim().ToLowerInvariant()
+}
+if ($launchUi -notin @("wt","vscode","both")) {
+    Write-Host ""
+    Write-Host "Launcher fuer den agentbox-Shortcut waehlen:" -ForegroundColor Cyan
+    Write-Host "  [1] Windows Terminal (Default, schlank, bewaehrt)" -ForegroundColor White
+    Write-Host "  [2] VS Code          (Live-Filewatch + Agent-Terminal im Editor)" -ForegroundColor White
+    Write-Host "  [3] Beide            (zwei Shortcuts — du entscheidest pro Klick)" -ForegroundColor White
+    Write-Host "  Auswahl [1/2/3, 5s Timeout = 1]: " -ForegroundColor Cyan -NoNewline
+    $uiChoice = $null
+    $t0 = Get-Date
+    while (((Get-Date) - $t0).TotalSeconds -lt 5) {
+        if ([Console]::KeyAvailable) {
+            $k = [Console]::ReadKey($true)
+            $kc = "$($k.KeyChar)"
+            if ($kc -eq '1' -or $kc -eq '2' -or $kc -eq '3') { $uiChoice = $kc; break }
+            if ($k.Key -eq 'Enter') { $uiChoice = "1"; break }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $uiChoice) { $uiChoice = "1" }
+    Write-Host $uiChoice
+    $launchUi = switch ($uiChoice) { "2" { "vscode" } "3" { "both" } default { "wt" } }
+    # Persist in config.json (Smart-Merge: Key nur ergaenzen, Rest unangefasst).
+    try {
+        if ($installConfig -and $installConfig.PSObject.Properties['launch_ui']) {
+            $installConfig.launch_ui = $launchUi
+        } elseif ($installConfig) {
+            $installConfig | Add-Member -NotePropertyName launch_ui -NotePropertyValue $launchUi -Force
+        }
+        if ($installConfig) {
+            $newJson = $installConfig | ConvertTo-Json -Depth 20
+            $newJson = $newJson -replace "`r`n", "`n" -replace "`r", "`n"
+            if (-not $newJson.EndsWith("`n")) { $newJson += "`n" }
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [IO.File]::WriteAllText($installConfigPath, $newJson, $utf8NoBom)
+        }
+    } catch {
+        Write-Host "[WARN] launch_ui konnte nicht in config.json gespeichert werden — Wahl gilt nur fuer diesen Run." -ForegroundColor Yellow
+    }
+    Write-Host "[OK] launch_ui = $launchUi" -ForegroundColor Green
+}
+$needWt     = $launchUi -in @("wt","both")
+$needVsCode = $launchUi -in @("vscode","both")
+
+# --- Windows Terminal sicherstellen (nur wenn Launcher wt/both) ---
 # Hintergrund: Wenn der Agent-Shortcut auf `wsl.exe` direkt zeigt, landet
 # er im system-weiten Terminal-Handler. Auf Win11 ist das wt.exe (gut),
 # auf Win10 ohne installiertes Windows Terminal ist das der alte
@@ -994,7 +1047,10 @@ swap=$resSwap
 # verweisen wir den Shortcut auf wt.exe direkt und stellen sicher, dass
 # wt.exe da ist — wenn nicht, via winget installieren.
 $hasWt = $false
-if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
+if (-not $needWt) {
+    # VS-Code-only: wt.exe wird nicht gebraucht, aber wenn zufaellig da,
+    # nutzen wir's trotzdem nicht — vermeidet doppelten Install-Overhead.
+} elseif (Get-Command wt.exe -ErrorAction SilentlyContinue) {
     $hasWt = $true
 } elseif (Get-Command winget.exe -ErrorAction SilentlyContinue) {
     Write-Host ""
@@ -1018,11 +1074,152 @@ if (Get-Command wt.exe -ErrorAction SilentlyContinue) {
         Write-Host "[WARN] Windows Terminal konnte nicht installiert werden — Shortcut fallt zurueck auf wsl.exe direkt." -ForegroundColor Yellow
         Write-Host "       Im alten ConsoleHost koennen Claude-Code-UI-Zeichen glitchy aussehen." -ForegroundColor Gray
     }
-} else {
+} elseif ($needWt) {
     Write-Host ""
     Write-Host "[WARN] winget nicht gefunden — Windows Terminal wird nicht automatisch installiert." -ForegroundColor Yellow
     Write-Host "       Shortcut fallt zurueck auf wsl.exe direkt (UI-Glitches moeglich im alten ConsoleHost)." -ForegroundColor Gray
     Write-Host "       Empfehlung: Windows Terminal aus dem Microsoft Store installieren." -ForegroundColor Gray
+}
+
+# --- VS Code sicherstellen (nur wenn Launcher vscode/both) ---
+# Probe: `code` im PATH ODER die beiden Standardpfade (User-Install +
+# System-Install). Wenn nichts davon greift und winget da ist, silent
+# via winget installieren. Wir speichern den *vollen Pfad zu Code.exe*
+# (nicht `code` im PATH), weil der Shortcut direkt auf die GUI-EXE
+# zeigen muss — `code.cmd` im bin/-Verzeichnis waere ein Wrapper der
+# ein Konsolenfenster aufpoppen laesst.
+$hasVsCode = $false
+$vsCodeExe = $null
+function Find-VsCodeExe {
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\Code.exe"),
+        (Join-Path ${env:ProgramFiles} "Microsoft VS Code\Code.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft VS Code\Code.exe")
+    )
+    foreach ($p in $candidates) {
+        if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+    }
+    return $null
+}
+if ($needVsCode) {
+    $vsCodeExe = Find-VsCodeExe
+    if ($vsCodeExe) {
+        $hasVsCode = $true
+    } elseif (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+        Write-Host ""
+        Write-Host "VS Code fehlt — installiere via winget (~100 MB)..." -ForegroundColor Cyan
+        Invoke-Native {
+            & winget.exe install --id Microsoft.VisualStudioCode --exact `
+                --accept-source-agreements --accept-package-agreements `
+                --scope user --silent 2>&1 | ForEach-Object { "$_" }
+        }
+        $vsCodeExe = Find-VsCodeExe
+        if ($vsCodeExe) {
+            $hasVsCode = $true
+            Write-Host "[OK] VS Code installiert: $vsCodeExe" -ForegroundColor Green
+        } else {
+            Write-Host "[WARN] VS Code konnte nicht installiert werden — VS-Code-Shortcut wird uebersprungen." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host ""
+        Write-Host "[WARN] winget nicht gefunden — VS Code wird nicht automatisch installiert." -ForegroundColor Yellow
+        Write-Host "       Installiere VS Code manuell und re-run install.ps1." -ForegroundColor Gray
+    }
+}
+
+# --- VS Code Terminal-Profil smart-mergen (nur wenn VS Code vorhanden) ---
+# Wir schreiben ein `agentbox`-Terminalprofil in die User-Settings, damit
+# im Terminal-Dropdown (Ctrl+Shift+ö) direkt eine Option "agentbox"
+# erscheint, die `wsl.exe -d agentbox-host -e bash -li -c agentbox`
+# startet. Gleiches Muster wie Merge-AgentboxClaudeSettings: wenn die
+# Datei fehlt → minimal anlegen; wenn sie als JSON parst und kein
+# agentbox-Profil da ist → ergaenzen; wenn sie Comments hat (JSONC),
+# schlagen wir ein Manual-Snippet vor und ruehren die Datei nicht an.
+function Merge-AgentboxVsCodeSettings {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $profileJson = @(
+        '{',
+        '  "terminal.integrated.profiles.windows": {',
+        '    "agentbox": {',
+        '      "path": "wsl.exe",',
+        '      "args": ["-d", "agentbox-host", "-e", "bash", "-li", "-c", "agentbox"],',
+        '      "icon": "robot"',
+        '    }',
+        '  }',
+        '}'
+    )
+    $defaultContent = ($profileJson -join "`n") + "`n"
+
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $dir)) {
+        [System.IO.Directory]::CreateDirectory($dir) | Out-Null
+    }
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        [IO.File]::WriteAllText($Path, $defaultContent, $utf8NoBom)
+        return "created"
+    }
+    $raw = ""
+    try { $raw = [IO.File]::ReadAllText($Path) } catch { return "read-error" }
+    if ([string]::IsNullOrWhiteSpace($raw) -or $raw.Trim() -eq "{}") {
+        [IO.File]::WriteAllText($Path, $defaultContent, $utf8NoBom)
+        return "replaced-empty"
+    }
+
+    $parsed = $null
+    try { $parsed = $raw | ConvertFrom-Json -ErrorAction Stop } catch {
+        # VS Code erlaubt JSONC (Kommentare) — PS 5.1 ConvertFrom-Json nicht.
+        # Statt zu raten oder User-Kommentare zu zerstoeren: unangetastet lassen
+        # und dem User das Snippet zum Selbst-Einfuegen zeigen.
+        return "jsonc-skipped"
+    }
+    if ($null -eq $parsed) { $parsed = New-Object PSObject }
+
+    $key = "terminal.integrated.profiles.windows"
+    $profiles = $null
+    if ($parsed.PSObject.Properties[$key]) { $profiles = $parsed.$key }
+    if ($profiles -and ($profiles -is [PSCustomObject]) -and $profiles.PSObject.Properties['agentbox']) {
+        return "already-set"
+    }
+    if (-not $profiles -or -not ($profiles -is [PSCustomObject])) {
+        $profiles = New-Object PSObject
+    }
+    $profileObj = New-Object PSObject
+    $profileObj | Add-Member -NotePropertyName path -NotePropertyValue "wsl.exe"
+    $profileObj | Add-Member -NotePropertyName args -NotePropertyValue @("-d","agentbox-host","-e","bash","-li","-c","agentbox")
+    $profileObj | Add-Member -NotePropertyName icon -NotePropertyValue "robot"
+    $profiles | Add-Member -NotePropertyName agentbox -NotePropertyValue $profileObj -Force
+    $parsed | Add-Member -NotePropertyName $key -NotePropertyValue $profiles -Force
+
+    $newJson = $parsed | ConvertTo-Json -Depth 20
+    $newJson = $newJson -replace "`r`n", "`n" -replace "`r", "`n"
+    if (-not $newJson.EndsWith("`n")) { $newJson += "`n" }
+    [IO.File]::WriteAllText($Path, $newJson, $utf8NoBom)
+    return "merged"
+}
+if ($hasVsCode) {
+    $vsCodeSettingsPath = Join-Path $env:APPDATA "Code\User\settings.json"
+    $vsCodeMergeStatus = Merge-AgentboxVsCodeSettings -Path $vsCodeSettingsPath
+    switch ($vsCodeMergeStatus) {
+        "created"        { Write-Host "[OK] VS Code Terminal-Profil 'agentbox' angelegt" -ForegroundColor Green }
+        "replaced-empty" { Write-Host "[OK] VS Code Terminal-Profil 'agentbox' angelegt" -ForegroundColor Green }
+        "merged"         { Write-Host "[OK] VS Code Terminal-Profil 'agentbox' eingefuegt (User-Settings unveraendert bis auf neuen Key)" -ForegroundColor Green }
+        "already-set"    { Write-Host "[OK] VS Code Terminal-Profil 'agentbox' existiert bereits" -ForegroundColor Green }
+        "jsonc-skipped"  {
+            Write-Host "[INFO] VS Code settings.json enthaelt Kommentare — nicht automatisch gemerged." -ForegroundColor Yellow
+            Write-Host "       Bitte folgendes Snippet manuell in $vsCodeSettingsPath einfuegen:" -ForegroundColor Gray
+            Write-Host '       "terminal.integrated.profiles.windows": {' -ForegroundColor Gray
+            Write-Host '         "agentbox": {' -ForegroundColor Gray
+            Write-Host '           "path": "wsl.exe",' -ForegroundColor Gray
+            Write-Host '           "args": ["-d", "agentbox-host", "-e", "bash", "-li", "-c", "agentbox"],' -ForegroundColor Gray
+            Write-Host '           "icon": "robot"' -ForegroundColor Gray
+            Write-Host '         }' -ForegroundColor Gray
+            Write-Host '       }' -ForegroundColor Gray
+        }
+        default          { Write-Host "[WARN] VS Code Settings-Merge: $vsCodeMergeStatus" -ForegroundColor Yellow }
+    }
 }
 
 # --- Shortcuts erstellen ---
@@ -1039,8 +1236,6 @@ Write-Host "Erstelle Shortcuts..." -ForegroundColor Cyan
 # Redirect.)
 $desktopPath = [Environment]::GetFolderPath("Desktop")
 $startMenuPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-$shortcutPath = Join-Path $desktopPath "agentbox.lnk"
-$startShortcutPath = Join-Path $startMenuPath "agentbox.lnk"
 
 Write-Host "       Desktop-Pfad:    $desktopPath" -ForegroundColor Gray
 Write-Host "       Start-Menue-Pfad: $startMenuPath" -ForegroundColor Gray
@@ -1048,7 +1243,7 @@ Write-Host "       Start-Menue-Pfad: $startMenuPath" -ForegroundColor Gray
 # Sicherstellen dass Start-Menue-Verzeichnis existiert (sollte immer, ist
 # aber bei manuell verbogenem Profil eventuell weg).
 if (-not (Test-Path -LiteralPath $startMenuPath)) {
-    try { New-Item -ItemType Directory -Path $startMenuPath -Force | Out-Null } catch { }
+    try { [System.IO.Directory]::CreateDirectory($startMenuPath) | Out-Null } catch { }
 }
 
 # Legacy-Cleanup: alte Update-Shortcut-Namen aufraeumen. Seit 1.0.17 gibt
@@ -1057,10 +1252,14 @@ if (-not (Test-Path -LiteralPath $startMenuPath)) {
 # entfallen. Zwei Alt-Namen koennen herumliegen:
 #   - agentbox-installer.lnk  (bis 1.0.15)
 #   - agentbox-update.lnk     (1.0.16)
-# Cleanup auf beiden Ziel-Pfaden (Desktop + Start-Menue), weil frueher nur
-# Desktop gesaet wurde aber wir sicherheitshalber auch Start-Menue pruefen.
+# Seit 1.0.22: Bei launch_ui=vscode oder =wt (nicht =both) raeumen wir den
+# jeweils *anderen* Shortcut mit weg, damit nach einem Wechsel keine
+# veraltete Verknuepfung herumliegt. Bei =both behalten wir beide.
+$legacyNames = @("agentbox-installer.lnk", "agentbox-update.lnk")
+if ($launchUi -eq "vscode") { $legacyNames += "agentbox.lnk" }
+if ($launchUi -eq "wt")     { $legacyNames += "agentbox (VS Code).lnk" }
 foreach ($legacyDir in @($desktopPath, $startMenuPath)) {
-    foreach ($legacyName in @("agentbox-installer.lnk", "agentbox-update.lnk")) {
+    foreach ($legacyName in $legacyNames) {
         $legacyPath = Join-Path $legacyDir $legacyName
         if (Test-Path -LiteralPath $legacyPath) {
             try { [System.IO.File]::Delete($legacyPath) } catch { }
@@ -1068,73 +1267,102 @@ foreach ($legacyDir in @($desktopPath, $startMenuPath)) {
     }
 }
 
-# Helper: erstellt den agentbox-Shortcut an $Path. Gemeinsame Logik fuer
-# Desktop und Start-Menue, damit wir nicht zweimal dasselbe copy-pasten.
+# Helper: erstellt den agentbox-Shortcut an $Path. $Mode = "wt" (Windows
+# Terminal) oder "vscode" (VS Code mit agentbox.code-workspace, das
+# runOn:folderOpen-Task feuert beim Oeffnen und startet agentbox in einem
+# integrierten Terminal).
 function New-AgentboxShortcut {
     param(
         [Parameter(Mandatory)][object]$Shell,
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][bool]$UseWt
+        [Parameter(Mandatory)][ValidateSet("wt","wsl","vscode")][string]$Mode,
+        [string]$VsCodeExe,
+        [string]$WorkspaceFile
     )
     $sc = $Shell.CreateShortcut($Path)
-    if ($UseWt) {
-        $sc.TargetPath = "wt.exe"
-        $sc.Arguments = "--title agentbox wsl.exe -d agentbox-host -e bash -li -c agentbox"
-    } else {
-        $sc.TargetPath = "wsl.exe"
-        $sc.Arguments = "-d agentbox-host -e bash -li -c agentbox"
+    switch ($Mode) {
+        "wt" {
+            $sc.TargetPath = "wt.exe"
+            $sc.Arguments = "--title agentbox wsl.exe -d agentbox-host -e bash -li -c agentbox"
+            $sc.IconLocation = "wsl.exe,0"
+            $sc.Description = "agentbox — Portable Sandboxed AI Agent Runner"
+        }
+        "wsl" {
+            # Fallback wenn weder wt.exe noch VS Code verfuegbar.
+            $sc.TargetPath = "wsl.exe"
+            $sc.Arguments = "-d agentbox-host -e bash -li -c agentbox"
+            $sc.IconLocation = "wsl.exe,0"
+            $sc.Description = "agentbox — Portable Sandboxed AI Agent Runner"
+        }
+        "vscode" {
+            # VS Code oeffnet das Workspace-File (_control/agentbox.code-
+            # workspace). Das enthaelt einen Task mit runOn:folderOpen der
+            # `wsl.exe -d agentbox-host -e bash -li -c agentbox` in einem
+            # Terminal startet. Beim ersten Oeffnen fragt VS Code nach
+            # "trust this workspace" — danach laeuft alles automatisch.
+            $sc.TargetPath = $VsCodeExe
+            $sc.Arguments = "`"$WorkspaceFile`""
+            $sc.IconLocation = "$VsCodeExe,0"
+            $sc.Description = "agentbox — Live-Filewatch + Agent-Terminal in VS Code"
+        }
     }
     $sc.WorkingDirectory = "%USERPROFILE%"
-    $sc.Description = "agentbox — Portable Sandboxed AI Agent Runner"
-    $sc.IconLocation = "wsl.exe,0"
     $sc.Save()
+}
+
+# Modi zusammenstellen, die wir anlegen wollen. "both" → zwei Shortcuts.
+# Wenn launch_ui=wt aber wt fehlt → "wsl"-Fallback; wenn =vscode aber
+# code.exe fehlt → wir ueberspringen diesen Teil (bereits warn oben).
+$shortcutModes = @()
+if ($needWt) {
+    $wtMode = if ($hasWt) { "wt" } else { "wsl" }
+    $shortcutModes += (@{ Mode = $wtMode; FileName = "agentbox.lnk" })
+}
+if ($needVsCode -and $hasVsCode) {
+    # Workspace-File liegt in _control/ (= $controlDir), relativ dazu per ".."
+    # auf baseDir. Shortcut bekommt absoluten Pfad.
+    $workspaceFile = Join-Path $controlDir "agentbox.code-workspace"
+    if (Test-Path -LiteralPath $workspaceFile) {
+        $shortcutModes += (@{ Mode = "vscode"; FileName = "agentbox (VS Code).lnk"; WorkspaceFile = $workspaceFile })
+    } else {
+        Write-Host "[WARN] agentbox.code-workspace nicht gefunden unter $workspaceFile — VS-Code-Shortcut wird uebersprungen." -ForegroundColor Yellow
+    }
 }
 
 try {
     $shell = New-Object -ComObject WScript.Shell
 
-    # Target-Strategie:
-    #   wt.exe vorhanden   → `wt.exe --title agentbox wsl.exe -d agentbox-host …`
-    #                        → sauberer UTF-8/ANSI/Alt-Screen-Host, kein Encoding-
-    #                          Glitch bei Claude-Code-UI
-    #   wt.exe NICHT da    → Fallback `wsl.exe -d agentbox-host …` direkt
-    #                        → landet im system-weiten Terminal-Handler, kann
-    #                          im alten ConsoleHost glitchy wirken
-    #
-    # `-d agentbox-host` ist hier KRITISCH: ohne explizite Distro greift wsl.exe
-    # die Default-Distro, und wenn der User docker-desktop hat, landet der Klick
-    # in der docker-VM und nicht in der agentbox-Distro.
+    # `-d agentbox-host` ist KRITISCH fuer wt/wsl-Modi: ohne explizite Distro
+    # greift wsl.exe die Default-Distro, und wenn der User docker-desktop
+    # hat, landet der Klick in der docker-VM statt in agentbox-host.
+    foreach ($mode in $shortcutModes) {
+        $desktopFile   = Join-Path $desktopPath   $mode.FileName
+        $startMenuFile = Join-Path $startMenuPath $mode.FileName
 
-    # 1) Desktop-Shortcut
-    try {
-        New-AgentboxShortcut -Shell $shell -Path $shortcutPath -UseWt $hasWt
-        if (Test-Path -LiteralPath $shortcutPath) {
-            Write-Host "[OK] Desktop-Shortcut erstellt: $shortcutPath" -ForegroundColor Green
-        } else {
-            Write-Host "[WARN] Desktop-Shortcut wurde laut COM gespeichert, ist aber nicht auf Disk." -ForegroundColor Yellow
-            Write-Host "       Moeglicherweise OneDrive-Redirect-Problem oder Dateisystem-Berechtigung." -ForegroundColor Gray
-            Write-Host "       Start-Menue-Shortcut unten sollte trotzdem funktionieren." -ForegroundColor Gray
+        foreach ($targetPath in @($desktopFile, $startMenuFile)) {
+            try {
+                if ($mode.Mode -eq "vscode") {
+                    New-AgentboxShortcut -Shell $shell -Path $targetPath -Mode $mode.Mode `
+                        -VsCodeExe $vsCodeExe -WorkspaceFile $mode.WorkspaceFile
+                } else {
+                    New-AgentboxShortcut -Shell $shell -Path $targetPath -Mode $mode.Mode
+                }
+                if (Test-Path -LiteralPath $targetPath) {
+                    Write-Host "[OK] Shortcut: $targetPath" -ForegroundColor Green
+                } else {
+                    Write-Host "[WARN] Shortcut wurde laut COM gespeichert, ist aber nicht auf Disk: $targetPath" -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "[WARN] Shortcut-Erstellung fehlgeschlagen ($targetPath): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
-    } catch {
-        Write-Host "[WARN] Desktop-Shortcut konnte nicht erstellt werden: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 
-    # 2) Start-Menue-Shortcut (Safety-Net: Win-Taste + "agentbox" findet ihn
-    #    immer, auch wenn der Desktop-Pfad verbogen ist)
-    try {
-        New-AgentboxShortcut -Shell $shell -Path $startShortcutPath -UseWt $hasWt
-        if (Test-Path -LiteralPath $startShortcutPath) {
-            Write-Host "[OK] Start-Menue-Shortcut erstellt: $startShortcutPath" -ForegroundColor Green
-            Write-Host "     (Win-Taste druecken + 'agentbox' tippen)" -ForegroundColor Gray
-        } else {
-            Write-Host "[WARN] Start-Menue-Shortcut wurde laut COM gespeichert, ist aber nicht auf Disk." -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "[WARN] Start-Menue-Shortcut konnte nicht erstellt werden: $($_.Exception.Message)" -ForegroundColor Yellow
+    if ($needWt -and -not $hasWt) {
+        Write-Host "     (wt-Shortcut faellt auf wsl.exe direkt zurueck — Windows Terminal fehlt)" -ForegroundColor Gray
     }
-
-    if (-not $hasWt) {
-        Write-Host "     (Shortcuts fallen auf wsl.exe direkt zurueck — Windows Terminal fehlt)" -ForegroundColor Gray
+    if ($shortcutModes.Count -eq 0) {
+        Write-Host "[WARN] Keine Shortcuts angelegt — weder wt.exe noch VS Code verfuegbar fuer launch_ui=$launchUi." -ForegroundColor Yellow
     }
 
     [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
@@ -1171,7 +1399,21 @@ Write-Host ""
 
 if ($startNow) {
     Write-Host ""
-    if ($hasWt) {
+    # Start-Pfad nach gleicher Praeferenz wie Shortcut:
+    #   launch_ui=vscode + VS Code da → Workspace-File oeffnen (Task feuert)
+    #   sonst wt verfuegbar           → neues wt-Fenster mit agentbox
+    #   sonst                         → wsl.exe in-place
+    $workspaceStart = Join-Path $controlDir "agentbox.code-workspace"
+    if ($launchUi -eq "vscode" -and $hasVsCode -and (Test-Path -LiteralPath $workspaceStart)) {
+        Write-Host "Oeffne VS Code mit agentbox-Workspace..." -ForegroundColor Green
+        Write-Host ""
+        try {
+            Start-Process -FilePath $vsCodeExe -ArgumentList @("`"$workspaceStart`"")
+        } catch {
+            Write-Host "WARNUNG: VS Code konnte nicht gestartet werden — fallback auf wsl.exe." -ForegroundColor Yellow
+            Invoke-Native { & wsl.exe -d agentbox-host -e bash -li -c "agentbox" }
+        }
+    } elseif ($hasWt) {
         # Seit 1.0.17: agentbox in einem frischen wt.exe-Fenster starten,
         # damit der Fullscreen-UI-Host (UTF-8 + ANSI + Alt-Screen) sauber
         # greift. Der Installer beendet sich gleich danach; beide Fenster

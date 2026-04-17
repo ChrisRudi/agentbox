@@ -1,0 +1,50 @@
+{
+  "folders": [
+    {
+      "name": "AI Projects",
+      "path": ".."
+    }
+  ],
+  "settings": {
+    "terminal.integrated.profiles.windows": {
+      "agentbox": {
+        "path": "wsl.exe",
+        "args": ["-d", "agentbox-host", "-e", "bash", "-li", "-c", "agentbox"],
+        "icon": "robot"
+      }
+    },
+    "files.exclude": {
+      "_control": true
+    },
+    "files.watcherExclude": {
+      "**/node_modules/**": true,
+      "**/.git/**": true,
+      "**/build_out/**": true
+    }
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Start agentbox",
+        "type": "shell",
+        "command": "wsl.exe",
+        "args": ["-d", "agentbox-host", "-e", "bash", "-li", "-c", "agentbox"],
+        "presentation": {
+          "reveal": "always",
+          "focus": true,
+          "panel": "dedicated",
+          "clear": true,
+          "showReuseMessage": false
+        },
+        "runOptions": {
+          "runOn": "folderOpen"
+        },
+        "problemMatcher": []
+      }
+    ]
+  },
+  "extensions": {
+    "recommendations": []
+  }
+}

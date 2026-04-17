@@ -5,6 +5,62 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.22] - 2026-04-17
+
+### Added
+
+- **VS Code als Launcher-Option fuer den Shortcut — Live-Filewatch +
+  Agent-Terminal im Editor.** Bisher bekam der User beim Doppelklick auf
+  den agentbox-Shortcut immer ein Windows-Terminal-Fenster mit dem
+  Agent-Prompt. Das ist schlank und bewaehrt, verliert aber den einen
+  Workflow-Gewinn, den VS Code hier bringt: waehrend der Agent Dateien
+  in `/workspace` aendert (= Bind-Mount des Projektordners auf Windows-
+  Seite), kann VS Code als Editor parallel geoeffnet sein und jede
+  Aenderung **live** anzeigen — Explorer-Tree refresht neue/geloeschte
+  Dateien sofort, offene Dateien reloaden automatisch, Git-Gutter zeigt
+  Diffs in Echtzeit.
+
+  Implementation:
+  - **Neuer config.json-Key `launch_ui`** mit Werten `wt` (Default),
+    `vscode`, oder `both`. Leer beim Erstinstall → install.ps1 fragt
+    einmalig ab ([1]/[2]/[3]-Prompt mit 5s-Timeout = Default wt),
+    persistiert die Wahl. User-configs ueberleben ZIP-Updates, also
+    wird die Wahl nur genau einmal verlangt.
+  - **winget-Autoinstall** von VS Code wenn `launch_ui` ihn braucht und
+    `code.exe` nicht gefunden wird — gleiches Muster wie 1.0.17
+    wt.exe-Install, mit `--scope user` damit kein Admin noetig ist.
+  - **Smart-Merge** eines `agentbox`-Terminal-Profils in
+    `%APPDATA%\Code\User\settings.json` — JSON-parse, nur neuen Key
+    ergaenzen, User-Settings bleiben unangefasst. JSONC-Dateien mit
+    Kommentaren (PS 5.1 ConvertFrom-Json kann die nicht parsen) werden
+    nicht angefasst, stattdessen Manual-Snippet auf der Konsole
+    ausgegeben.
+  - **Workspace-File `agentbox.code-workspace`** im Repo-Root. Enthaelt
+    Folder-Pointer auf `../` (= baseDir, damit alle Projekte im
+    Explorer sichtbar sind), Terminal-Profil `agentbox`, und einen
+    Task mit `runOn: folderOpen` der `wsl.exe -d agentbox-host -e bash
+    -li -c agentbox` in einem dedicated Terminal-Panel startet. Beim
+    ersten Oeffnen fragt VS Code einmal "trust this workspace" — danach
+    laeuft der Agent auto-start beim Doppelklick.
+  - **Shortcut-Dispatcher** (`New-AgentboxShortcut -Mode wt|wsl|vscode`)
+    legt je nach launch_ui einen oder zwei Shortcuts an (`agentbox.lnk`
+    fuer wt, `agentbox (VS Code).lnk` fuer vscode). Bei `both` existieren
+    beide parallel auf Desktop + Start-Menue. Wechselt der User spaeter
+    zwischen Modi, raeumt der naechste install.ps1-Lauf den nicht mehr
+    gewaehlten Shortcut weg (keine Zombie-Links).
+
+  Bewusste Nicht-Entscheidung: VS Code ist nicht hart-Default, weil
+  viele User bereits Cursor/Zed/JetBrains/Neovim nutzen. Der Prompt
+  respektiert Enter → wt, und der bisherige Workflow bleibt 1:1
+  erhalten.
+
+### Changed
+
+- **PS 5.1 `New-Item`-Regel ergaenzend angewandt:** der Start-Menue-
+  Directory-Create nutzt jetzt ebenfalls `[System.IO.Directory]::
+  CreateDirectory` statt `New-Item -Force`. Die 1.0.20-Regel ist
+  damit im gesamten Installer durchgezogen.
+
 ## [1.0.21] - 2026-04-16
 
 ### Diagnostics

@@ -72,6 +72,9 @@
   "auto_update": true,
   "auto_update_interval_hours": 24,
 
+  "launch_ui": "",
+  "_doc_launch_ui": "Launcher beim Shortcut-Klick: 'wt' = Windows Terminal, 'vscode' = VS Code mit agentbox-Terminal-Profil (Live-Filewatch), 'both' = beide Shortcuts. Leer = install.ps1 fragt beim ersten Run einmal und persistiert die Wahl hier.",
+
   "ubuntu_image_url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz",
   "nodejs_setup_url": "https://deb.nodesource.com/setup_20.x"
 }
