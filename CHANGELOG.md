@@ -5,6 +5,49 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.23] - 2026-04-17
+
+### Removed
+
+- **Tote `firewall_*`-Keys komplett ausgebaut statt sie als "Altlast,
+  kein Runtime-Effekt" in README + config.json zu beschriften.** Die
+  drei Keys `firewall_ai_apis`, `firewall_registries_node`,
+  `firewall_registries_python` stammen aus einem frueheren Design-
+  Entwurf mit per-Domain-Egress-Filtering. Das ist nie Runtime
+  geworden (iptables matcht Hostnamen nicht zuverlaessig wenn CDNs
+  IPs rotieren — daher der Blanket-HTTPS-Allow + Private-Range-DROP-
+  Ansatz den wir tatsaechlich fahren). Die Keys wurden trotzdem aus
+  `config.json` gelesen, durch `wsl-ai-start.sh` als Args 5-7 an
+  `wsl-sandbox-init.sh` gereicht, und dort in `AI_API_DOMAINS` +
+  `PACKAGE_DOMAINS` einsortiert — wo sie von keinerlei weiterer
+  Logik mehr gelesen wurden. Pure Dead-Code-Kette.
+
+  Gruende fuer die komplette Loeschung (statt weiter-tragen):
+  - README-Eintrag "Altlast, kein Runtime-Effekt" wirkt unprofessionell,
+    verlaengert die Config-Tabelle um drei Zeilen die man nicht anfassen
+    soll, und lenkt vom echten Threat-Model ab.
+  - User-Report: "wirkt weder in der README noch im Code gut."
+  - CLAUDE.md-Policy: "Avoid backwards-compatibility hacks like
+    renaming unused _vars ... If you are certain that something is
+    unused, you can delete it completely."
+
+  Aenderungen:
+  - `config.json`: drei Keys raus.
+  - `wsl-ai-start.sh`: drei `cfg_get_array`-Reads + drei Fallback-
+    Defaults raus, Argumentliste zu `/sandbox-init.sh` von 9 auf 6
+    Positions-Args gekuerzt.
+  - `wsl-sandbox-init.sh`: drei Arg-Positionen raus (AI_API_DOMAINS,
+    CFG_REG_NODE, CFG_REG_PYTHON), `AUTH_BASE_IN` + `AGENT_INSTALL`
+    ruecken auf Position 5/6, Usage-String entsprechend. Der tote
+    `PACKAGE_DOMAINS`-Case-Block (der nur echo'd hat und die Variable
+    nirgends mehr gelesen wurde) ist auch weg.
+  - `README.md` + `docs/README.de.md`: drei Config-Tabellen-Zeilen
+    raus, Altlast-Warnparagraph in der Network-Isolation-Section raus.
+
+  User-Impact: keiner. Wer die Keys in einer custom `config.json`
+  gesetzt hat, bekommt sie ignoriert (wie vorher auch — sie waren ja
+  schon effektiv tot).
+
 ## [1.0.22] - 2026-04-17
 
 ### Added

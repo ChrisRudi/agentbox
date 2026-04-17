@@ -16,19 +16,6 @@
   "resources_ram_warn_percent": 90,
   "resources_watchdog_interval": 30,
 
-  "firewall_ai_apis": [
-    "api.anthropic.com",
-    "api.openai.com",
-    "generativelanguage.googleapis.com"
-  ],
-  "firewall_registries_node": [
-    "registry.npmjs.org"
-  ],
-  "firewall_registries_python": [
-    "pypi.org",
-    "files.pythonhosted.org"
-  ],
-
   "build_whitelist": [
     "npm run build",
     "npm run test",

@@ -252,8 +252,6 @@ Das Wichtige sind die DROPs auf private Netze: sie verhindern, dass der Agent de
 
 **Was agentbox NICHT macht:** Per-Domain-Egress-Filtering. iptables kann Hostnamen nicht zuverlässig matchen (CDNs rotieren IPs mitten im Request), also gibt es kein tatsächlich durchgesetztes Whitelist. Ein Agent mit Netzwerk-Zugriff *kann* während einer Session jeden öffentlichen HTTPS-Endpunkt erreichen. Wer das im Threat-Model hat, braucht einen Egress-Proxy — agentbox liefert keinen mit.
 
-Die Keys `firewall_ai_apis` / `firewall_registries_node` / `firewall_registries_python` in der `config.json` sind **Altlasten aus einem früheren Design** und haben **keinen Runtime-Effekt**. Sie bleiben im Schema nur um bestehende Configs nicht zu brechen — behandle sie als ungenutzt.
-
 ### Ressourcen-Limits
 
 - `.wslconfig`: konfigurierbar über `config.json` (Standard: 4 GB RAM, 2 CPUs, 1 GB Swap)
@@ -296,9 +294,6 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 | `resources_watchdog_interval` | `30` | Watchdog-Prüfintervall (Sekunden) |
 | `build_whitelist` | 8 Kommandos | Erlaubte Build-Befehle |
 | `deploy_whitelist` | `local`, `github` | Erlaubte Deploy-Ziele |
-| `firewall_ai_apis` | 3 Endpoints | Altlast, kein Runtime-Effekt (siehe Netzwerk-Isolation) |
-| `firewall_registries_node` | `npmjs.org` | Altlast, kein Runtime-Effekt |
-| `firewall_registries_python` | `pypi.org`, `pythonhosted.org` | Altlast, kein Runtime-Effekt |
 | `agent_*_enabled` | Big 3 an | Agenten aktivieren/deaktivieren |
 | `auto_start_timeout` | `5` | Auto-Start-Countdown (Sekunden) |
 | `auto_update` | `true` | Beim Start nach Updates suchen |

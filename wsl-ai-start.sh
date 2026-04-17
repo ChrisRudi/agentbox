@@ -1443,15 +1443,6 @@ echo ""
 
 # Config-Werte fuer Sandbox zusammenstellen
 SANDBOX_USER=$(cfg_get "sandbox_user" "agent")
-CFG_AI_APIS=$(cfg_get_array "firewall_ai_apis" | tr '\n' ' ')
-CFG_REG_NODE=$(cfg_get_array "firewall_registries_node" | tr '\n' ' ')
-CFG_REG_PYTHON=$(cfg_get_array "firewall_registries_python" | tr '\n' ' ')
-# Defaults nur wenn config.json fehlt oder nicht lesbar (nicht bei leeren Arrays)
-if [ ! -f "$AGENTBOX_CONFIG" ]; then
-    : "${CFG_AI_APIS:=api.anthropic.com api.openai.com generativelanguage.googleapis.com}"
-    : "${CFG_REG_NODE:=registry.npmjs.org}"
-    : "${CFG_REG_PYTHON:=pypi.org files.pythonhosted.org}"
-fi
 
 # Linux-Pfade (wsl.exe frisst Backslashes beim Argumentpassing).
 # `|| EXIT_CODE=$?` statt `; EXIT_CODE=$?` — sonst killt set -e den
@@ -1459,8 +1450,7 @@ fi
 EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
-    "$SANDBOX_USER" "$CFG_AI_APIS" "$CFG_REG_NODE" "$CFG_REG_PYTHON" \
-    "$AUTH_BASE" "$AGENT_INSTALL" || EXIT_CODE=$?
+    "$SANDBOX_USER" "$AUTH_BASE" "$AGENT_INSTALL" || EXIT_CODE=$?
 
 # --- Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then

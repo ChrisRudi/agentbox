@@ -11,15 +11,12 @@ WIN_PROJECT_PATH="${1:-}"
 AGENT_CMD="${2:-claude}"
 WIN_CACHE_PATH="${3:-}"
 SANDBOX_USER="${4:-agent}"
-AI_API_DOMAINS="${5:-api.anthropic.com api.openai.com generativelanguage.googleapis.com}"
-CFG_REG_NODE="${6:-registry.npmjs.org}"
-CFG_REG_PYTHON="${7:-pypi.org files.pythonhosted.org}"
-AUTH_BASE_IN="${8:-}"
-AGENT_INSTALL="${9:-}"
+AUTH_BASE_IN="${5:-}"
+AGENT_INSTALL="${6:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     echo "FEHLER: Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AI_APIS] [REG_NODE] [REG_PYTHON] [AUTH_BASE] [AGENT_INSTALL]"
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL]"
     exit 1
 fi
 
@@ -378,23 +375,6 @@ elif [ -f "$WORKSPACE/project.json" ]; then
 fi
 
 echo "[INFO] Projekttyp: $PROJECT_TYPE"
-
-# Paketquellen basierend auf Projekttyp bestimmen (aus Config-Parametern)
-PACKAGE_DOMAINS=""
-case "$PROJECT_TYPE" in
-    node)
-        PACKAGE_DOMAINS="$CFG_REG_NODE"
-        echo "[INFO] Paketquelle: $CFG_REG_NODE (Node.js)"
-        ;;
-    python)
-        PACKAGE_DOMAINS="$CFG_REG_PYTHON"
-        echo "[INFO] Paketquelle: $CFG_REG_PYTHON (Python)"
-        ;;
-    *)
-        # generic, html, powershell — keine Paketquellen noetig
-        echo "[INFO] Keine Paketquellen fuer Typ '$PROJECT_TYPE'"
-        ;;
-esac
 
 # Basis-Regeln setzen (immer)
 iptables -F OUTPUT 2>/dev/null || true
