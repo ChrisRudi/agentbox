@@ -14,7 +14,8 @@ einer ephemeren WSL2-Sandbox auf Windows. Kern-Invarianten beim Ändern von Code
   typischerweise in OneDrive liegt und binärer/sensibler/großer State dort
   nichts verloren hat (Sync-Kosten, Files-On-Demand-Placeholder, Tokens in
   der Cloud). Fester Layout-Vertrag unter `%LOCALAPPDATA%\agentbox\`:
-  - `sandbox\template.tar.gz` + `sandbox\.config_hash` — WSL-Template
+  - `sandbox\template.vhdx` (primaer, 2.0+) oder `sandbox\template.tar.gz`
+    (Fallback fuer WSL < 2.0.x) + `sandbox\.config_hash` — WSL-Template
   - `cache\npm\`, `cache\pip\` — Paket-Caches
   - `sessions\<id>\` — Replay-Snapshots
   - `auth\<agent>\` — OAuth/Session-State der CLIs
@@ -85,201 +86,102 @@ Bei fehlender `.update_class`-Datei default = `minor` (sicherer smooth-
 Upgrade-Pfad von Pre-1.0.17-Versionen). Fix für neue Releases: Datei
 anlegen und committen.
 
-## Roadmap: agentbox 2.0 — Performance-Architektur
+## agentbox 2.0 — Performance-Architektur (implementiert in 2.0.0 + 2.0.1)
 
-### Problem (1.x)
+Hintergrund zur Motivation + Benchmarks: siehe
+`docs/future-features/agentbox-2.0-architecture.md`. Hier nur die
+Invarianten + Stolperfallen, die man beim Weiterarbeiten wissen muss.
 
-Alle Projektdateien, Caches und Auth-State liegen auf **DrvFs** (Windows
-NTFS via 9P-Protokoll). Das ist 3-10x langsamer als natives ext4 im
-WSL2-VM. Jeder `git status`, jeder `npm install`, jedes Datei-Read/Write
-geht durch:
+### Template-Format: vhdx primaer, tar.gz nur als Fallback
 
-```
-App → Linux VFS → 9P Client → Hyper-V VMBus → 9P Server → Windows I/O → NTFS → Disk
-```
+- `win-setup-core.ps1` exportiert `template.vhdx` via
+  `wsl --export --vhd` **zuerst**. Nur wenn der vhdx-Export fehlschlaegt
+  (WSL < 2.0.x, kein `--export --vhd`-Support), wird zusaetzlich
+  `template.tar.gz` erzeugt. Beides lebt in
+  `%LOCALAPPDATA%\agentbox\sandbox\`.
+- `wsl-ai-start.sh` bevorzugt beim Session-Start den vhdx-Fastpath:
+  vhdx kopieren (~3-5s SSD) + `wsl --import-in-place` (<1s).
+  Faellt auf `wsl --import` mit tar.gz zurueck, wenn vhdx fehlt oder
+  `import-in-place` fehlschlaegt.
+- Beide Pruefungen (`win-setup-core.ps1`-Skip-Check, `wsl-ai-start.sh`-
+  Template-Pruefung) akzeptieren **eines von beiden** — nie davon
+  ausgehen dass beide existieren. Wer Template-Logik anfasst muss beide
+  Pfade sauber lassen.
 
-1.x-Tuning (noatime, iptables-Reorder, DNS, chown-Eliminierung) hat die
-schlimmsten Bremsen rausgenommen, kann aber den fundamentalen 9P-Overhead
-nicht beseitigen.
+### Hybrid-Workspace: ext4-Overlays fuer Heavy-I/O
 
-**Gemessene Zahlen** (User-Benchmark 1.0.28):
-- ext4 (/tmp): 495 MB/s write, 6.2 GB/s read (cached), 500 files/s
-- DrvFs (/workspace): 44 MB/s write, 161 MB/s read, 125 files/s
-- **Faktor: 4-11x langsamer auf DrvFs**
+In `wsl-sandbox-init.sh`, nach dem Bind-Mount des Projekts nach
+`/workspace/src`, werden per `_overlay_bind_ext4` ext4-Ordner aus
+`/var/agentbox-overlay/` ueber bekannte ephemere Unterverzeichnisse
+gemountet:
 
-**Wettbewerbs-Vorteil:** ALLE Konkurrenten (Docker-basiert wie vibekit,
-textcortex, rivet; WSL-basiert wie claudecode-wsl2, sandvault) leiden
-unter demselben DrvFs/9P-Overhead wenn sie Windows-Dateien anfassen.
-Docker Desktop auf Windows nutzt intern denselben 9P-Kanal für Bind-
-Mounts. Wenn agentbox diesen Flaschenhals eliminiert, ist das ein
-Performance-Alleinstellungsmerkmal das kein Konkurrent hat.
-
-### Lösung (2.0): Hybrid-Architektur — vhdx-Template + ext4-Workspace
-
-#### Kernideen
-
-1. **Template als vhdx statt tar.gz** — `wsl --export --vhd` speichert
-   das fertige Template als vhdx-Datei. Session-Start = File-Copy der
-   vhdx (~3-5s auf SSD) + `wsl --import-in-place` (<1s) statt tar.gz-
-   Extraktion (30-120s). **Kein Admin nötig** — `wsl --import-in-place`
-   ist eine User-Level-Operation.
-
-2. **Hybrid-Workspace: Quellcode auf DrvFs (sicher), Heavy-I/O auf
-   ext4 (schnell)** — Quellcode-Dateien (src/) bleiben per Bind-Mount
-   auf DrvFs/OneDrive (crash-safe, cloud-synced, kein Datenverlust).
-   Alles was Heavy-I/O erzeugt (node_modules, .git/objects, dist/,
-   __pycache__, Build-Artefakte) lebt auf dem ext4-Filesystem der
-   Sandbox-vhdx. **Kein Sync nötig, kein Crash-Risiko für Quellcode.**
-
-   ```
-   /workspace/
-     src/           ← Bind-Mount von DrvFs (sicher, OneDrive-synced)
-     node_modules/  ← ext4 im vhdx (schnell, ephemer, recreatable)
-     .git/          ← ext4 im vhdx (schneller git status/log/diff)
-     dist/          ← ext4 im vhdx (schnelle Builds)
-     __pycache__/   ← ext4 im vhdx
-   ```
-
-   Agent schreibt Quellcode → geht sofort auf DrvFs/OneDrive (safe).
-   Agent macht `npm install` → 10.000 Dateien auf ext4 (500 files/s).
-   **Best of both worlds.**
-
-#### Architektur-Entwurf
-
-```
-Installer (install.ps1, einmalig):
-  1. Template bauen:     wsl --import template-build <tmpdir> <ubuntu.tar.xz>
-                         [Node, Python, Agent-CLIs installieren — wie bisher]
-  2. Als vhdx sichern:   wsl --export --vhd template-build template.vhdx
-                         wsl --unregister template-build
-     → template.vhdx in %LOCALAPPDATA%\agentbox\sandbox\
-
-Sandbox-Start (wsl-ai-start.sh, jede Session):
-  3. vhdx kopieren:      Copy-Item template.vhdx → session.vhdx   (~3-5s SSD)
-  4. Distro registrieren: wsl --import-in-place agentbox-<sess> session.vhdx  (<1s)
-  5. wsl-sandbox-init.sh:
-     - Quellcode bind-mounten: DrvFs → /workspace/src  (wie 1.x, sicher)
-     - Heavy-I/O-Dirs auf ext4: node_modules, .git, dist, Cache
-       bleiben im vhdx-Filesystem (schnell)
-
-Agent-Session:
-  6. Quellcode-Writes → DrvFs (safe, sofort auf OneDrive)
-     Heavy-I/O (npm, git, build) → ext4 (500 files/s, 495 MB/s)
-
-Sandbox-Ende:
-  7. wsl --unregister agentbox-<sess>
-  8. session.vhdx löschen
-  → Kein rsync nötig! Quellcode war die ganze Zeit auf DrvFs.
-  → node_modules etc. sind ephemer (werden bei nächstem npm install
-    neu erzeugt, oder per Cache beschleunigt)
+```text
+/workspace/src/
+  <projekt-dateien>/  <- DrvFs (OneDrive-synced, crash-safe)
+  node_modules/       <- ext4 im vhdx (500 files/s statt 125)
+  .next/, dist/, build/, out/, target/
+  __pycache__/, .pytest_cache/, .mypy_cache/, .ruff_cache/
 ```
 
-### Netzwerk-Tuning 2.0 — Ziel: Host-Level-Performance
+Regeln:
+- **Kein Overlay fuer `.git`** — zu riskant, wuerde Commit-History pro
+  Session verlieren.
+- **Kein Overlay fuer beliebige User-Ordner** — nur die harte Liste in
+  `wsl-sandbox-init.sh`. Erweiterungen nur wenn das Verzeichnis klar
+  reproduzierbar ist (aus `package.json`/`requirements.txt` regener-
+  ierbar).
+- Wenn ein Overlay-Ziel in `/workspace/src/` nicht existiert, legt
+  `_overlay_bind_ext4` es praeemptiv auf DrvFs an (1 leerer Ordner,
+  OneDrive-sync-irrelevant) und ueberlagert ihn sofort mit ext4.
 
-**Status nach 1.x-Tuning:**
-- DNS: 28ms ✓ (Google/Cloudflare, schnelle Resolver)
-- TCP Handshake: 63ms ✓
-- HTTPS HEAD: 250-450ms ✓ (TLS-Overhead, kaum reduzierbar)
-- iptables: ESTABLISHED an Pos. 2, fast-path für 99% des Traffics ✓
+### Netzwerk-Tuning (live in `wsl-sandbox-init.sh`)
 
-**Was in 2.0 noch geht:**
+Alles additiv mit `|| true`-Fallback; kein Kernel-Feature ist Pflicht.
 
-1. **TCP BBR Congestion Control** — Googles Algorithmus, besser als
-   cubic bei Paketverlust und hoher Latenz. Besonders relevant weil
-   WSL2-NAT einen extra Hop einführt:
-   ```bash
-   modprobe tcp_bbr 2>/dev/null || true
-   sysctl -w net.ipv4.tcp_congestion_control=bbr
-   ```
+- **TCP BBR** via `modprobe tcp_bbr` + `sysctl tcp_congestion_control=bbr`.
+  Faellt still auf Kernel-Default (cubic) wenn BBR nicht verfuegbar.
+- **TCP Fast Open** (`tcp_fastopen=3`) fuer einen gesparten Roundtrip
+  pro neuer HTTPS-Connection.
+- **Socket-Buffer** (rmem/wmem bis 16 MB) fuer hohe-Durchsatz-Downloads.
+- **PMTU-Probing** (`tcp_mtu_probing=1`) gegen Fragmentierungs-Stalls
+  bei VPN/Corporate-Proxies.
+- **Lokaler DNS-Cache** via `dnsmasq` auf `127.0.0.1` wenn
+  `dnsmasq-base` im Template installiert ist (wird seit 2.0.0 im
+  apt-Basis-Install mitgezogen). Bei fehlendem binary: direkter
+  Upstream-Fallback auf 8.8.8.8/1.1.1.1 wie in 1.x.
 
-2. **TCP Fast Open (TFO)** — spart einen Roundtrip beim TCP-
-   Verbindungsaufbau. Jede neue HTTPS-Connection (npm registry,
-   AI API, git push) profitiert:
-   ```bash
-   sysctl -w net.ipv4.tcp_fastopen=3
-   ```
+### Template-Build-Beschleunigung (seit 2.0.1)
 
-3. **Socket-Buffer-Tuning** — WSL2-Defaults sind konservativ.
-   Grössere Buffer = weniger Syscalls pro Transfer, besserer
-   Durchsatz bei grossen Downloads:
-   ```bash
-   sysctl -w net.core.rmem_max=16777216
-   sysctl -w net.core.wmem_max=16777216
-   sysctl -w net.ipv4.tcp_rmem="4096 131072 16777216"
-   sysctl -w net.ipv4.tcp_wmem="4096 131072 16777216"
-   ```
+Gilt nur fuer den einmaligen Build in `win-setup-core.ps1`, Session-
+Runtime nicht betroffen:
 
-4. **Lokaler DNS-Cache** — aktuell geht jede DNS-Query direkt an
-   8.8.8.8/1.1.1.1. npm/pip machen 50-200 DNS-Queries pro Install
-   (registry.npmjs.org, cdn.npmjs.org, ...). Ein lokaler dnsmasq-
-   Cache hält aufgelöste Adressen im Speicher:
-   ```bash
-   apt-get install -y dnsmasq
-   # /etc/dnsmasq.conf: server=8.8.8.8, cache-size=1000
-   # /etc/resolv.conf: nameserver 127.0.0.1
-   ```
-   Erwarteter Gewinn: DNS-Latenz von 28ms auf <1ms für wiederholte
-   Lookups (99% der Fälle bei npm/pip install).
+- `force-unsafe-io` in `/etc/dpkg/dpkg.cfg.d/99-agentbox-unsafe-io`
+  (spart ~30-50s). Safe, weil das Template bei Crash eh verworfen wird.
+- apt-Pipelining in `/etc/apt/apt.conf.d/99-agentbox-fastbuild`
+  (`Pipeline-Depth=20`, `Queue-Mode=access`). ~20-30s.
+- Parallele Agent-Installs via `_run_agent ... &` + `wait`. Jeder
+  Agent schreibt in `/tmp/agent-<slug>.log`; bei Fail wird Tail ins
+  Haupt-Install-Log gemirrored. ~30-60s.
+- tar.gz-Export komplett weggelassen wenn vhdx-Export klappt. ~60-90s.
 
-5. **MTU-Optimierung** — WSL2-NAT kann MTU-Mismatches verursachen
-   die zu TCP-Fragmentierung führen. Korrekter MTU = weniger Overhead:
-   ```bash
-   # In wsl-sandbox-init.sh: auto-detect und setzen
-   ip link set dev eth0 mtu $(cat /sys/class/net/eth0/mtu) 2>/dev/null
-   ```
+### `template_schema` — Build-Cache-Invalidierung
 
-**Wettbewerbs-Pitch:** "agentbox: die einzige AI-Agent-Sandbox mit
-TCP BBR, DNS-Caching, Buffer-Tuning und iptables-Fastpath. Alle
-anderen nutzen die WSL2/Docker-Defaults — wir nicht."
+`Get-AgentboxConfigHash` in `win-setup-core.ps1` haelt eine
+`template_schema=N`-Zeile. **Bump diese Zahl, wenn du am
+Template-Build-Script etwas aenderst, das einen Rebuild erzwingen muss,
+ohne dass sich `config.json` aendert** (neue apt-Pakete, neue sysctls
+im Template, geaenderte npm/pip-Calls). Ohne Bump kommen User-
+Installationen mit gecachtem alten Template am `Skip-Build`-Check vorbei
+und sehen die Aenderung nie.
 
-### Offene Fragen / Risiken
+Bisherige Bumps: `1` = 1.x, `2` = 2.0.0 (`dnsmasq-base`), `3` = 2.0.1
+(Build-Performance + Export-Reihenfolge).
 
-- **`wsl --export --vhd` und `wsl --import-in-place`** — verfügbar
-  seit WSL 2.0.x (ca. 2023). Ältere WSL-Versionen unterstützen das
-  nicht → Fallback auf 1.x tar.gz-Pfad nötig.
-- **vhdx-Größe:** Template ist ~3 GB (Ubuntu + Node + Python + 5
-  Agent-CLIs). Sparse VHDX startet kleiner, wächst auf Disk aber
-  während der Session (node_modules etc.). 10 GB Limit sollte
-  reichen, Monitoring via `du` sinnvoll.
-- **Crash-Recovery:** Quellcode ist sicher (DrvFs/OneDrive). Ephemere
-  Daten (node_modules, Build-Artefakte) gehen bei Crash verloren —
-  akzeptabel, weil jederzeit regenerierbar.
-- **dnsmasq im Template:** vergrössert das Template, muss beim Build
-  installiert werden. Alternativ: nur die sysctl-Tunings ohne dnsmasq
-  (leichtgewichtiger, 80% des Gewinns).
-- **TCP BBR:** WSL2-Kernel muss `tcp_bbr` als Modul haben. Auf
-  Standard-WSL2-Kernel (5.15+) vorhanden. `modprobe tcp_bbr` mit
-  Fallback wenn fehlend.
-- **Fallback:** wenn vhdx-Pfad fehlschlägt (alte WSL-Version, fehlende
-  Befehle), muss der 1.x-DrvFs-Pfad als Fallback erhalten bleiben.
+### Bewusst NICHT gemacht
 
-### Implementierungs-Reihenfolge
-
-**Phase 1: Netzwerk-Tuning (niedrig-hängend, kein Architektur-Umbau)**
-1. TCP BBR + TFO + Socket-Buffer sysctls in wsl-sandbox-init.sh
-2. Lokaler DNS-Cache (dnsmasq oder systemd-resolved)
-3. Benchmarks vorher/nachher
-
-**Phase 2: vhdx-Template (der grosse Umbau)**
-4. PoC: `wsl --export --vhd` + Copy + `wsl --import-in-place` manuell
-   testen
-5. win-setup-core.ps1: Template als vhdx exportieren
-6. wsl-ai-start.sh: vhdx-Copy + import-in-place statt tar.gz-import
-7. Fallback: wenn vhdx-Pfad fehlschlägt, 1.x tar.gz beibehalten
-
-**Phase 3: Hybrid-Workspace**
-8. wsl-sandbox-init.sh: Quellcode per Bind-Mount (wie 1.x), aber
-   node_modules/.git/dist auf ext4 im vhdx belassen
-9. Session-Ende: kein rsync nötig (Quellcode war immer auf DrvFs)
-
-**Phase 4: Feinschliff**
-10. `.update_class = major` für das Release
-11. Benchmarks: vorher/nachher-Vergleich publizieren (README)
-12. Competitive Claim: "5-10x faster I/O than stock WSL2/Docker"
-
-### Nicht in 2.0 (Later)
-
-- npm/pip-Cache auf vhdx statt DrvFs (weiterer I/O-Gewinn)
-- Multi-Projekt-VHD-Pool (ein vhdx pro Projekt, parallele Sessions)
-- Dev-Drive-Detection (ReFS Copy-on-Write für instant vhdx-Kopie)
-- Netzwerk-Profiling pro Session (Latenz/Throughput-Report am Ende)
+- **`.git` auf ext4** — zu riskant fuer Commit-History.
+- **npm/pip-Cache in vhdx** — bleibt auf DrvFs (persistiert ueber
+  Sessions, OneDrive-harmlos). Wenn spaeter Hit-Raten-Benchmarks einen
+  klaren Gewinn zeigen, separat angehen.
+- **Multi-Projekt-VHD-Pool / Dev-Drive-Detection / Alpine-Distro** —
+  Later. Aktuelle Flaeche ist schon gross genug.
