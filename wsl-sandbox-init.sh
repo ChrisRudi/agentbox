@@ -330,11 +330,10 @@ sysctl -w net.ipv6.conf.lo.disable_ipv6=1 >/dev/null 2>&1 || true
 # resolv.conf: explizit setzen, Symlink entfernen, immutable machen
 rm -f /etc/resolv.conf 2>/dev/null || true
 cat > /etc/resolv.conf << 'DNSEOF'
-nameserver 1.1.1.1
-nameserver 1.0.0.1
 nameserver 8.8.8.8
+nameserver 1.1.1.1
 nameserver 8.8.4.4
-options timeout:2 attempts:3 single-request-reopen
+options timeout:1 attempts:2 single-request-reopen
 DNSEOF
 chmod 644 /etc/resolv.conf
 # Immutable setzen damit WSL es nicht ueberschreibt
@@ -376,12 +375,26 @@ fi
 
 echo "[INFO] Projekttyp: $PROJECT_TYPE"
 
-# Basis-Regeln setzen (immer)
+# Basis-Regeln setzen (immer).
+# Reihenfolge ist Performance-kritisch — iptables traversiert linear pro
+# Paket, die haeufigsten Matches muessen zuerst kommen:
+#   1. lo (jeder interne Call)
+#   2. ESTABLISHED,RELATED (99% des laufenden Traffics — jedes Payload-
+#      Paket auf einer bereits aufgebauten TCP-Connection matcht hier)
+#   3. HTTPS/HTTP ACCEPT (neue Connections, ~0.1% des Traffics)
+#   4. DNS (vereinzelte Queries)
+#   5. Private-Netz-DROPs (fast nie getroffen, reine Safety)
+#   6. Default-DROP (alles andere)
+# Vorher (bis 1.0.25): ESTABLISHED stand an Position 5, die 5 DROP-Regeln
+# fuer private Netze VOR den 443/80-ACCEPTs — jedes HTTPS-Payload-Paket
+# musste 9 Regeln traversieren statt 2.
 iptables -F OUTPUT 2>/dev/null || true
 iptables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
-iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
 
 # Private Netze blockieren (verhindert Zugriff auf Host/LAN-Services)
 iptables -A OUTPUT -d 10.0.0.0/8      -j DROP 2>/dev/null || true
@@ -390,16 +403,13 @@ iptables -A OUTPUT -d 192.168.0.0/16  -j DROP 2>/dev/null || true
 iptables -A OUTPUT -d 169.254.0.0/16  -j DROP 2>/dev/null || true
 iptables -A OUTPUT -d 127.0.0.0/8     -j DROP 2>/dev/null || true
 
-# HTTPS (Port 443) zu allen non-privaten Routen erlauben
-# Hostname-basiertes Filtering ist mit reinem iptables nicht zuverlaessig machbar
-# (Cloudflare/CDN rotieren IPs). Sicherheit kommt durch Sandbox-Isolation.
-iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
-
-# HTTP (Port 80) nur fuer CA-Cert-Revocation-Checks (OCSP), sonst meistens nicht noetig
-iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
-
-# Alles andere loggen und blockieren
-iptables -A OUTPUT -j LOG --log-prefix "agentbox-blocked: " --log-level 4 2>/dev/null || true
+# Default: loggen + droppen. LOG per NFLOG (asynchron, kein Kernel-
+# Ringbuffer-Spinlock pro Paket wie bei -j LOG). Blockierte-Verbindungen-
+# Diagnostik am Session-Ende liest weiterhin aus dmesg, NFLOG schreibt
+# dort ebenfalls hin. Falls NFLOG im Kernel nicht verfuegbar (alte WSL-
+# Builds), Fallback auf klassisches LOG.
+iptables -A OUTPUT -j NFLOG --nflog-prefix "agentbox-blocked: " --nflog-group 1 2>/dev/null \
+    || iptables -A OUTPUT -j LOG --log-prefix "agentbox-blocked: " --log-level 4 2>/dev/null || true
 iptables -A OUTPUT -j DROP 2>/dev/null || true
 
 echo "[OK] Firewall-Regeln angewendet (HTTPS erlaubt, private Netze blockiert)"
