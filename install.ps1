@@ -1409,73 +1409,35 @@ Write-Host "  - Oder Konsole: wsl -d agentbox-host" -ForegroundColor White
 Write-Host ""
 
 # --- Direkt starten? ---
-# Menuestil identisch zum frueheren Launcher-Prompt (Z. 1025–1063),
-# damit der User die Optionen als Liste sieht statt inline [J/n/v].
-# Versionsmarke [2.0.18] am Ende der Auswahlzeile — falls "v tut
-# nichts" erneut gemeldet wird, ist an der Marke sofort ersichtlich
-# ob die aktuelle install.ps1 laeuft oder ein alter Cache.
+# Read-Host statt Timer-Polling. Hintergrund: zwei User-Reports (2.0.15,
+# 2.0.17) mit "v tut nichts" — das Key-Polling via [Console]::KeyAvailable
+# und $Host.UI.RawUI.KeyAvailable funktionierte in beiden PS-Host-Kontexten
+# nicht (vermutlich UAC-Elevated-Window mit Fokus-Issue oder Terminal-
+# Eigenheit). Read-Host blockt zwar bis Enter, arbeitet aber garantiert
+# in jedem PS-Host. Timeout-Komfort verlieren wir bewusst — der User kann
+# einfach Enter druecken fuer den Default.
+# Versionsmarke [2.0.19] in der Auswahlzeile — damit beim naechsten
+# User-Report sofort sichtbar ist ob die aktuelle install.ps1 laeuft.
 Write-Host ""
 Write-Host "Jetzt agentbox starten?" -ForegroundColor Cyan
-Write-Host "  [1] Ja                 — starten mit aktuellem Launcher (Default)" -ForegroundColor White
-Write-Host "  [2] Nein               — manuell via Desktop-Shortcut starten" -ForegroundColor White
+Write-Host "  [1] Ja                  — starten mit aktuellem Launcher (Default)" -ForegroundColor White
+Write-Host "  [2] Nein                — manuell via Desktop-Shortcut starten" -ForegroundColor White
 Write-Host "  [3] VS Code + Filewatch — starten UND neuen Default setzen" -ForegroundColor White
-Write-Host "  Auswahl [1/2/3, 10s Timeout = 1]  [2.0.18]: " -ForegroundColor Cyan -NoNewline
+$choiceRaw = Read-Host "  Auswahl [1/2/3, Enter = 1]  [2.0.19]"
+$choice = "$choiceRaw".Trim().ToUpperInvariant()
 
 $startNow = $true
 $forceVsCode = $false
-$timeoutSec = 10
-$startTime = Get-Date
-
-# Zwei-Wege-Input: primaer $Host.UI.RawUI (PS-nativ), Fallback auf
-# [Console]. Pollen pro Iteration; was zuerst einen Key liefert
-# gewinnt. Der gedrueckte Buchstabe/Ziffer wird nach dem break
-# farbig echoed — visuelles Feedback dass die Taste ankam.
-while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
-    $char = $null
-    $isEnter = $false
-    try {
-        if ($Host.UI.RawUI.KeyAvailable) {
-            $k = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-            $char = "$($k.Character)"
-            if ($k.VirtualKeyCode -eq 13) { $isEnter = $true }
-        }
-    } catch { }
-    if (-not $char -and -not $isEnter) {
-        try {
-            if ([Console]::KeyAvailable) {
-                $ck = [Console]::ReadKey($true)
-                $char = "$($ck.KeyChar)"
-                if ($ck.Key -eq 'Enter') { $isEnter = $true }
-            }
-        } catch { }
-    }
-    if ($char -or $isEnter) {
-        $uc = "$char".ToUpperInvariant()
-        # Akzeptiere sowohl Ziffern [1/2/3] als auch J/N/V-Buchstaben
-        # (Rueckwaerts-Kompat mit der alten [J/n/v]-Inline-Prompt),
-        # plus Enter = Default.
-        if ($uc -eq '2' -or $uc -eq 'N') {
-            Write-Host "2" -ForegroundColor Yellow
-            $startNow = $false
-            break
-        }
-        if ($uc -eq '3' -or $uc -eq 'V') {
-            Write-Host "3  (VS Code + Filewatch)" -ForegroundColor Green
-            $forceVsCode = $true
-            break
-        }
-        if ($isEnter -or $uc -eq '1' -or $uc -eq 'J' -or $uc -eq 'Y') {
-            Write-Host "1" -ForegroundColor Green
-            break
-        }
-        # Unbekannte Taste — Debug-Hint, Loop weiterlaufen lassen.
-        Write-Host "[?=$char] " -ForegroundColor DarkGray -NoNewline
-    }
-    Start-Sleep -Milliseconds 100
-}
-if ((((Get-Date) - $startTime).TotalSeconds -ge $timeoutSec)) {
-    # Timeout: kein Echo bisher — Default-"1" anzeigen fuer saubere Zeile.
-    Write-Host "1  (Timeout)" -ForegroundColor DarkGray
+switch ($choice) {
+    ""  { Write-Host "  → 1 (Default)" -ForegroundColor DarkGray }
+    "1" { Write-Host "  → 1" -ForegroundColor Green }
+    "J" { Write-Host "  → 1" -ForegroundColor Green }
+    "Y" { Write-Host "  → 1" -ForegroundColor Green }
+    "2" { Write-Host "  → 2 (kein Start)" -ForegroundColor Yellow; $startNow = $false }
+    "N" { Write-Host "  → 2 (kein Start)" -ForegroundColor Yellow; $startNow = $false }
+    "3" { Write-Host "  → 3 (VS Code + Filewatch — neuer Default)" -ForegroundColor Green; $forceVsCode = $true }
+    "V" { Write-Host "  → 3 (VS Code + Filewatch — neuer Default)" -ForegroundColor Green; $forceVsCode = $true }
+    default { Write-Host "  → unbekannte Auswahl '$choiceRaw' — faellt zurueck auf 1 (Default)" -ForegroundColor DarkGray }
 }
 
 if ($startNow) {

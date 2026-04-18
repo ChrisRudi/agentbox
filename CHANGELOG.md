@@ -5,6 +5,36 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.19] - 2026-04-18
+
+### Changed — Post-Install-Prompt auf Read-Host umgestellt
+
+Zwei User-Reports (2.0.15, 2.0.17) mit "v tut nichts" trotz aller
+Defensive-Input-Versuche (ConsoleKey-Enum + KeyChar + `$Host.UI.RawUI`
++ `[Console]` dual-polling). Verdacht: der PS-Host unter UAC-Elevation
+oder in bestimmten Terminal-Konfiguration exposed keine der beiden
+Key-APIs zuverlaessig. Weiter raten ist sinnlos.
+
+Jetzt: `Read-Host` statt Timer-Polling. Blockt bis Enter, arbeitet aber
+garantiert in jedem PS-Host. Timeout-Komfort geht verloren — der User
+kann Enter ohne Eingabe druecken fuer den Default.
+
+```
+Jetzt agentbox starten?
+  [1] Ja                  — starten mit aktuellem Launcher (Default)
+  [2] Nein                — manuell via Desktop-Shortcut starten
+  [3] VS Code + Filewatch — starten UND neuen Default setzen
+  Auswahl [1/2/3, Enter = 1]  [2.0.19]:
+```
+
+Akzeptierte Eingaben: `1`/`2`/`3` (primaer, konsistent mit dem frueheren
+Launcher-Prompt), `J`/`N`/`V` (Muscle-Memory-Kompat), leer = Default.
+Unbekannte Eingabe → Hinweis + Default-Fallback.
+
+Versionsmarke `[2.0.19]` in der Auswahlzeile. Bei GitHub-CDN-Cache-Hits
+sieht der User sofort welche install.ps1-Version laeuft — Ursachen-
+Trennung zwischen "Code-Bug" und "Datei aus Cache".
+
 ## [2.0.18] - 2026-04-18
 
 ### Changed — Post-Install-Timer als aufgelistetes Menue [1/2/3]
