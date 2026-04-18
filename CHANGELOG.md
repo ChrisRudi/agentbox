@@ -5,6 +5,26 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.4] - 2026-04-18
+
+### Added -- `tools/bench.{ps1,sh}` Versions-Stempel im Output
+
+User-Feedback: "ich erkenne nicht ob ich die neue Version habe, eine
+Version im Header waere schoen." Fair. Jetzt:
+
+- **`BENCH_VERSION` Konstante** oben in beiden Scripts (`2.1.4`),
+  kuenftig bei jedem bench-Release mitbumpen.
+- **Header-Zeile auf stdout** zeigt `agentbox-bench v2.1.4 platform=<host|sandbox>`
+  in Cyan (PS) bzw. normaler Schrift (sh).
+- **Summary-Zeile** und **bench-results.txt-Header** enthalten
+  `version=2.1.4` -- damit ist beim Diffen zwischen Runs sofort
+  ersichtlich welche Version welche Zahlen produziert hat.
+
+Statt `agentbox-bench v1 platform=host` steht jetzt
+`agentbox-bench version=2.1.4 platform=host` im Summary. Das bricht
+bestehende Parser die strikt auf `v1` matchen -- unwahrscheinlich,
+bei Bedarf per sed regex fixierbar.
+
 ## [2.1.3] - 2026-04-18
 
 ### Fixed — `tools/bench.{ps1,sh}`: ASCII-only, PS 5.1 ParseError behoben

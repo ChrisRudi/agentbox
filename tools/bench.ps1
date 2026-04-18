@@ -22,6 +22,8 @@
 # fuer den Dev-Alltag, kein Script-Bug. Zum Validieren kurz Defender-
 # Exclusion auf $env:TEMP setzen und erneut messen.
 
+$BENCH_VERSION = "2.1.4"
+
 $ErrorActionPreference = 'Stop'
 $tmp     = $env:TEMP
 $outFile = if ($env:BENCH_OUT) { $env:BENCH_OUT } else { Join-Path (Get-Location) "bench-results.txt" }
@@ -30,12 +32,12 @@ $stamp   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz")
 # Laufwerksbuchstabe der TEMP-Location -- manche Setups haben D:\Temp
 # oder ein externes Drive, erklaert langsame Zahlen.
 $tmpDrive = (Split-Path -Qualifier $tmp) -replace '[^A-Za-z:]',''
-$header   = "# ======== $stamp | platform=host | temp_drive=$tmpDrive ========"
+$header   = "# ======== $stamp | platform=host | version=$BENCH_VERSION | temp_drive=$tmpDrive ========"
 
 Write-Host "========================================"
-Write-Host " agentbox-bench v1 platform=host"
+Write-Host " agentbox-bench v$BENCH_VERSION platform=host" -ForegroundColor Cyan
 Write-Host "========================================"
-Write-Host " Output-Datei: $outFile"
+Write-Host " Output-Datei:  $outFile"
 Write-Host " TEMP-Location: $tmp"
 
 # --- 1. Network ---
@@ -147,7 +149,7 @@ Write-Host "   -> $smallFilesPerS files/s (in ${elapsedSec}s)"
 # --- Summary (stdout + append an bench-results.txt) ---
 $summaryLines = @(
     $header,
-    "agentbox-bench v1 platform=host",
+    "agentbox-bench version=$BENCH_VERSION platform=host",
     "net_download_mbs=$netMbs",
     "net_url=$netUrlUsed",
     "disk_seq_write_mbs=$seqWriteMbs",

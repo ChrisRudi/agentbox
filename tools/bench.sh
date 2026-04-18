@@ -20,10 +20,12 @@
 
 set -u
 
+BENCH_VERSION="2.1.4"
+
 BENCH_DIR="${BENCH_DIR:-/tmp}"
 BENCH_OUT="${BENCH_OUT:-$(pwd)/bench-results.txt}"
 STAMP=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')
-HEADER="# ======== $STAMP | platform=sandbox | bench_dir=$BENCH_DIR ========"
+HEADER="# ======== $STAMP | platform=sandbox | version=$BENCH_VERSION | bench_dir=$BENCH_DIR ========"
 
 FS_HINT=""
 if [ "$BENCH_DIR" = "/tmp" ]; then FS_HINT=" (ext4 in vhdx)"; fi
@@ -32,9 +34,9 @@ case "$BENCH_DIR" in
 esac
 
 echo "========================================"
-echo " agentbox-bench v1 platform=sandbox"
+echo " agentbox-bench v$BENCH_VERSION platform=sandbox"
 echo "========================================"
-echo " Output-Datei: $BENCH_OUT"
+echo " Output-Datei:   $BENCH_OUT"
 echo " Disk-Bench-Dir: $BENCH_DIR$FS_HINT"
 
 # --- 1. Network ---
@@ -122,7 +124,7 @@ echo "   -> $SMALL_FILES_PER_S files/s (in ${ELAPSED}s)"
 
 # --- Summary ---
 SUMMARY="$HEADER
-agentbox-bench v1 platform=sandbox
+agentbox-bench version=$BENCH_VERSION platform=sandbox
 net_download_mbs=$NET_MBS
 net_url=$NET_URL_USED
 disk_seq_write_mbs=$SEQ_WRITE_MBS
