@@ -229,22 +229,36 @@ function Seed-AgentboxDemoBenchmark {
         [System.IO.Directory]::CreateDirectory($demoDir) | Out-Null
     }
 
-    # Exclude-Liste: Runtime-Artefakte nicht seeden, damit jeder neue
-    # User einen sauberen Stand bekommt. index.html ist Placeholder aus
-    # dem Repo, darf mit rein; bench-results.json wird beim Run erzeugt.
+    # Zwei Klassen von Dateien:
+    # - SOURCE (bench.ps1, bench.sh, index.html): immer overwriten, damit
+    #   User beim Install-Rerun die Fixes aus dem Repo bekommen.
+    #   bench.ps1 + bench.sh sind Code, nicht Config. index.html wird eh
+    #   bei jedem bench-Run ueberschrieben -- der initiale Placeholder aus
+    #   dem Repo soll die aktuelle Version sein.
+    # - CONFIG (project.json, CLAUDE.md): nur wenn fehlend, damit
+    #   User-Modifikationen am Build-Command oder an der Agent-Doku
+    #   unberuehrt bleiben.
+    # - EXCLUDED (bench-results.json): nie seeden, ist Runtime-State.
+    $sourceFiles = @("bench.ps1", "bench.sh", "index.html")
     $excluded = @("bench-results.json")
-    $copied = 0; $kept = 0
+    $overwritten = 0; $created = 0; $kept = 0
     Get-ChildItem -LiteralPath $toolsSrc -File | ForEach-Object {
         if ($excluded -contains $_.Name) { return }
         $dest = Join-Path $demoDir $_.Name
-        if (Test-Path -LiteralPath $dest) {
-            $kept++
-        } else {
+        $exists = Test-Path -LiteralPath $dest
+        if ($sourceFiles -contains $_.Name) {
+            # Source file: always overwrite to propagate repo updates.
             Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
-            $copied++
+            if ($exists) { $overwritten++ } else { $created++ }
+        } elseif (-not $exists) {
+            # Config file: seed only if missing.
+            Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
+            $created++
+        } else {
+            $kept++
         }
     }
-    Write-Host "[OK] demo-benchmark: $copied neu kopiert, $kept unberuehrt gelassen" -ForegroundColor Green
+    Write-Host "[OK] demo-benchmark: $created neu, $overwritten aktualisiert (bench.*/index.html), $kept unberuehrt (User-Config)" -ForegroundColor Green
     Write-Host "     Pfad: $demoDir" -ForegroundColor Gray
 }
 

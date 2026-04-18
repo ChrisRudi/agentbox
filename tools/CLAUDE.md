@@ -36,8 +36,8 @@ Getestete Metriken pro Seite:
 
 ```json
 {
-  "host":    { "timestamp": "...", "version": "3.0.0", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... },
-  "sandbox": { "timestamp": "...", "version": "3.0.0", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... }
+  "host":    { "timestamp": "...", "version": "3.0.1", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... },
+  "sandbox": { "timestamp": "...", "version": "3.0.1", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... }
 }
 ```
 

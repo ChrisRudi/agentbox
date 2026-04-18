@@ -20,7 +20,7 @@
 
 set -u
 
-BENCH_VERSION="3.0.0"
+BENCH_VERSION="3.0.1"
 BENCH_DIR="${BENCH_DIR:-/tmp}"
 BENCH_OUT="${BENCH_OUT:-$(pwd)/bench-results.json}"
 STAMP=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')

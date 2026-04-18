@@ -5,6 +5,53 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.6] - 2026-04-18
+
+### Changed -- bench.ps1 Wirkungsgrad-Formel: Sandbox / Host (statt host / sandbox)
+
+User-Request: "Auch die Formel im HTML aendern: Wirkungsgrad = Sandbox
+/ Host x 100 %".
+
+Alte Formel in `tools/bench.ps1 Ratio()`: `host / sandbox`, gedeckelt
+auf 100 %. Problem: wenn die Sandbox _schneller_ war als der Host
+(ext4 in vhdx bei Small-Files-I/O deutlich ueber DrvFs/NTFS), gab es
+`h/s < 1` und damit `< 100 %` -- das Tool zeigte einen schwaecheren
+Wert gerade dann, wenn die Sandbox den Host schlug. Die obere Deckelung
+auf 100 % kaschierte das bei langsamen Sandbox-Runs, aber der
+Umkehr-Fall war falsch.
+
+Neue Formel: `sandbox / host * 100 %`, **ohne Deckelung**. Damit:
+- Sandbox = Host -> 100 %
+- Sandbox doppelt so schnell wie Host -> 200 %
+- Sandbox halb so schnell -> 50 %
+
+Farb-Schwellen in `Pct()` bleiben gleich (>=100 gruen, >=50 gelb, sonst
+rot) -- die Semantik passt jetzt erst wirklich zum agentbox-Selling-
+Point: "ext4-in-vhdx schlaegt DrvFs, das sieht man beim Small-Files-
+Test und beim Process-Spawn in 2-3x-Wirkungsgrad".
+
+HTML-Footer-Text entsprechend angepasst. `BENCH_VERSION` bump auf 3.0.1
+in beiden Scripts.
+
+### Changed -- Seed-AgentboxDemoBenchmark unterscheidet jetzt Source vs. Config
+
+Bei `install.ps1`-Rerun wurden bisher alle vorhandenen Dateien in
+`demo-benchmark/` unberuehrt gelassen (Copy-only-if-missing). Das ist
+richtig fuer User-Config (`project.json`, `CLAUDE.md`), aber falsch
+fuer die Source-Scripts (`bench.ps1`, `bench.sh`, `index.html`) --
+Bug-Fixes oder Formel-Updates im Repo erreichten den User nie.
+
+Ab jetzt:
+- `bench.ps1`, `bench.sh`, `index.html`: **immer overwriten**
+  (Source-of-truth liegt im Repo, wird bei jedem Install-Rerun
+  propagiert).
+- `project.json`, `tools/CLAUDE.md`: **nur wenn fehlend** kopieren
+  (User-Modifikationen bleiben).
+- `bench-results.json`: weiterhin exkludiert (Runtime-State).
+
+Damit bekommt der 2.2.6-Formel-Fix beim Rerun auch wirklich Wirkung
+und landet in der User-Kopie.
+
 ## [2.2.5] - 2026-04-18
 
 ### Changed -- Task-Runner-Architektur: Watch-Daemon -> EventLog-Trigger

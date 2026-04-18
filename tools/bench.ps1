@@ -12,7 +12,7 @@
 # Hinweis: Windows-Defender kann Disk + Spawn druecken. Zum Validieren
 # kurz Defender-Exclusion auf $env:TEMP setzen.
 
-$BENCH_VERSION = "3.0.0"
+$BENCH_VERSION = "3.0.1"
 
 $ErrorActionPreference = 'Stop'
 $tmp     = $env:TEMP
@@ -201,11 +201,13 @@ Write-Host " Build: index.html generieren" -ForegroundColor Cyan
 Write-Host "========================================"
 
 function Ratio($s, $h) {
-    # Wirkungsgrad = host / sandbox, gedeckelt auf 100 %.
-    if (-not $s -or -not $h -or $s -eq 0) { return $null }
-    $r = $h / $s
-    if ($r -gt 1) { $r = 1 }
-    return [Math]::Round($r * 100, 1)
+    # Wirkungsgrad = sandbox / host. Kein Cap -- wenn die Sandbox
+    # schneller ist als der Host (ext4 in vhdx gegen DrvFs/NTFS), soll
+    # das als > 100 % sichtbar werden. Das ist ja der agentbox-Selling-
+    # Point: die Sandbox bremst nicht, sondern kann den Host bei
+    # File-Heavy-Workloads sogar ueberholen.
+    if (-not $s -or -not $h -or $h -eq 0) { return $null }
+    return [Math]::Round(($s / $h) * 100, 1)
 }
 function Cell($v, $unit) {
     if ($null -eq $v) { return "<td class=na>n/a</td>" }
@@ -279,7 +281,7 @@ $rows
 </tbody>
 </table>
 <div class=meta>
-Wirkungsgrad = host / sandbox &times; 100&nbsp;%, gedeckelt auf 100&nbsp;%. 100&nbsp;% = Sandbox bremst nicht.<br>
+Wirkungsgrad = Sandbox / Host &times; 100&nbsp;%. &gt;100&nbsp;% = Sandbox schneller als Host (ext4 in vhdx vs. DrvFs). 100&nbsp;% = gleich schnell.<br>
 Quelle: <code>bench-results.json</code>. Generiert von <code>bench.ps1</code> beim Build. Version $BENCH_VERSION.
 </div>
 </html>
