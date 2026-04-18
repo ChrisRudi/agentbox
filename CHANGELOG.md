@@ -5,6 +5,41 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.12] - 2026-04-18
+
+### Fixed -- win-task-runner.ps1: non-ASCII chars (em-dash, arrow) brechen PS 5.1 Parser
+
+Direkte Folge von 2.2.11: nachdem der `&&`-Kommentar-Landmine beseitigt
+war, kam der Parser ein paar Zeilen weiter und fiel ueber den naechsten
+Landmine -- die em-dashes (U+2014) in Write-Log-Messages und Comments.
+Auf der Windows-Seite beim User liest PS 5.1 die Datei als ANSI/CP850,
+die UTF-8-Em-Dash-Bytes (0xE2 0x80 0x94) werden als drei kaputte Zeichen
+dekodiert, das verschiebt Tokenizer-Positionen und kaskadiert in Folge-
+Zeilen. Konsequenz: wieder Exit-Code 1, diesmal am `"github" {` und
+Closing-Brace.
+
+**Fix:** in win-task-runner.ps1 alle non-ASCII chars durch ASCII-
+Aequivalente ersetzt:
+- Em-Dash `--` (zweimal Minus) statt `—` (10 Vorkommen: log-Messages,
+  Comments)
+- Arrow `->` statt `→` (2 Vorkommen in Comments)
+
+Entspricht der laengst etablierten CLAUDE.md-Regel "ASCII-only in PS
+5.1" -- die Regel existierte seit 1.0.9, wurde aber in win-task-runner.ps1
+nicht konsequent durchgezogen. 2.2.3 hatte die cmd-chain-Brueche
+gefixt, 2.2.11 den `&&`-Kommentar, 2.2.12 jetzt den Encoding-Rest.
+Damit sollte der Parser-Crash-Landmine-Bestand abgeraeumt sein.
+
+**Noch offen (NICHT in diesem Release):** install.ps1, win-setup-core.ps1,
+win-setup.ps1, lib/config.ps1 enthalten ebenfalls non-ASCII chars. Die
+werden aber vom install-Flow gehandelt, nicht vom Scheduled Task, und
+haben keine User-Reports getriggert. Separate Putz-Aktion, wenn sich
+jemand ueber Drift dort aergert.
+
+**Deployment:** wie 2.2.11 -- reines Script-Update, kein Admin-Rerun
+noetig. Naechster Session-Start pullt, pending Tasks in
+demo-benchmark/_tasks/ werden abgearbeitet.
+
 ## [2.2.11] - 2026-04-18
 
 ### Fixed -- win-task-runner.ps1: Parser-Landmine im Kommentarblock der Invoke-BuildAction

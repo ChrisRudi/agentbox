@@ -1,5 +1,5 @@
 # win-task-runner.ps1
-# agentbox — Task Queue + Build/Deploy Runner
+# agentbox -- Task Queue + Build/Deploy Runner
 # Modi: -watch (FileSystemWatcher Daemon) oder -once (einmal durchlaufen)
 # Version: 3.2
 
@@ -15,7 +15,7 @@ $ErrorActionPreference = "Stop"
 if ($env:OneDrive) {
     $baseDir = Join-Path $env:OneDrive "AI_Projects_Source"
 } elseif ($PSScriptRoot -and $PSScriptRoot -match '(.+)[\\/]_control$') {
-    # Skript liegt in _control → Elternordner ist baseDir
+    # Skript liegt in _control -> Elternordner ist baseDir
     $baseDir = $Matches[1]
 } else {
     Write-Host "FEHLER: OneDrive-Pfad nicht ermittelbar." -ForegroundColor Red
@@ -34,7 +34,7 @@ if (-not (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue)) {
     $agentboxLibConfig = Join-Path $controlDir "lib\config.ps1"
     if (Test-Path -LiteralPath $agentboxLibConfig) {
         try { . $agentboxLibConfig } catch {
-            Write-Host "[INFO] lib/config.ps1 konnte nicht geladen werden — nutze Inline-Fallback." -ForegroundColor Gray
+            Write-Host "[INFO] lib/config.ps1 konnte nicht geladen werden -- nutze Inline-Fallback." -ForegroundColor Gray
         }
     }
 }
@@ -48,7 +48,7 @@ if (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue) {
             $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
         }
     } catch {
-        Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
+        Write-Host "[INFO] config.json nicht lesbar -- verwende Standardwerte." -ForegroundColor Gray
     }
 }
 
@@ -101,7 +101,7 @@ function Write-Log {
         "OK"      { "Green" }
         default   { "White" }
     }
-    Write-Host "[$timestamp] $Level — $Message" -ForegroundColor $color
+    Write-Host "[$timestamp] $Level -- $Message" -ForegroundColor $color
 }
 
 function Write-EventLogEntry {
@@ -110,7 +110,7 @@ function Write-EventLogEntry {
         Write-EventLog -LogName Application -Source $eventSource -EntryType $EntryType `
             -EventId $EventId -Message $Message -ErrorAction SilentlyContinue
     } catch {
-        # Event-Log nicht verfuegbar — ignorieren
+        # Event-Log nicht verfuegbar -- ignorieren
     }
 }
 
@@ -159,8 +159,8 @@ function Move-TaskToHistory {
     [System.IO.File]::WriteAllText($historyPath, ($TaskData | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
 
     # .NET-API statt Remove-Item: PS 5.1 hat einen Provider-Bug, bei dem
-    # Remove-Item -LiteralPath bei Tilde-Pfaden (Username mit Umlaut →
-    # Schueler → SCHLER~1) mit InvalidArgument crasht.
+    # Remove-Item -LiteralPath bei Tilde-Pfaden (Username mit Umlaut ->
+    # Schueler -> SCHLER~1) mit InvalidArgument crasht.
     try { [System.IO.File]::Delete($TaskFilePath) } catch { }
 }
 
@@ -207,7 +207,7 @@ function Invoke-BuildAction {
     )
 
     if (-not $ProjectConfig.build -or -not $ProjectConfig.build.command) {
-        Write-Log "Kein Build konfiguriert — ueberspringe." "WARN"
+        Write-Log "Kein Build konfiguriert -- ueberspringe." "WARN"
         return
     }
 
@@ -272,7 +272,7 @@ function Invoke-DeployAction {
 
     switch ($target) {
         "local" {
-            Write-Log "Deploy-Target 'local' — keine Aktion noetig." "OK"
+            Write-Log "Deploy-Target 'local' -- keine Aktion noetig." "OK"
         }
         "github" {
             Write-Log "Deploy nach GitHub..." "INFO"
@@ -327,7 +327,7 @@ function Process-SingleTask {
 
     # Action-Whitelist
     if ($action -notin @("build", "deploy")) {
-        Write-Log "Unbekannte Aktion '$action' in $fileName — abgelehnt." "ERROR"
+        Write-Log "Unbekannte Aktion '$action' in $fileName -- abgelehnt." "ERROR"
         $taskHash = @{
             project   = $projectName
             action    = $action
@@ -406,7 +406,7 @@ function Process-SingleTask {
             -Status "failed" -ErrorMsg $errorMsg
         Write-StatusFile -ProjectDir $projectPath -Action $action `
             -Status "failed" -ErrorMsg $errorMsg
-        Write-EventLogEntry -Message "Task fehlgeschlagen: $projectName / $action — $errorMsg" `
+        Write-EventLogEntry -Message "Task fehlgeschlagen: $projectName / $action -- $errorMsg" `
             -EntryType "Error" -EventId 1003
 
         Write-Log "Task fehlgeschlagen: $errorMsg" "ERROR"
