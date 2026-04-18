@@ -40,6 +40,24 @@ Rechnerwechsel soll nicht bedeuten, dass du dein komplettes KI-Dev-Setup neu auf
 
 Laptop verloren? Neuen kaufen, einen Befehl, einloggen. Deine Arbeit ist schon da.
 
+## Performance
+
+agentbox ist nicht nur sicherer — sondern auch **schneller**. Beispiellauf auf modernem Laptop-SSD unter Windows 11 + WSL 2.x (2026-04-18):
+
+| Metrik                       | agentbox vs Host |
+|------------------------------|------------------|
+| Netzwerk-Download            | 1.1x             |
+| Disk seq write (1 GB)        | **18.7x**        |
+| Disk small files (10k x 4 B) | **9.1x**         |
+| CPU SHA256 (500 MB)          | 1.9x             |
+| Process spawn (500 procs)    | **17.3x**        |
+
+Die grossen Gewinne kommen von den ext4-on-vhdx-Overlays im Workspace (`node_modules`, `.next`, `__pycache__` etc.) und vom Linux-nativen fork/exec — aus demselben Grund fuehlen sich `npm install` und `pytest` in WSL schneller an als direkt auf Windows.
+
+Ehrliche Einordnung: die Verhaeltnisse beziehen sich auf die **persistente Host-Distro** (`agentbox_host`), ohne Session-Time-Tuning. Die **ephemere Agent-Session** legt BBR, dnsmasq-Cache, `force-unsafe-io` fuer dpkg und zusaetzliche ext4-Overlays obendrauf — die tatsaechlichen In-Session-Zahlen liegen typischerweise noch hoeher.
+
+Auf eigener Hardware nachstellbar via mitgeliefertem Demo-Projekt: agentbox → `[c] Konfiguration` → `[3] Benchmark ausfuehren` — Code liegt in [`tools/`](../tools/).
+
 ## Unterstützte Agenten
 
 | Agent | Standard | Paketmanager | Aktivieren |

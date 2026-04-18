@@ -40,6 +40,24 @@ Hopping laptops shouldn't mean rebuilding your entire AI dev setup. agentbox is 
 
 Lose the laptop? Buy a new one, run one command, log in. Your work is already there.
 
+## Performance
+
+agentbox isn't just safer — it's **faster**. Example run on a modern laptop SSD under Windows 11 + WSL 2.x (2026-04-18):
+
+| Metric                       | agentbox vs Host |
+|------------------------------|------------------|
+| Network download             | 1.1x             |
+| Disk sequential write (1 GB) | **18.7x**        |
+| Disk small files (10k x 4 B) | **9.1x**         |
+| CPU SHA256 (500 MB)          | 1.9x             |
+| Process spawn (500 procs)    | **17.3x**        |
+
+The big wins come from the ext4-on-vhdx workspace overlays (`node_modules`, `.next`, `__pycache__` etc.) and Linux-native fork/exec — the same reason `npm install` and `pytest` feel snappier in WSL than on the Windows host.
+
+Honest footnote: these ratios are measured against the **persistent host distro** (`agentbox_host`), without any session-time tuning. The **ephemeral agent session** layers BBR, dnsmasq caching, `force-unsafe-io` dpkg and additional ext4 overlays on top, so actual in-session numbers are typically higher.
+
+Reproduce on your own hardware via the bundled demo project: agentbox → `[c] Konfiguration` → `[3] Benchmark ausfuehren` — code lives in [`tools/`](tools/).
+
 ## Supported Agents
 
 | Agent | Default | Install | Activate |

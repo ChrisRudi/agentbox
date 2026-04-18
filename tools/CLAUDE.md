@@ -121,3 +121,26 @@ sondern delegiert an den Host-Runner via EventLog-Trigger.
 | `index.html` | HTML-Report, bei jedem Host-Run ueberschrieben |
 | `project.json` | agentbox Projekt-Config, `build.command` -> bench.ps1 |
 | `CLAUDE.md` | Dieses Dokument |
+
+## Beispiellauf (Referenz)
+
+Snapshot vom 2026-04-18, modernes Laptop-SSD unter Windows 11 + WSL 2.x.
+Dient als Anker fuer Regressions-Checks — wer die Bench-Scripts
+anfasst, sollte seine eigenen Zahlen in der gleichen Groessenordnung
+sehen. Die README-Werbung zeigt nur die Ratio-Spalte; hier stehen auch
+die Absolutwerte, weil ein Agent beim Debuggen wissen muss, ob z.B.
+500 MB/s sequentiell plausibel sind oder schon ein Messfehler.
+
+| Metrik                       | Host         | agentbox_host  | Ratio     |
+|------------------------------|--------------|----------------|-----------|
+| Netzwerk-Download            | 13.21 MB/s   | 14.39 MB/s     | 1.1x      |
+| Disk seq write (1 GB)        | 26.02 MB/s   | 486.0 MB/s     | **18.7x** |
+| Disk small files (10k x 4 B) | 1250 files/s | 11428 files/s  | **9.1x**  |
+| CPU SHA256 (500 MB)          | 136.37 MB/s  | 253.85 MB/s    | 1.9x      |
+| Process spawn (500 procs)    | 31 procs/s   | 537 procs/s    | **17.3x** |
+
+Der gemessene `agentbox_host`-Wert ist **ungetuned** (persistente Host-
+Distro, nur Template-Sysctl). Eine frisch-getunte ephemere Sandbox mit
+ext4-Overlays + BBR + dnsmasq liegt typischerweise noch hoeher. Wenn
+spaeter `BENCH_PLATFORM=sandbox` aktiv wird, sollte die Ratio-Spalte
+fuer Disk-I/O weiter steigen, Netzwerk deutlich ueber 1.0x (BBR-Effekt).

@@ -5,6 +5,48 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.9] - 2026-04-18
+
+### Changed -- Performance-Section im README: Verhaeltnisse statt Absolutwerte
+
+Die README.md verkaufte bisher Sicherheit + Portabilitaet, aber nicht
+den realen Performance-Vorsprung von WSL-on-vhdx gegenueber dem
+Windows-Host. Der 2026-04-18-Bench aus `demo-benchmark/` zeigt
+Disk-seq-write **18.7x**, Process-spawn **17.3x**, Disk-small-files
+**9.1x** — das sind Headline-Zahlen, die mit rein muessen.
+
+Einordnung / bewusste Design-Entscheidungen:
+
+- **Nur Verhaeltnisse, keine Absolutwerte** im README. MB/s-Zahlen
+  haengen an Hardware, altern schlecht und laden zu Zahlen-Klauberei
+  ein ("aber mein Rechner macht nur 200 MB/s"). Ratios bleiben ueber
+  typische Laptop-SSDs hinweg relativ stabil, weil die Ueberlegenheit
+  strukturell ist (ext4 vs DrvFs, Linux fork/exec vs CreateProcess).
+- **"Wirkungsgrad"-Spaltenueberschrift entfaellt**, weil der Ratio-
+  Wert schon die Aussage ist. Kein Prozent-Theater mit 1867.8 %, nur
+  `18.7x`.
+- **Beide READMEs parallel** gepflegt (`README.md` + `docs/README.de.md`)
+  mit identischer Ratio-Tabelle.
+- **`tools/CLAUDE.md` als Engineering-Anker**: dort stehen weiterhin
+  die Absolutwerte plus Ratio-Spalte als Referenz-Snapshot, damit ein
+  Agent, der `bench.sh` anfasst, Regressionen an der eigenen Messung
+  erkennt (500 MB/s sequentiell plausibel? 50 MB/s schon verdaechtig).
+- **Ehrliches Framing beibehalten**: im README steht explizit, dass
+  der gemessene WSL-Wert die **ungetunte** persistente Host-Distro
+  (`agentbox_host`) ist. Die ephemere Session-Sandbox mit BBR,
+  dnsmasq, ext4-Overlays liegt typischerweise noch hoeher — das
+  staerkt die Aussage, statt sie zu schwaechen.
+- **Keine neue Datei** (kein `BENCHMARKS.md`): Werbung gehoert an die
+  Verkaufsflaeche, nicht in eine Seitendatei.
+
+Position im README: direkt nach `### Built for digital nomads`, vor
+`## Supported Agents`. So sieht ein Leser erst die Sicherheits-These
+(Intro), dann Portabilitaet (Nomads), dann Performance, und erst
+danach die Feature-Liste.
+
+Keine Code-Aenderung, keine Bench-Script-Aenderung, kein
+Template-Rebuild — reine Doku-Arbeit. Deshalb `.update_class=minor`.
+
 ## [2.2.8] - 2026-04-18
 
 ### Fixed -- PS 5.1 Parser-Bug in bench.ps1 HTML here-string ($var:)
