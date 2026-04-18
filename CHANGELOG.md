@@ -5,6 +5,36 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.17] - 2026-04-18
+
+### Fixed — Post-Install-Timer: Key-Input robuster + Versionsmarke
+
+User-Report: `[v]` liess sich nicht druecken, die Auswahl reagierte
+nicht. Ursachen-Hypothesen und Gegenmassnahmen:
+
+**1. Key-Detection auf zwei APIs erweitert.** Statt nur `[Console]::
+KeyAvailable` / `[Console]::ReadKey` wird jetzt zuerst `$Host.UI.RawUI.
+KeyAvailable` / `ReadKey("NoEcho,IncludeKeyDown")` gepollt — das ist
+die PS-native Input-API und funktioniert auch in Hosts wo die
+Console-Klasse vom Shell anders exposed wird (insbesondere bei
+`irm ... | iex`, dem dokumentierten Bootstrap-Pattern). Erst wenn
+`$Host.UI.RawUI` nichts liefert, faellt der Code auf `[Console]`
+zurueck. Gleicher Buchstabenvergleich (case-insensitive) fuer beide.
+
+**2. Versionsmarke im Prompt.** Der Timer-Prompt zeigt jetzt `[2.0.17]`
+am Ende. Falls der User-Report "v tut nichts" wieder kommt, sieht man
+sofort an der Marke ob die aktuelle install.ps1 laeuft oder ob eine
+lokale/CDN-gecachte alte Version drinhaengt.
+
+**3. Direktes Echo bei Unknown-Keys.** Wenn der User eine nicht
+erwartete Taste drueckt, steht `[?=x ignoriert]` in DarkGray hinter
+dem Prompt. So ist sofort ersichtlich, ob der Key-Input grundsaetzlich
+ankommt.
+
+**4. Timeout von 5s auf 10s erhoeht.** Drei Optionen statt zwei
+brauchen mehr Lesezeit; 5s war fuer neu hinzugekommene v-Option zu
+knapp.
+
 ## [2.0.16] - 2026-04-18
 
 ### Fixed + Changed — `[v]`-Key im Post-Install-Timer: jetzt reaktiv + persistent

@@ -1409,40 +1409,68 @@ Write-Host "  - Oder Konsole: wsl -d agentbox-host" -ForegroundColor White
 Write-Host ""
 
 # --- Direkt starten? ---
-Write-Host "Jetzt agentbox starten? [J/n/v] (5s Timeout = ja, v = VS Code + Filewatch, wird neuer Default)" -ForegroundColor Cyan -NoNewline
+# Prompt mit Versionsmarke — falls der User glaubt die v-Auswahl waere
+# kaputt, kann er an [2.0.17] sofort erkennen ob er ueberhaupt die
+# aktuelle install.ps1 laufen laesst (oder ne alte via Cache/Local-File).
+Write-Host "Jetzt agentbox starten? [J/n/v] (10s Timeout = ja, v = VS Code + Filewatch, wird neuer Default) [2.0.17]" -ForegroundColor Cyan -NoNewline
 $startNow = $true
 $forceVsCode = $false
-$timeoutSec = 5
+$timeoutSec = 10
 $startTime = Get-Date
+$keySeen = $false
+
+# Zwei-Wege-Input: primaer $Host.UI.RawUI (PS-nativ, funktioniert auch
+# wenn die Console-Klasse vom Host anders exposed wird — z.B. bei
+# `irm ... | iex` oder in manchen Terminal-Hosts), Fallback auf
+# [Console]. Wir pollen beide pro Iteration; was zuerst einen Key
+# liefert, gewinnt. Nach dem Key wird der gedrueckte Buchstabe SOFORT
+# farbig echoed, damit der User visuell bestaetigt bekommt dass die
+# Taste ankam — das war der entscheidende Debug-Gap in 2.0.15/2.0.16.
 while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
-    if ([Console]::KeyAvailable) {
-        $key = [Console]::ReadKey($true)
-        # Defensive Matching: einige Hosts liefern $key.Key als ConsoleKey-
-        # Enum, andere nur $key.KeyChar als Char — beide checken. Und wir
-        # echoen die Taste sofort, damit der User sieht dass sie registriert
-        # wurde (Bug in 2.0.15: V wurde stumm geschluckt wenn KeyChar-Pfad
-        # griff statt Key-Pfad).
-        $kc = "$($key.KeyChar)".ToUpperInvariant()
-        if ($key.Key -eq 'N' -or $kc -eq 'N') {
+    $char = $null
+    $isEnter = $false
+    try {
+        if ($Host.UI.RawUI.KeyAvailable) {
+            $k = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            $char = "$($k.Character)"
+            if ($k.VirtualKeyCode -eq 13) { $isEnter = $true }
+            $keySeen = $true
+        }
+    } catch { }
+    if (-not $keySeen) {
+        try {
+            if ([Console]::KeyAvailable) {
+                $ck = [Console]::ReadKey($true)
+                $char = "$($ck.KeyChar)"
+                if ($ck.Key -eq 'Enter') { $isEnter = $true }
+                $keySeen = $true
+            }
+        } catch { }
+    }
+    if ($char -or $isEnter) {
+        $uc = "$char".ToUpperInvariant()
+        if ($uc -eq 'N') {
             Write-Host " n" -ForegroundColor Yellow
             $startNow = $false
             break
         }
-        if ($key.Key -eq 'V' -or $kc -eq 'V') {
-            Write-Host " v" -ForegroundColor Green
+        if ($uc -eq 'V') {
+            Write-Host " v  ← VS Code + Filewatch" -ForegroundColor Green
             $forceVsCode = $true
             break
         }
-        if ($key.Key -eq 'Enter' -or $key.Key -eq 'J' -or $key.Key -eq 'Y' -or $kc -eq 'J' -or $kc -eq 'Y') {
+        if ($isEnter -or $uc -eq 'J' -or $uc -eq 'Y') {
             Write-Host " j" -ForegroundColor Green
             break
         }
+        # Unbekannte Taste — Debug-Hint anzeigen, Loop weiterlaufen
+        # lassen damit der User noch drueckt was er wirklich wollte.
+        Write-Host " [?=$char ignoriert]" -ForegroundColor DarkGray -NoNewline
+        $keySeen = $false
     }
     Start-Sleep -Milliseconds 100
 }
-if ($startNow -and -not $forceVsCode) {
-    # Timeout oder Enter ohne explizites Key-Echo → eine Leerzeile fuer
-    # sauberen Umbruch zur naechsten Meldung.
+if (-not $forceVsCode -and $startNow) {
     Write-Host ""
 }
 
