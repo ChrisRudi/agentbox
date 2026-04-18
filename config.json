@@ -69,5 +69,8 @@
   "_doc_network_mode": "Netzwerk-Mode fuer WSL2-Sandbox: 'auto' (Default) erkennt WSL-Version + Windows-Build und aktiviert mirrored wenn unterstuetzt (WSL 2.0+, Win11 22H2+), sonst nat. 'mirrored' erzwingt mirrored (volle Host-Speed, teilt Host-Netz-Stack — ACHTUNG: globaler .wslconfig-Setting, betrifft ALLE WSL-Distros am Host). 'nat' erzwingt NAT (~50% Throughput-Overhead, maximale Default-Isolation). Die Sandbox-Firewall (iptables/ip6tables default-deny, Seal-Test, Host-IP-Block) laeuft in allen Modi identisch — 'mirrored' bleibt durch die Zusatzregeln genauso LAN-isoliert wie NAT.",
 
   "ubuntu_image_url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz",
-  "nodejs_setup_url": "https://deb.nodesource.com/setup_20.x"
+  "nodejs_setup_url": "https://deb.nodesource.com/setup_20.x",
+
+  "mcp_servers": [],
+  "_doc_mcp_servers": "MCP-Server, die in jeder Sandbox-Session allen Agents angeboten werden. Jeder Eintrag: { id (string, MCP-Name im Agent), project (string, Ordnername unter <AI_PROJECTS_ROOT>\\; dort liegt project.json + handler.ps1 + tools.json), agents (optional: Array von Agent-IDs, sonst alle aktivierten). Der Host-side Handler laeuft als persistenter Daemon (Scheduled Task 'agentbox-mcp-dispatcher', AtLogon-Trigger), die Sandbox-Seite spricht ihn via File-System-Queue unter %LOCALAPPDATA%\\agentbox\\mcp-runtime\\<id>\\ an (keine Netzwerk-Bridge, Firewall unveraendert). Default leer = kein MCP aktiv."
 }

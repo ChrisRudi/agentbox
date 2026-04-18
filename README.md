@@ -322,6 +322,33 @@ All settings live in `config.json` (optional — all values have built-in defaul
 
 See [`config.json`](config.json) for the full list with all defaults.
 
+## MCP Servers (Host-Bridge)
+
+agentbox ships a first-class MCP integration that lets agents call **Windows-host functions** (control Windows apps, talk to local-only APIs, trigger native automation) from inside the hermetically-sealed sandbox — without punching holes in the firewall.
+
+**How it works:**
+
+- You write a normal **agentbox project** under `AI_Projects_Source\<your-mcp>\` with a `handler.ps1` that implements the MCP tools and a `tools.json` that declares their schemas. The [`mcp-handler-template\`](tools/mcp-handler-template/) project is seeded by `install.ps1` as a starting point.
+- A Windows Scheduled Task (`agentbox-mcp-dispatcher`, AtLogon + RestartOnFailure) starts each enabled handler as a persistent daemon.
+- Inside the sandbox, a tiny stdio-proxy ([`proxy-mcp.js`](proxy-mcp/proxy-mcp.js)) speaks MCP to the agent and forwards every `tools/call` through a **file-system queue** under `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\` — zero network traffic, the existing sandbox firewall stays unchanged.
+- Steady-state latency is ~10–30 ms per call (PowerShell FileSystemWatcher on NTFS).
+
+**Activate one:**
+
+1. Copy the template: `Copy-Item "$env:OneDrive\AI_Projects_Source\mcp-handler-template" "$env:OneDrive\AI_Projects_Source\my-mcp" -Recurse`
+2. Edit `my-mcp\handler.ps1` (replace the `echo` tool with your own) and `my-mcp\tools.json` (declare the tool schema).
+3. Register in `config.json`:
+   ```json
+   "mcp_servers": [
+     { "id": "my-mcp", "project": "my-mcp" }
+   ]
+   ```
+4. Re-run `install.ps1` (admin PowerShell). The dispatcher Scheduled Task gets registered and starts the handler. From the next sandbox session on, every agent sees `my-mcp` as an MCP server.
+
+The MCP project is **dogfood-friendly**: open `my-mcp` as a normal agentbox project and let Claude Code iterate on the handler itself.
+
+**Trust boundary:** the handler runs on the Windows host with full user privileges. Each MCP project has its own `build_whitelist` in `project.json` — the dispatcher refuses to start any `build.command` that isn't listed there.
+
 ## Comparison
 
 |                          | Docker Dev Container | GitHub Codespaces | **agentbox** |
@@ -442,6 +469,8 @@ AI_Projects_Source\               (or your custom path)
 |   +-- aider\
 |   +-- goose\
 +-- host-distro\                  # Persistent host-WSL distro (default)
++-- mcp\                          # Stdio MCP proxy (proxy-mcp.js)
++-- mcp-runtime\                  # MCP host-bridge file-queue (per server: requests/, responses/, daemon.heartbeat)
 ```
 
 > The split is enforced: `_control/` only holds versioned scripts + config,

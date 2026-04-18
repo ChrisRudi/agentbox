@@ -5,6 +5,116 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-04-18
+
+**First-class MCP integration with host-bridge.**
+
+Agents koennen jetzt **Windows-Host-Funktionen** aufrufen (Windows-Apps
+steuern, local-only APIs ansprechen, native Automation triggern) --
+ohne die Sandbox-Firewall anzufassen. Die Bruecke laeuft rein ueber
+File-System-Queue; das Netzwerk-Isolationsmodell bleibt identisch.
+
+### Architektur
+
+- **MCP-Server = agentbox-Projekt.** Jeder MCP hat seinen eigenen
+  Projektordner unter `<AI_PROJECTS_ROOT>\<name>\` mit `handler.ps1`
+  (Host-side MCP-Logik), `tools.json` (Tool-Schema) und `project.json`
+  (build.command + build_whitelist). Dogfood-fit: der MCP selbst kann
+  in einer agentbox-Session entwickelt werden. Template in
+  `tools/mcp-handler-template/` wird beim `install.ps1` als Starter
+  nach `<AI_PROJECTS_ROOT>\mcp-handler-template\` geseedet.
+- **Handler-Daemon Host-seitig.** Scheduled Task
+  `agentbox-mcp-dispatcher` (AtLogon + RestartOnFailure) startet pro
+  `mcp_servers`-Eintrag den handler.ps1 als persistenten Prozess,
+  ueberwacht PIDs und restartet Crashes. Dispatcher-Logic in
+  `win-mcp-dispatcher.ps1`, registriert aus `win-setup-core.ps1`
+  (Register-AgentboxMcpDispatcher) nur wenn mcp_servers nicht leer ist.
+- **Stdio-Proxy in der Sandbox.** `proxy-mcp/proxy-mcp.js` (node
+  single-file, keine npm-Deps) spricht MCP-JSON-RPC mit dem Agent und
+  forwarded `tools/call` ueber File-Queue unter
+  `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\requests\`. Handler-Daemon
+  hat einen FileSystemWatcher auf dem Ordner, schreibt Antworten in
+  `responses/`. Daemon touched `daemon.heartbeat` im 10s-Intervall --
+  Proxy sieht stale Heartbeat und meldet "MCP daemon not running".
+- **Zero-Network-Bridge.** Keine iptables-Regel-Aenderung, keine neuen
+  offenen Ports, kein powershell.exe-Interop-Call aus der Sandbox. Die
+  Bruecke ist ausschliesslich DrvFs-bind-mount zum NTFS-basierten
+  `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\`.
+
+### Config
+
+Neuer Key `mcp_servers` in `config.json` (Default: `[]`). Jeder Eintrag:
+
+```json
+{
+  "id": "my-mcp",
+  "project": "my-mcp-handler",
+  "agents": ["claude", "codex", "gemini", "goose"]
+}
+```
+
+`agents` ist optional -- fehlt es, sieht der MCP alle in `config.json`
+aktivierten Agents. `lib/config.sh` bekommt `cfg_get_mcp_servers`,
+python3-basiert (kein bash-Fallback: JSON-Array-of-Objects laesst sich
+nicht grep-parsen).
+
+### Agent-Integration
+
+`wsl-ai-start.sh` patcht beim Session-Start Smart-Merge die vier
+unterstuetzten Agent-Config-Files in `$AUTH_BASE/`:
+
+- Claude -> `.claude.json.backup.agentbox-mcp` (das bestehende Backup-
+  Restore-Framework in wsl-sandbox-init.sh zieht es hoch)
+- Codex -> `config.toml` mit `[mcp_servers.<id>]`-Block (Anchor-
+  Kommentare markieren agentbox-managed Bloecke fuer idempotent remove)
+- Gemini -> `settings.json` `mcpServers`
+- Goose -> `config.yaml` `extensions:` (stdio-Typ)
+
+Aider hat keinen stdio-MCP-Client und wird uebersprungen.
+
+### Sandbox-Mounts
+
+`wsl-sandbox-init.sh` bekommt drei neue Parameter ($8 MCP_RUNTIME_BASE,
+$9 MCP_PROXY_BASE, $10 MCP_SPEC). Mounts passieren vor dem /mnt-tmpfs-
+Overmount (gleiche Constraint wie Auth-Mounts):
+
+- `/home/<sandbox_user>/.mcp/proxy-mcp.js` (read-only, drvfs+metadata)
+- `/home/<sandbox_user>/.mcp-runtime/<id>/` (read-write, eigenes drvfs-
+  Mount pro MCP fuer uid/gid-korrektes Permissions-Handling)
+
+### Dateien
+
+Neu:
+- `proxy-mcp/proxy-mcp.js` (Stdio-Proxy-MCP, node-builtins only)
+- `tools/mcp-handler-template/` (Handler-Template-Projekt)
+- `win-mcp-dispatcher.ps1` (Daemon-Supervisor)
+
+Geaendert:
+- `config.json` -- `mcp_servers: []`
+- `lib/config.sh` -- `cfg_get_mcp_servers`
+- `wsl-ai-start.sh` -- MCP_RUNTIME_BASE, MCP_PROXY_BASE, Agent-Config-
+  Inject-Helper, Parameter-Passthrough zu sandbox-init
+- `wsl-sandbox-init.sh` -- `_mcp_mount_drvfs`, Proxy-Mount, pro-MCP
+  Runtime-Mount
+- `win-setup-core.ps1` -- `Seed-AgentboxProxyMcp`,
+  `Seed-AgentboxMcpTemplate`, `Register-AgentboxMcpDispatcher`
+  (aufgerufen aus Skip-Build- und Full-Build-Pfad)
+- `README.md` -- neuer Abschnitt "MCP Servers (Host-Bridge)"
+
+### Bewusst NICHT
+
+- **Kein oneshot-Mode.** Der urspruengliche Plan sah dual Oneshot/
+  Daemon vor, mit EventID-2000-Trigger aus der Sandbox fuer Oneshot.
+  Die tmpfs-Overmount von `/mnt` (wsl-sandbox-init.sh:428) blockt
+  powershell.exe-Interop aus der Sandbox -- Event-Emit geht nicht.
+  Daemon-only ist simpler und schneller sowieso (~10-30ms/call statt
+  300-700ms).
+- **Kein `template_schema`-Bump.** Kein neues apt-Paket, keine
+  Template-Rebuild-noetig. Release-Klasse bleibt `minor`.
+- **Kein Aider-MCP-Support.** Aider hat kein stdio-MCP-Protokoll.
+- **Keine Scheduled-Task-pro-MCP.** Zentraler Dispatcher skaliert
+  einfacher. Crash-Recovery laeuft ueber dispatcher-Supervisor-Loop.
+
 ## [2.3.0] - 2026-04-18
 
 **Performance + Diagnose Milestone.**

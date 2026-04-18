@@ -233,6 +233,9 @@ fi
 # nicht "rename src to dst", GNU-Verhalten).
 mkdir -p "$AGENTBOX_LOCAL_ROOT" 2>/dev/null || true
 
+MCP_RUNTIME_BASE="$AGENTBOX_LOCAL_ROOT/mcp-runtime"
+MCP_PROXY_BASE="$AGENTBOX_LOCAL_ROOT/mcp"
+
 TEMPLATE_PATH="$AGENTBOX_LOCAL_ROOT/sandbox/template.tar.gz"
 # agentbox 2.0: vhdx-Fastpath. Wenn das Template-Build eine vhdx erzeugt
 # hat (WSL 2.0.x+), nutzen wir die fuer Session-Start (Copy + import-in-
@@ -282,7 +285,8 @@ _migrate_from_control "$CONTROL_DIR/sessions" "$AGENTBOX_LOCAL_ROOT/sessions" "S
 # nicht mit dem Rename-Verhalten kollidieren.
 mkdir -p "$AGENTBOX_LOCAL_ROOT/sandbox" "$AGENTBOX_LOCAL_ROOT/cache/npm" \
          "$AGENTBOX_LOCAL_ROOT/cache/pip" "$AGENTBOX_LOCAL_ROOT/sessions" \
-         "$AGENTBOX_LOCAL_ROOT/auth" 2>/dev/null || true
+         "$AGENTBOX_LOCAL_ROOT/auth" \
+         "$MCP_RUNTIME_BASE" "$MCP_PROXY_BASE" 2>/dev/null || true
 
 # --- Deferred Modi: --list-sessions, --compare ---
 # Diese Modi lesen aus $SESSIONS_DIR. Deshalb Ausfuehrung hier, nach
@@ -1093,6 +1097,339 @@ log_ok "Auto-Approve-Seeds: claude=$_claude_status codex=$_codex_status goose=$_
 
 log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_IDS)"
 
+# --- MCP-Server: Runtime-Ordner vorbereiten + Agent-Configs patchen ---
+# cfg_get_mcp_servers liefert je Zeile "id|project|agents_csv" (python3-
+# parsed aus config.json mcp_servers). Leer = kein MCP aktiv, Block wird
+# still uebersprungen. Der eigentliche Handler-Daemon laeuft Host-seitig,
+# gestartet vom Scheduled Task "agentbox-mcp-dispatcher"; hier legen wir
+# nur die Runtime-Queue an und injizieren die stdio-Proxy-Config in die
+# Agent-Auth-Dirs, damit der Agent beim Sandbox-Start den MCP-Server
+# sieht.
+AGENTBOX_MCP_SPEC=""
+# sandbox_user fruehzeitig lesen, damit die MCP-Inject-Helper den
+# korrekten /home/<user>/-Pfad in die Agent-Configs schreiben. Der
+# eigentliche SANDBOX_USER-Konstant wird weiter unten gesetzt (fuer den
+# Sandbox-Start); dieser Lookup hier ist nur fuer das Templating.
+MCP_SANDBOX_USER=$(cfg_get "sandbox_user" "agent")
+if [ "$MCP_SANDBOX_USER" = "root" ]; then
+    MCP_SANDBOX_USER="agent"
+fi
+if declare -F cfg_get_mcp_servers >/dev/null 2>&1; then
+    _mcp_count=0
+    # Defaulted agents-list = alle in config.json aktivierten Agents.
+    _default_mcp_agents=""
+    while IFS=: read -r _aid _aname _acmd; do
+        [ -z "$_aid" ] && continue
+        if [ -z "$_default_mcp_agents" ]; then
+            _default_mcp_agents="$_aid"
+        else
+            _default_mcp_agents="$_default_mcp_agents,$_aid"
+        fi
+    done < <(cfg_get_agents)
+
+    while IFS='|' read -r _mcp_id _mcp_proj _mcp_agents_csv; do
+        [ -z "$_mcp_id" ] && continue
+        [ -z "$_mcp_proj" ] && continue
+        # Runtime-Ordner anlegen (requests/, responses/). Handler-Daemon
+        # auf Host-Seite legt sie auch an, aber wir wollen defensiv
+        # sicher sein, dass die Bind-Mounts in der Sandbox ein gueltiges
+        # Target haben.
+        mkdir -p "$MCP_RUNTIME_BASE/$_mcp_id/requests" "$MCP_RUNTIME_BASE/$_mcp_id/responses" 2>/dev/null || true
+        if [ -z "$_mcp_agents_csv" ]; then
+            _mcp_agents_csv="$_default_mcp_agents"
+        fi
+        # AGENTBOX_MCP_SPEC-Format: "id=agents_csv;id=agents_csv". Das
+        # Projekt-Feld brauchen wir NICHT in der Sandbox (der Handler
+        # laeuft Host-seitig), nur die id + die Agent-Liste.
+        if [ -z "$AGENTBOX_MCP_SPEC" ]; then
+            AGENTBOX_MCP_SPEC="${_mcp_id}=${_mcp_agents_csv}"
+        else
+            AGENTBOX_MCP_SPEC="${AGENTBOX_MCP_SPEC};${_mcp_id}=${_mcp_agents_csv}"
+        fi
+        _mcp_count=$((_mcp_count+1))
+    done < <(cfg_get_mcp_servers)
+
+    if [ "$_mcp_count" -gt 0 ]; then
+        log_ok "MCP-Server konfiguriert: $_mcp_count (Runtime: $MCP_RUNTIME_BASE)"
+    fi
+fi
+
+# Proxy-MCP aus _control/proxy-mcp in den User-lokalen Runtime-Ordner
+# spiegeln (analog zum demo-benchmark-Seed, aber ohne den
+# "User-kann-modifizieren"-Teil — der Proxy ist reiner agentbox-Code).
+# Immer overwriten, damit Updates ueber git pull ankommen.
+if [ -f "$CONTROL_DIR/proxy-mcp/proxy-mcp.js" ]; then
+    mkdir -p "$MCP_PROXY_BASE" 2>/dev/null || true
+    cp -f "$CONTROL_DIR/proxy-mcp/proxy-mcp.js" "$MCP_PROXY_BASE/proxy-mcp.js" 2>/dev/null || true
+fi
+
+# MCP-Config pro Agent einspielen (Smart-Merge). Eine Fehlerquelle
+# weniger: wir patchen die persistenten Config-Files in $AUTH_BASE/,
+# dieselben Dateien, die das Auth-Mount in der Sandbox sichtbar macht —
+# kein separater In-Sandbox-Copy noetig.
+_inject_mcp_claude() {
+    # Smart-Merge in ~/.claude.json-Backup. Claude liest .claude.json aus
+    # dem Home-Dir; die Sandbox restoret sie aus dem neuesten Backup in
+    # .claude/backups/ (siehe wsl-sandbox-init.sh:370-378). Wir schreiben
+    # ein "agentbox-seed"-Backup, das dort ankommt.
+    local _backup_dir="$AUTH_BASE/claude/backups"
+    mkdir -p "$_backup_dir" 2>/dev/null || true
+    local _target="$_backup_dir/.claude.json.backup.agentbox-mcp"
+
+    python3 - "$_target" "$AGENTBOX_MCP_SPEC" "$MCP_SANDBOX_USER" << 'PYEOF' 2>/dev/null || true
+import json, os, sys
+
+target = sys.argv[1]
+spec = sys.argv[2]
+sandbox_user = sys.argv[3]
+
+data = {}
+if os.path.isfile(target):
+    try:
+        with open(target, encoding='utf-8') as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        data = {}
+
+mcp = data.get('mcpServers')
+if not isinstance(mcp, dict):
+    mcp = {}
+    data['mcpServers'] = mcp
+
+# Existing agentbox-owned entries entfernen (identifiziert ueber den
+# hardcoded command-Pfad), damit entfernte MCPs aus config.json auch
+# hier verschwinden. User-eigene mcpServers bleiben unberuehrt.
+agentbox_cmd = f'/home/{sandbox_user}/.mcp/proxy-mcp.js'
+runtime_dir = f'/home/{sandbox_user}/.mcp-runtime'
+for k in list(mcp.keys()):
+    v = mcp.get(k)
+    if isinstance(v, dict):
+        args = v.get('args') or []
+        if agentbox_cmd in args:
+            del mcp[k]
+
+for pair in spec.split(';'):
+    if not pair:
+        continue
+    if '=' not in pair:
+        continue
+    mcp_id, agents_csv = pair.split('=', 1)
+    mcp_id = mcp_id.strip()
+    agents_csv = agents_csv.strip()
+    if not mcp_id:
+        continue
+    agents = [a.strip() for a in agents_csv.split(',') if a.strip()]
+    if 'claude' not in agents:
+        continue
+    mcp[mcp_id] = {
+        'command': 'node',
+        'args': [agentbox_cmd, '--id', mcp_id, '--runtime', runtime_dir]
+    }
+
+with open(target, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+PYEOF
+}
+
+_inject_mcp_gemini() {
+    # Gemini CLI liest ~/.gemini/settings.json, Key "mcpServers".
+    local _target="$AUTH_BASE/gemini/settings.json"
+    mkdir -p "$(dirname "$_target")" 2>/dev/null || true
+
+    python3 - "$_target" "$AGENTBOX_MCP_SPEC" "$MCP_SANDBOX_USER" << 'PYEOF' 2>/dev/null || true
+import json, os, sys
+
+target = sys.argv[1]
+spec = sys.argv[2]
+sandbox_user = sys.argv[3]
+
+data = {}
+if os.path.isfile(target):
+    try:
+        with open(target, encoding='utf-8') as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        data = {}
+
+mcp = data.get('mcpServers')
+if not isinstance(mcp, dict):
+    mcp = {}
+    data['mcpServers'] = mcp
+
+agentbox_cmd = f'/home/{sandbox_user}/.mcp/proxy-mcp.js'
+runtime_dir = f'/home/{sandbox_user}/.mcp-runtime'
+for k in list(mcp.keys()):
+    v = mcp.get(k)
+    if isinstance(v, dict):
+        args = v.get('args') or []
+        if agentbox_cmd in args:
+            del mcp[k]
+
+for pair in spec.split(';'):
+    if not pair:
+        continue
+    if '=' not in pair:
+        continue
+    mcp_id, agents_csv = pair.split('=', 1)
+    mcp_id = mcp_id.strip()
+    agents_csv = agents_csv.strip()
+    if not mcp_id:
+        continue
+    agents = [a.strip() for a in agents_csv.split(',') if a.strip()]
+    if 'gemini' not in agents:
+        continue
+    mcp[mcp_id] = {
+        'command': 'node',
+        'args': [agentbox_cmd, '--id', mcp_id, '--runtime', runtime_dir]
+    }
+
+with open(target, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+PYEOF
+}
+
+_inject_mcp_codex() {
+    # Codex liest ~/.codex/config.toml, Section [mcp_servers.<id>].
+    # Simpler TOML-Writer in python3 (stdlib hat kein TOML-Writer in
+    # 3.11-). Wir schreiben den agentbox-MCP-Block in eine eigene
+    # Datei (config.agentbox-mcp.toml) und haengen ein `include`-
+    # aeqivalent... nein, Codex hat kein include. Stattdessen: wir
+    # parsen das bestehende config.toml (tomllib in 3.11+, Fallback
+    # regex-based) und rewriten es.
+    local _target="$AUTH_BASE/codex/config.toml"
+    mkdir -p "$(dirname "$_target")" 2>/dev/null || true
+
+    python3 - "$_target" "$AGENTBOX_MCP_SPEC" "$MCP_SANDBOX_USER" << 'PYEOF' 2>/dev/null || true
+import os, re, sys
+
+target = sys.argv[1]
+spec = sys.argv[2]
+sandbox_user = sys.argv[3]
+
+raw = ""
+if os.path.isfile(target):
+    try:
+        with open(target, encoding='utf-8') as f:
+            raw = f.read()
+    except Exception:
+        raw = ""
+
+# Alle existierenden agentbox-MCP-Bloecke entfernen. Wir markieren unsere
+# Bloecke mit einem festen Anchor-Kommentar, damit wir sie idempotent
+# loeschen koennen ohne User-Definitionen anzufassen.
+ANCHOR = "# agentbox-mcp-auto-managed"
+pattern = re.compile(
+    r"\n?" + re.escape(ANCHOR) + r" START id=(\S+).*?" + re.escape(ANCHOR) + r" END\n?",
+    re.DOTALL
+)
+raw = pattern.sub("\n", raw)
+if raw and not raw.endswith("\n"):
+    raw += "\n"
+
+agentbox_cmd = f"/home/{sandbox_user}/.mcp/proxy-mcp.js"
+runtime_dir = f"/home/{sandbox_user}/.mcp-runtime"
+blocks = []
+for pair in spec.split(';'):
+    if not pair or '=' not in pair:
+        continue
+    mcp_id, agents_csv = pair.split('=', 1)
+    mcp_id = mcp_id.strip()
+    agents = [a.strip() for a in agents_csv.strip().split(',') if a.strip()]
+    if not mcp_id or 'codex' not in agents:
+        continue
+    blocks.append(
+        f"\n{ANCHOR} START id={mcp_id}\n"
+        f"[mcp_servers.{mcp_id}]\n"
+        f'command = "node"\n'
+        f'args = ["{agentbox_cmd}", "--id", "{mcp_id}", "--runtime", "{runtime_dir}"]\n'
+        f"{ANCHOR} END\n"
+    )
+
+out = raw + "".join(blocks)
+with open(target, 'w', encoding='utf-8') as f:
+    f.write(out)
+PYEOF
+}
+
+_inject_mcp_goose() {
+    # Goose liest ~/.config/goose/config.yaml, Key "extensions:" mit
+    # einer Liste von extension-Definitionen.
+    local _target="$AUTH_BASE/goose/config.yaml"
+    mkdir -p "$(dirname "$_target")" 2>/dev/null || true
+
+    python3 - "$_target" "$AGENTBOX_MCP_SPEC" "$MCP_SANDBOX_USER" << 'PYEOF' 2>/dev/null || true
+import os, re, sys
+
+target = sys.argv[1]
+spec = sys.argv[2]
+sandbox_user = sys.argv[3]
+
+raw = ""
+if os.path.isfile(target):
+    try:
+        with open(target, encoding='utf-8') as f:
+            raw = f.read()
+    except Exception:
+        raw = ""
+
+# Goose-Block-Anchor wie bei Codex.
+ANCHOR_START = "# agentbox-mcp-auto-managed START"
+ANCHOR_END = "# agentbox-mcp-auto-managed END"
+pattern = re.compile(
+    r"\n?" + re.escape(ANCHOR_START) + r".*?" + re.escape(ANCHOR_END) + r"\n?",
+    re.DOTALL
+)
+raw = pattern.sub("\n", raw)
+if raw and not raw.endswith("\n"):
+    raw += "\n"
+
+agentbox_cmd = f"/home/{sandbox_user}/.mcp/proxy-mcp.js"
+runtime_dir = f"/home/{sandbox_user}/.mcp-runtime"
+entries = []
+for pair in spec.split(';'):
+    if not pair or '=' not in pair:
+        continue
+    mcp_id, agents_csv = pair.split('=', 1)
+    mcp_id = mcp_id.strip()
+    agents = [a.strip() for a in agents_csv.strip().split(',') if a.strip()]
+    if not mcp_id or 'goose' not in agents:
+        continue
+    entries.append(
+        f"  {mcp_id}:\n"
+        f"    type: stdio\n"
+        f"    enabled: true\n"
+        f"    cmd: node\n"
+        f"    args:\n"
+        f"      - \"{agentbox_cmd}\"\n"
+        f"      - \"--id\"\n"
+        f"      - \"{mcp_id}\"\n"
+        f"      - \"--runtime\"\n"
+        f"      - \"{runtime_dir}\"\n"
+    )
+
+if entries:
+    block = "\n" + ANCHOR_START + "\nextensions:\n" + "".join(entries) + ANCHOR_END + "\n"
+    raw += block
+
+with open(target, 'w', encoding='utf-8') as f:
+    f.write(raw)
+PYEOF
+}
+
+if [ -n "$AGENTBOX_MCP_SPEC" ] && command -v python3 >/dev/null 2>&1; then
+    _inject_mcp_claude
+    _inject_mcp_gemini
+    _inject_mcp_codex
+    _inject_mcp_goose
+    log_ok "MCP-Config in Agent-Auth-Dirs gepatcht"
+fi
+
 # --- Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
 log_ok "Alte Status-Dateien bereinigt"
@@ -1662,7 +1999,8 @@ EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
     "$SANDBOX_USER" "$AUTH_BASE" "$AGENT_INSTALL" \
-    "$AGENTBOX_AUTH_SPEC" || EXIT_CODE=$?
+    "$AGENTBOX_AUTH_SPEC" "$MCP_RUNTIME_BASE" "$MCP_PROXY_BASE" \
+    "$AGENTBOX_MCP_SPEC" || EXIT_CODE=$?
 
 # --- Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then

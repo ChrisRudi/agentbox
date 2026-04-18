@@ -35,10 +35,19 @@ AGENT_INSTALL="${6:-}"
 # Wenn leer (aelterer wsl-ai-start.sh oder config.sh ohne python3), faellt
 # die Auth-Mount-Schleife unten auf die Legacy-Hardcode-Liste zurueck.
 AUTH_SPEC="${7:-}"
+# $8 = MCP_RUNTIME_BASE (Linux/Windows-Pfad zu
+#      %LOCALAPPDATA%\agentbox\mcp-runtime\, leer = kein MCP)
+# $9 = MCP_PROXY_BASE (Linux/Windows-Pfad zu
+#      %LOCALAPPDATA%\agentbox\mcp\, leer = kein MCP)
+# $10 = MCP_SPEC ("id=agents_csv;id=agents_csv;..."). Bestimmt welche
+#       MCP-Runtime-Ordner in die Sandbox gemounted werden.
+MCP_RUNTIME_BASE_IN="${8:-}"
+MCP_PROXY_BASE_IN="${9:-}"
+MCP_SPEC="${10:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     log_error "Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC]" >&2
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC] [MCP_RUNTIME] [MCP_PROXY] [MCP_SPEC]" >&2
     exit 1
 fi
 
@@ -66,6 +75,8 @@ _to_linux_path() {
 PROJECT_PATH=$(_to_linux_path "$WIN_PROJECT_PATH")
 CACHE_PATH=$(_to_linux_path "$WIN_CACHE_PATH")
 AUTH_BASE=$(_to_linux_path "$AUTH_BASE_IN")
+MCP_RUNTIME_BASE=$(_to_linux_path "$MCP_RUNTIME_BASE_IN")
+MCP_PROXY_BASE=$(_to_linux_path "$MCP_PROXY_BASE_IN")
 
 echo "=== agentbox Sandbox-Init ==="
 echo "Projekt: $PROJECT_PATH"
@@ -350,6 +361,73 @@ if [ -n "$AUTH_BASE" ] && [ -d "$AUTH_BASE" ]; then
             fi
         else
             _auth_mount_agent "$_aid" "$_adir" || true
+        fi
+    done
+fi
+
+# --- MCP-Mounts (Proxy-Binary + Runtime-Queue) ---
+# MUSS vor der tmpfs-Overmount von /mnt laufen, weil die drvfs-Mounts
+# unter /mnt/c/... sonst unsichtbar waeren. Gleiche Reihenfolge-
+# Constraint wie bei den Auth-Mounts oben.
+#
+# Proxy-Binary ist eine einzelne Datei (.js) — wir mounten den Parent-
+# Ordner read-only. Runtime-Ordner sind per-MCP und read-write (Proxy
+# schreibt Requests, Responses werden vom Handler-Daemon Host-seitig
+# geschrieben und sind fuer den Proxy Read-only in der Praxis, aber der
+# Mount selbst muss rw sein, weil der Proxy die Response nach dem Lesen
+# loescht).
+_mcp_mount_drvfs() {
+    local _src="$1" _dst="$2" _umask="${3:-022}"
+    [ -d "$_src" ] || return 1
+    mkdir -p "$_dst" 2>/dev/null || true
+    local _uid _gid _win_src
+    _uid=$(id -u "$SANDBOX_USER" 2>/dev/null || echo 1000)
+    _gid=$(id -g "$SANDBOX_USER" 2>/dev/null || echo 1000)
+    _win_src=$(wslpath -w "$_src" 2>/dev/null || echo "")
+    [ -z "$_win_src" ] && return 1
+    if mount -t drvfs "$_win_src" "$_dst" \
+             -o "metadata,uid=$_uid,gid=$_gid,umask=$_umask" 2>/dev/null; then
+        return 0
+    fi
+    # Fallback: bind-mount + chown
+    if mount --bind "$_src" "$_dst" 2>/dev/null; then
+        mount -o remount,nosymfollow,nodev "$_dst" 2>/dev/null || true
+        chown -R "$SANDBOX_USER:$SANDBOX_USER" "$_dst" 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
+if [ -n "$MCP_PROXY_BASE" ] && [ -d "$MCP_PROXY_BASE" ]; then
+    _mcp_proxy_dst="/home/$SANDBOX_USER/.mcp"
+    if _mcp_mount_drvfs "$MCP_PROXY_BASE" "$_mcp_proxy_dst" "022"; then
+        log_ok "Mount: MCP Proxy-Binary ($_mcp_proxy_dst, read-only via umask)"
+    else
+        log_warn "MCP Proxy-Binary Mount fehlgeschlagen — MCP-Servers nicht erreichbar"
+    fi
+fi
+
+if [ -n "$MCP_RUNTIME_BASE" ] && [ -n "$MCP_SPEC" ]; then
+    mkdir -p "/home/$SANDBOX_USER/.mcp-runtime" 2>/dev/null || true
+    chown "$SANDBOX_USER:$SANDBOX_USER" "/home/$SANDBOX_USER/.mcp-runtime" 2>/dev/null || true
+    IFS=';' read -ra _mcp_pairs <<< "$MCP_SPEC"
+    for _pair in "${_mcp_pairs[@]}"; do
+        [ -z "$_pair" ] && continue
+        _mcp_id="${_pair%%=*}"
+        [ -z "$_mcp_id" ] && continue
+        _mcp_src="$MCP_RUNTIME_BASE/$_mcp_id"
+        _mcp_dst="/home/$SANDBOX_USER/.mcp-runtime/$_mcp_id"
+        # Source muss existieren; wsl-ai-start.sh legt ihn an, falls
+        # nicht, ueberspringen wir stillschweigend (dispatcher hat den
+        # Handler vielleicht noch nicht gestartet).
+        if [ ! -d "$_mcp_src" ]; then
+            log_warn "MCP '$_mcp_id': Runtime-Ordner fehlt ($_mcp_src) — Mount uebersprungen"
+            continue
+        fi
+        if _mcp_mount_drvfs "$_mcp_src" "$_mcp_dst" "077"; then
+            log_ok "Mount: MCP '$_mcp_id' Runtime ($_mcp_dst)"
+        else
+            log_warn "MCP '$_mcp_id': Runtime-Mount fehlgeschlagen"
         fi
     done
 fi

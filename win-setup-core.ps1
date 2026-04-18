@@ -262,6 +262,148 @@ function Seed-AgentboxDemoBenchmark {
     Write-Host "     Pfad: $demoDir" -ForegroundColor Gray
 }
 
+# Kopiert proxy-mcp.js nach %LOCALAPPDATA%\agentbox\mcp\proxy-mcp.js,
+# damit die Sandbox-Seite das Binary auch dann findet, wenn _control/
+# in OneDrive liegt und noch als Files-On-Demand-Placeholder gespeichert
+# ist. wsl-ai-start.sh refresht die Datei bei jedem Session-Start zur
+# Sicherheit nochmal, falls der User proxy-mcp.js via git pull
+# aktualisiert.
+function Seed-AgentboxProxyMcp {
+    param([Parameter(Mandatory)][string]$ScriptDir)
+
+    $proxySrc = Join-Path $ScriptDir "proxy-mcp\proxy-mcp.js"
+    if (-not (Test-Path -LiteralPath $proxySrc)) {
+        Write-Host "[INFO] proxy-mcp\proxy-mcp.js fehlt — MCP-Proxy nicht geseedet" -ForegroundColor Gray
+        return
+    }
+    $proxyDest = Join-Path $env:LOCALAPPDATA "agentbox\mcp\proxy-mcp.js"
+    $proxyDestDir = Split-Path -Parent $proxyDest
+    [System.IO.Directory]::CreateDirectory($proxyDestDir) | Out-Null
+    try {
+        Copy-Item -LiteralPath $proxySrc -Destination $proxyDest -Force
+        Write-Host "[OK] MCP-Proxy installiert: $proxyDest" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] MCP-Proxy-Copy fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+# Seeded das MCP-Handler-Template-Projekt aus <scriptDir>\tools\mcp-handler-template\
+# nach <baseDir>\mcp-handler-template\. Idempotent: nur fehlende Dateien kopieren,
+# damit ein User-modifiziertes Template nicht bei jedem install.ps1 rerunc
+# ueberschrieben wird.
+function Seed-AgentboxMcpTemplate {
+    param(
+        [Parameter(Mandatory)][string]$ScriptDir,
+        [Parameter(Mandatory)][string]$BaseDir
+    )
+
+    $tmplSrc = Join-Path $ScriptDir "tools\mcp-handler-template"
+    if (-not (Test-Path -LiteralPath $tmplSrc)) {
+        Write-Host "[INFO] tools\mcp-handler-template fehlt — MCP-Template nicht geseedet" -ForegroundColor Gray
+        return
+    }
+    if (-not (Test-Path -LiteralPath $BaseDir)) {
+        Write-Host "[INFO] BaseDir '$BaseDir' existiert nicht — MCP-Template nicht geseedet" -ForegroundColor Gray
+        return
+    }
+    $tmplDest = Join-Path $BaseDir "mcp-handler-template"
+    [System.IO.Directory]::CreateDirectory($tmplDest) | Out-Null
+
+    $created = 0; $kept = 0
+    Get-ChildItem -LiteralPath $tmplSrc -File | ForEach-Object {
+        $dest = Join-Path $tmplDest $_.Name
+        if (Test-Path -LiteralPath $dest) { $kept++ }
+        else {
+            Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
+            $created++
+        }
+    }
+    Write-Host "[OK] mcp-handler-template: $created neu, $kept unberuehrt" -ForegroundColor Green
+    Write-Host "     Pfad: $tmplDest" -ForegroundColor Gray
+}
+
+# Registriert den agentbox-mcp-dispatcher Scheduled Task (AtLogon +
+# StartWhenAvailable + RestartOnFailure). Der Dispatcher startet
+# pro mcp_servers-Eintrag aus config.json einen handler.ps1-Daemon
+# und ueberwacht deren PIDs.
+#
+# WICHTIG: Die Task laeuft im User-Context (nicht SYSTEM), weil die
+# Handler Zugriff auf user-spezifische APIs brauchen (z.B. COM, Win-
+# dow-Automation, User-spezifische Files). Logon-Trigger ist das
+# natuerliche Fit.
+function Register-AgentboxMcpDispatcher {
+    param(
+        $cfg,
+        [Parameter(Mandatory)][string]$ScriptDir
+    )
+
+    $taskName = "agentbox-mcp-dispatcher"
+    $dispatcherScript = Join-Path $ScriptDir "win-mcp-dispatcher.ps1"
+    if (-not (Test-Path -LiteralPath $dispatcherScript)) {
+        Write-Host "[INFO] win-mcp-dispatcher.ps1 fehlt — Task nicht registriert" -ForegroundColor Gray
+        return
+    }
+
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+
+    # Dispatcher nur registrieren, wenn mcp_servers nicht leer ist — so
+    # schaffen wir keinen dauerlaufenden PS-Prozess fuer User, die MCP
+    # gar nicht nutzen. Wer spaeter mcp_servers befuellt und install.ps1
+    # rerunt, bekommt den Task dann.
+    $hasMcpServers = $false
+    if ($cfg -and $cfg.PSObject.Properties['mcp_servers'] -and $cfg.mcp_servers) {
+        foreach ($s in @($cfg.mcp_servers)) {
+            if ($s -and $s.PSObject.Properties['id'] -and $s.id -and
+                $s.PSObject.Properties['project'] -and $s.project) {
+                $hasMcpServers = $true
+                break
+            }
+        }
+    }
+    if (-not $hasMcpServers) {
+        Write-Host "[INFO] config.json mcp_servers leer — agentbox-mcp-dispatcher Task nicht registriert" -ForegroundColor Gray
+        return
+    }
+
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dispatcherScript`"" `
+        -WorkingDirectory $ScriptDir
+
+    $atLogon = New-ScheduledTaskTrigger -AtLogon
+
+    # AllowStartIfOnBatteries + DontStopIfGoingOnBatteries: der User-
+    # Laptop soll die Handler nicht einfach killen, nur weil er vom
+    # Netz geht. MultipleInstances=IgnoreNew: falls AtLogon mehrfach
+    # feuert (schneller Logoff/Logon), haben wir trotzdem nur eine
+    # Dispatcher-Instanz.
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -MultipleInstances IgnoreNew `
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+
+    # Execution-Time-Limit unbegrenzt — der Dispatcher laeuft bewusst
+    # permanent bis Logoff oder Crash. Das Default-Limit (3 Tage) wuerde
+    # den Task bei langen Uptime-Sessions abbrechen.
+    $settings.ExecutionTimeLimit = "PT0S"
+
+    Register-ScheduledTask -TaskName $taskName -Action $action `
+        -Trigger $atLogon -Settings $settings `
+        -Description "agentbox MCP dispatcher — starts MCP handler daemons at logon (restart on crash)" | Out-Null
+    Write-Host "[OK] Scheduled Task '$taskName' registriert (AtLogon, RestartOnFailure)" -ForegroundColor Green
+    Write-Host "     Dispatcher-Log: $(Join-Path $env:LOCALAPPDATA 'agentbox\mcp-runtime\dispatcher.log')" -ForegroundColor Gray
+
+    # Direkt starten, damit Handler in der aktuellen Session schon leben.
+    try {
+        Start-ScheduledTask -TaskName $taskName
+        Write-Host "[OK] Dispatcher gestartet" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Dispatcher-Start fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 # Seed-Helper: schreibt Datei nur wenn sie fehlt ODER leer/whitespace-only ist.
 # Letzteres ist wichtig, weil manche Agents beim ersten Start ihre Config-Datei
 # selbst als leere Huelle anlegen (z.B. Claude Code legt ein leeres {} an) —
@@ -454,10 +596,13 @@ if (($haveTarGz -or $haveVhd) -and (Test-Path -LiteralPath $configHashFile)) {
         }
         if ($demoBaseDir) {
             Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
+            Seed-AgentboxMcpTemplate -ScriptDir $scriptDir -BaseDir $demoBaseDir
         }
+        Seed-AgentboxProxyMcp -ScriptDir $scriptDir
 
         Write-Host ""
         Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
+        Register-AgentboxMcpDispatcher -cfg $config -ScriptDir $scriptDir
 
         Write-Host ""
         Write-Host "=== Setup abgeschlossen (Template aus Cache) ===" -ForegroundColor Green
@@ -905,11 +1050,14 @@ if ($config -and $config.base_path_override -and $config.base_path_override -ne 
 }
 if ($demoBaseDir) {
     Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
+    Seed-AgentboxMcpTemplate -ScriptDir $scriptDir -BaseDir $demoBaseDir
 }
+Seed-AgentboxProxyMcp -ScriptDir $scriptDir
 
 # --- Event-Source + Scheduled Task registrieren ---
 Write-Host ""
 Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
+Register-AgentboxMcpDispatcher -cfg $config -ScriptDir $scriptDir
 
 # --- Fertig ---
 Write-Host ""
