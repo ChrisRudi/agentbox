@@ -1,4 +1,4 @@
-# bench.ps1 v3.0.2 -- agentbox Host-Baseline + Build-Schritt (Demo-Projekt)
+# bench.ps1 v3.0.3 -- agentbox Host-Baseline + Build-Schritt (Demo-Projekt)
 #
 # Paar-Script zu bench.sh. Beide schreiben in dasselbe bench-results.json,
 # aber **strict overwrite** pro Seite (nur letzter Run bleibt):
@@ -21,7 +21,7 @@
 # Hinweis: Windows-Defender kann Disk + Spawn druecken. Zum Validieren
 # kurz Defender-Exclusion auf $env:TEMP setzen.
 
-$BENCH_VERSION = "3.0.2"
+$BENCH_VERSION = "3.0.3"
 
 $ErrorActionPreference = 'Stop'
 $tmp     = $env:TEMP
@@ -292,7 +292,7 @@ th{background:#f4f4f4;font-weight:600}
 .meta{font-size:.85em;color:#666;margin-top:1.5rem}
 </style>
 <h1>agentbox-bench &mdash; Wirkungsgrad</h1>
-<div class=sub>Letzter Run pro Seite. Host: $host_stamp_txt &nbsp;|&nbsp; $wsl_label: $wsl_stamp_txt</div>
+<div class=sub>Letzter Run pro Seite. Host: $host_stamp_txt &nbsp;|&nbsp; ${wsl_label}: $wsl_stamp_txt</div>
 <table>
 <thead><tr><th>Metrik</th><th>Host</th><th>$wsl_label</th><th>Wirkungsgrad</th></tr></thead>
 <tbody>

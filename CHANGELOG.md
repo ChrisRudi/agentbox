@@ -5,6 +5,34 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.8] - 2026-04-18
+
+### Fixed -- PS 5.1 Parser-Bug in bench.ps1 HTML here-string ($var:)
+
+User-Report: bench.ps1 lief beim Direkt-Aufruf nicht durch, Parser-
+Fehler:
+```
+Ungueltiger Variablenverweis. Nach ":" folgte kein Zeichen, das fuer
+einen Variablennamen gueltig ist.
+In Zeile:295 Zeichen:75
++ Host: $host_stamp_txt &nbsp;|&nbsp; $wsl_label: $wsl_stamp_txt
+                                      ~~~~~~~~~~~
+```
+
+Ursache: PS 5.1 (und PS 7) interpretieren `$foo:` in einem Double-
+Quoted String als drive-scoped Variable (analog zu `$env:PATH` oder
+`$global:x`). Weil `wsl_label` keinem bekannten Scope/Drive entspricht,
+schlaegt der Parser zu.
+
+Fix: `${wsl_label}:` mit explizitem Delimiter. Das zwingt den Parser,
+nur `wsl_label` als Variablennamen zu nehmen und den Doppelpunkt
+literal zu behandeln. `BENCH_VERSION` bump 3.0.2 -> 3.0.3.
+
+Dieser Bug war nur in der 2.2.7-Fassung von bench.ps1 vorhanden --
+v3.0.0 hatte das Label-Feld noch hardcoded "Sandbox:" ohne Variable,
+deshalb kein Parse-Error. User sah den Bug erst, als die neue v3.0.2
+per manuellem Copy-Item in sein demo-benchmark/ gewandert ist.
+
 ## [2.2.7] - 2026-04-18
 
 ### Changed -- Ehrliche Labels: bench-Spalte "sandbox" ist eigentlich "agentbox_host"
