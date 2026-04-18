@@ -5,6 +5,32 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.4] - 2026-04-18
+
+### Fixed -- win-task-runner.ps1 Default-Mode Self-Invoke-Crash
+
+Nach 2.2.3 (Parse-Error gefixt) zeigte sich der naechste pre-existing
+Bug: wenn der Script ohne `-once`/`-watch`-Arg aufgerufen wird (z.B.
+direkt per `& '<path>\win-task-runner.ps1'`), loeste die Default-Branch
+am Ende via `& $MyInvocation.MyCommand.Path -watch` einen Self-Invoke
+aus. In manchen Aufruf-Kontexten ist `$MyInvocation.MyCommand.Path`
+unter PS 5.1 jedoch `$null` -- Ergebnis:
+
+```
+Der Ausdruck nach "&" in einem Pipelineelement hat ein ungueltiges
+Objekt erzeugt. Der Ausdruck muss einen Befehlsnamen, Skriptblock
+oder ein CommandInfo-Objekt ergeben.
+```
+
+Fix: Self-Invoke entfernt. Wenn weder `-once` noch `-watch` gesetzt
+ist, wird `$watch = $true` direkt gesetzt und der Script laeuft inline
+im Watch-Modus weiter. Kein Subprozess, kein `$MyInvocation`-Grenzfall.
+
+Der Scheduled Task uebergibt sowieso explizit `-watch`, aber der
+manuelle Aufruf (`powershell -File ...\win-task-runner.ps1`) ohne Args
+funktioniert jetzt auch sauber -- der Daemon startet und der Usage-
+Hinweis wird als Zeile gezeigt, ohne Re-Exec-Crash.
+
 ## [2.2.3] - 2026-04-18
 
 ### Fixed -- PS 5.1 Parse-Error in `win-task-runner.ps1:233` (Invoke-BuildAction)

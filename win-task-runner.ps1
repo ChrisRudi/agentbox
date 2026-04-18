@@ -440,7 +440,23 @@ Write-Host ""
 # Fehleranzeige (immer)
 Show-FailedTasks
 
-if ($watch) {
+# Default-Mode: wenn weder -once noch -watch angegeben, nimm -watch an.
+# Frueher wurde hier ein Usage-Print + Self-Invoke via
+# `& $MyInvocation.MyCommand.Path -watch` gemacht -- das scheitert in
+# Kontexten, wo $MyInvocation.MyCommand.Path $null ist (PS 5.1 bei manchen
+# Invocation-Pfaden). Stattdessen direkt als watch laufen.
+if (-not $once -and -not $watch) {
+    Write-Host "Kein Mode angegeben -- Default: -watch (Ctrl+C zum Beenden)." -ForegroundColor Cyan
+    $watch = $true
+}
+
+if ($once) {
+    # --- Once-Modus: einmal durchlaufen ---
+    Write-Log "Einmal-Durchlauf..."
+    Process-AllTasks
+    Write-Log "Fertig."
+
+} else {
     # --- Watch-Modus: FileSystemWatcher ---
     Write-Log "Starte im Watch-Modus (Ctrl+C zum Beenden)..." "INFO"
 
@@ -504,20 +520,4 @@ if ($watch) {
         Get-EventSubscriber | Where-Object { $_.SourceIdentifier -like "agentbox_*" } |
             Unregister-Event
     }
-
-} elseif ($once) {
-    # --- Once-Modus: einmal durchlaufen ---
-    Write-Log "Einmal-Durchlauf..."
-    Process-AllTasks
-    Write-Log "Fertig."
-
-} else {
-    # Default: watch
-    Write-Host "Verwendung: win-task-runner.ps1 -watch | -once" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  -watch    FileSystemWatcher Daemon (empfohlen)" -ForegroundColor White
-    Write-Host "  -once     Einmal alle Tasks verarbeiten" -ForegroundColor White
-    Write-Host ""
-    Write-Host "Starte im Watch-Modus..." -ForegroundColor Cyan
-    & $MyInvocation.MyCommand.Path -watch
 }
