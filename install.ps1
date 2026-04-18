@@ -1409,14 +1409,16 @@ Write-Host "  - Oder Konsole: wsl -d agentbox-host" -ForegroundColor White
 Write-Host ""
 
 # --- Direkt starten? ---
-Write-Host "Jetzt agentbox starten? [J/n] (5s Timeout = ja)" -ForegroundColor Cyan -NoNewline
+Write-Host "Jetzt agentbox starten? [J/n/v] (5s Timeout = ja, v = VS Code + Filewatch)" -ForegroundColor Cyan -NoNewline
 $startNow = $true
+$forceVsCode = $false
 $timeoutSec = 5
 $startTime = Get-Date
 while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
     if ([Console]::KeyAvailable) {
         $key = [Console]::ReadKey($true)
         if ($key.Key -eq 'N') { $startNow = $false; break }
+        if ($key.Key -eq 'V') { $forceVsCode = $true; break }
         if ($key.Key -eq 'Enter' -or $key.Key -eq 'J' -or $key.Key -eq 'Y') { break }
     }
     Start-Sleep -Milliseconds 100
@@ -1426,11 +1428,34 @@ Write-Host ""
 if ($startNow) {
     Write-Host ""
     # Start-Pfad nach gleicher Praeferenz wie Shortcut:
+    #   forceVsCode (User hat [v] gedrueckt) → einmaliger Override auf
+    #     Workspace-File, unabhaengig vom persistierten launch_ui. VS Code
+    #     wird on-the-fly via Find-VsCodeExe gesucht (falls launch_ui=wt
+    #     vorher nicht geprobed hat). Fehlt VS Code → Fallback in die
+    #     wt/wsl-Chain mit Warnung.
     #   launch_ui=vscode + VS Code da → Workspace-File oeffnen (Task feuert)
     #   sonst wt verfuegbar           → neues wt-Fenster mit agentbox
     #   sonst                         → wsl.exe in-place
     $workspaceStart = Join-Path $controlDir "agentbox.code-workspace"
-    if ($launchUi -eq "vscode" -and $hasVsCode -and (Test-Path -LiteralPath $workspaceStart)) {
+    if ($forceVsCode) {
+        if (-not $vsCodeExe) { $vsCodeExe = Find-VsCodeExe }
+        if ($vsCodeExe -and (Test-Path -LiteralPath $workspaceStart)) {
+            Write-Host "Oeffne VS Code mit agentbox-Workspace (Filewatch)..." -ForegroundColor Green
+            Write-Host ""
+            try {
+                Start-Process -FilePath $vsCodeExe -ArgumentList @("`"$workspaceStart`"")
+            } catch {
+                Write-Host "WARNUNG: VS Code konnte nicht gestartet werden — fallback auf Standard-Launcher." -ForegroundColor Yellow
+                $forceVsCode = $false
+            }
+        } else {
+            Write-Host "WARNUNG: VS Code nicht gefunden — fallback auf Standard-Launcher." -ForegroundColor Yellow
+            $forceVsCode = $false
+        }
+    }
+    if ($forceVsCode) {
+        # VS-Code-Start war erfolgreich, nichts weiter tun.
+    } elseif ($launchUi -eq "vscode" -and $hasVsCode -and (Test-Path -LiteralPath $workspaceStart)) {
         Write-Host "Oeffne VS Code mit agentbox-Workspace..." -ForegroundColor Green
         Write-Host ""
         try {

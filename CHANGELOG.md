@@ -5,6 +5,27 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.15] - 2026-04-18
+
+### Added — Einmalige VS-Code-Option im Post-Install-Timer
+
+Der 5-Sekunden-Timer am Ende von `install.ps1` akzeptiert jetzt `[v]`
+als dritten Key neben `[J/n]`. Startet agentbox einmalig via
+`agentbox.code-workspace` (Filewatch + Agent-Terminal im Editor),
+unabhaengig vom persistierten `launch_ui`. Kein Config-Change — das
+Shortcut-Verhalten bleibt wie konfiguriert.
+
+VS Code wird on-the-fly via der bestehenden `Find-VsCodeExe`-Probe
+gesucht, auch wenn `launch_ui=wt` vorher kein `$needVsCode` gesetzt
+hat. Fehlt VS Code (oder das Workspace-File), greift ein Fallback mit
+gelber Warnung in die bestehende wt/wsl-Launcher-Chain — der Timer-
+"ja"-Pfad endet also nie in einer Sackgasse.
+
+Prompt-Text: `Jetzt agentbox starten? [J/n/v] (5s Timeout = ja, v = VS
+Code + Filewatch)`. Keine Aenderung am frueheren Launcher-Prompt (Z.
+1025–1063), der `launch_ui` in `config.json` persistiert — die beiden
+Konzepte bleiben bewusst getrennt (persistent vs. einmalig).
+
 ## [2.0.14] - 2026-04-17
 
 ### Changed — Error-Level-Konsistenz auf Bash-Seite + Stderr-Split
