@@ -5,6 +5,53 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.10] - 2026-04-18
+
+### Added -- diagnose.ps1: Host-Side Diagnose fuer den Task-Runner-Flow
+
+Neues Repo-Root-Skript `diagnose.ps1`, das die komplette Kette vom
+Trigger-Event bis zum Bench-Output in einem Durchlauf pruefen laesst.
+Motivation: wenn der `[3] Benchmark ausfuehren`-Menu-Punkt nur ein
+blaues PowerShell-Fenster kurz aufploppen laesst und nichts passiert,
+war es bisher frickelig zu lokalisieren, an welcher der vier Schichten
+(Scheduled Task -> Event-Source -> config.json-Whitelist ->
+project.json build.command -> Dateien im demo-benchmark-Ordner) der
+Bruch ist.
+
+Gecheckt werden in Reihenfolge:
+
+1. Scheduled Task: existiert, Action ruft win-task-runner.ps1 mit
+   -once + -WindowStyle Hidden auf, WorkingDirectory, Event-Trigger
+   auf EventID 2000, AtLogon-Safety-Net, LastRunTime, LastTaskResult.
+2. Event-Source `AIProjects` registriert.
+3. config.json parsebar, build_whitelist enthaelt den exakten
+   `powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1`-
+   Eintrag.
+4. win-task-runner.ps1 am erwarteten Speicherort.
+5. demo-benchmark-Ordner geseedet (bench.ps1, bench.sh, project.json).
+6. project.json:build.command matcht Whitelist **exakt** (char-by-char)
+   -- der haeufigste Stolperstein bei Whitelist-Drift.
+7. Pending Tasks in demo-benchmark/_tasks + letzter status_build.json.
+8. _control/history: letzte 5 failed Tasks mit Error-Message.
+9. Letzte 10 Application-Events von Source AIProjects (2000/1001/1002/
+   1003 farbcodiert nach Rolle).
+10. bench-results.json parsebar + .host / .agentbox_host Keys + Alter
+    der index.html.
+11. .version + .update_class sanity.
+
+Output farbcodiert [OK]/[WARN]/[FAIL], am Ende Summary-Zeile und
+Exit-Code (0 wenn alle OK, 1 bei >=1 FAIL). PS 5.1 kompatibel (keine
+Here-Strings, kein `New-Item -LiteralPath`, ASCII-only) wie die Regel
+in CLAUDE.md.
+
+Aufruf:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File _control\diagnose.ps1
+```
+
+Laeuft vollstaendig im User-Kontext, braucht keine Admin-Rechte.
+
 ## [2.2.9] - 2026-04-18
 
 ### Changed -- Performance-Section im README: Verhaeltnisse statt Absolutwerte
