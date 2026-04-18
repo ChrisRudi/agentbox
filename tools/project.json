@@ -1,0 +1,16 @@
+{
+  "_doc": "agentbox demo-benchmark project — wird beim Install nach <AI_PROJECTS_ROOT>\\demo-benchmark\\ geseedet. Der build-command loest bench.ps1 auf dem Host aus (ueber den Task-Runner / Scheduled-Task Mechanismus). Quelle: tools/ im Repo.",
+  "type": "powershell",
+  "build": {
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1",
+    "output_dir": "."
+  },
+  "deploy": {
+    "target": "",
+    "url": ""
+  },
+  "agent": {
+    "working_dir": ".",
+    "entry_point": "bench.ps1"
+  }
+}

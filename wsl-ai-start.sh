@@ -1120,7 +1120,7 @@ _load_enabled_agents() {
     fi
 }
 
-# Config-Untermenue: Agents toggle + Projekte verstecken
+# Config-Untermenue: Agents toggle + Projekte verstecken + Benchmark
 _config_menu() {
     while true; do
         echo ""
@@ -1128,16 +1128,67 @@ _config_menu() {
         echo ""
         echo "  [1] Agents aktivieren/deaktivieren"
         echo "  [2] Projekte verstecken/einblenden"
+        echo "  [3] Benchmark ausfuehren"
         echo "  [q] Zurueck"
         echo ""
         read -r -p "Auswahl: " _cfg_choice
         case "$_cfg_choice" in
             1) _toggle_agents_menu ;;
             2) _toggle_projects_menu ;;
+            3) _run_benchmark_menu ;;
             q|Q|"") return ;;
             *) echo "Ungueltige Auswahl." ;;
         esac
     done
+}
+
+# Benchmark-Menu: misst Sandbox-Seite synchron und legt einen Task fuer den
+# Host-Runner an. Der Scheduled-Task agentbox-task-runner (AtLogon gestartet)
+# greift das Task-JSON aus <demo-benchmark>/_tasks/ auf, fuehrt bench.ps1 aus
+# und laesst Start-Process das HTML im Browser oeffnen. Audit-Trail laeuft
+# ueber Windows Application-Event-Log (Source "AIProjects", IDs 1001/1002).
+_run_benchmark_menu() {
+    local _demo_dir="$AI_PROJECTS_ROOT/demo-benchmark"
+    echo ""
+    echo -e "${CYAN}--- Benchmark ---${NC}"
+    if [ ! -d "$_demo_dir" ]; then
+        log_error "Demo-Projekt nicht gefunden: $_demo_dir"
+        echo "  Fuehre install.ps1 erneut als Admin aus, um demo-benchmark/ zu seeden."
+        return
+    fi
+    if [ ! -x "$_demo_dir/bench.sh" ]; then
+        log_error "bench.sh nicht gefunden oder nicht ausfuehrbar in $_demo_dir"
+        return
+    fi
+    if [ ! -f "$_demo_dir/bench.ps1" ]; then
+        log_error "bench.ps1 nicht gefunden in $_demo_dir"
+        return
+    fi
+
+    local _out_file="$_demo_dir/bench-results.json"
+    echo "Sandbox-Seite messen (schreibt in $_out_file, Schluessel .sandbox)..."
+    echo ""
+    if ! BENCH_OUT="$_out_file" bash "$_demo_dir/bench.sh"; then
+        log_error "bench.sh fehlgeschlagen."
+        return
+    fi
+
+    local _ts
+    _ts=$(date +%s)
+    local _tasks_dir="$_demo_dir/_tasks"
+    mkdir -p "$_tasks_dir" 2>/dev/null || true
+    local _task_file="$_tasks_dir/bench-$_ts.json"
+    printf '{"project":"demo-benchmark","action":"build","timestamp":%s}\n' "$_ts" > "$_task_file"
+
+    echo ""
+    log_ok "Task angelegt: $_task_file"
+    echo ""
+    echo "  win-task-runner.ps1 (AtLogon-Daemon auf dem Host) greift den Task auf,"
+    echo "  fuehrt bench.ps1 aus und oeffnet index.html im Standard-Browser."
+    echo "  Audit-Trail: Event-Log > Application > Source 'AIProjects'"
+    echo "               (EventID 1001 = gestartet, 1002 = erledigt, 1003 = Fehler)"
+    echo ""
+    read -r -p "[Enter] zurueck ins Konfigurations-Menu..." _
 }
 
 _toggle_agents_menu() {

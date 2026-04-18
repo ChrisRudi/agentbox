@@ -5,6 +5,95 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-04-18
+
+### Added -- `tools/` als mitgeliefertes Benchmark-Demoprojekt
+
+Bisher war `tools/` nur eine Sammlung aus `bench.ps1`/`bench.sh` plus
+einem static `index.html` -- nirgends aus aktivem Code referenziert,
+vom User nur manuell aufrufbar. Jetzt wird es ein voll integriertes
+Demo-Projekt, das agentbox' WSL-Performance-Vorsprung zeigt und
+gleichzeitig demonstriert, wie der `project.json`-Build-Hook ueber den
+bestehenden Task-Runner an Host-Scripts delegiert.
+
+**Neue Komponenten:**
+
+- **`tools/project.json`** -- macht das Verzeichnis zu einem agentbox-
+  erkennbaren Projekt mit `build.command =
+  "powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1"`.
+- **`tools/CLAUDE.md`** -- Agent-Doku fuer das Demo-Projekt (JSON-
+  Schema, Metriken, Task-Runner-Flow, do/don't-Regeln).
+- **Installer-Seed** via neuer Funktion
+  `Seed-AgentboxDemoBenchmark` in `win-setup-core.ps1`: kopiert den
+  Inhalt von `tools/` idempotent nach `<AI_PROJECTS_ROOT>\demo-benchmark\`.
+  Greift sowohl im Skip-Build-Pfad (Template aus Cache) als auch im
+  Full-Build-Pfad. User-Modifikationen an der Kopie bleiben unberuehrt
+  (Copy-only-if-missing).
+- **Config-Submenue-Eintrag `[3] Benchmark ausfuehren`** in
+  `wsl-ai-start.sh` (`_config_menu` -> `_run_benchmark_menu`): misst
+  die Sandbox-Seite synchron und legt ein Task-JSON in
+  `demo-benchmark/_tasks/bench-<ts>.json` ab. Der bestehende
+  Scheduled-Task `agentbox-task-runner` (AtLogon-getriggert,
+  `win-task-runner.ps1 -watch`, `FileSystemWatcher`) greift das
+  Task-File ueber die existierende Pipeline auf, fuehrt bench.ps1 aus
+  und schreibt Audit-Events 1001/1002/1003 ins Windows
+  Application-Event-Log (Source `AIProjects`) -- kein neuer
+  Trigger-Pfad, nur Andocken an den existierenden.
+
+### Changed -- bench-Output: JSONL-Append -> JSON-Overwrite
+
+`bench-results.jsonl` ist weg. `bench.{ps1,sh}` schreiben jetzt in
+`bench-results.json` mit strict-overwrite-Schema:
+
+```json
+{
+  "host":    { "timestamp": "...", "version": "3.0.0", "net_mbs": ..., ... },
+  "sandbox": { "timestamp": "...", "version": "3.0.0", "net_mbs": ..., ... }
+}
+```
+
+- Jeder Run liest das File, ersetzt **nur seine eigene Seite**
+  (`host` oder `sandbox`) und schreibt zurueck. Die andere Seite
+  bleibt erhalten. Keine History-Akkumulation mehr.
+- `bench.ps1`-HTML-Renderer nutzt jetzt single-latest-run pro Seite
+  statt Durchschnitt ueber alle Runs (der Durchschnitt war nur ein
+  Workaround fuer das Append-Schema).
+- `bench.sh` nutzt `python3` (im Template garantiert) statt
+  `jq`-Abhaengigkeit fuer den JSON-Merge.
+- `BENCH_VERSION` in beiden Scripts bump `2.2.0` -> `3.0.0`.
+
+### Added -- bench.ps1 oeffnet HTML automatisch
+
+Nach dem HTML-Build ruft `bench.ps1` `Start-Process $htmlOut`, was
+den Default-Browser mit dem Ergebnis oeffnet. Nur auf dem Host;
+`bench.sh` triggert bewusst keinen Browser (Sandbox hat keinen
+und sollte auch keinen Host-Call machen).
+
+### Added -- `build_whitelist` um bench.ps1 erweitert
+
+Sowohl `config.json` als auch der hardcoded Fallback in
+`win-task-runner.ps1:70-80` enthalten jetzt das Pattern
+`powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1`.
+Ohne diese Erweiterung wuerde der Task-Runner den Demo-Build mit
+"Build-Kommando nicht in Whitelist" ablehnen.
+
+### Docs -- Root-`CLAUDE.md` erweitert
+
+Neuer Abschnitt **`tools/ -- Benchmark-Demoprojekt`** nach der
+Config-Topologie. Verweist fuer Details auf `tools/CLAUDE.md`, haelt
+die Kern-Invarianten (Seed-Mechanismus, Task-Runner-Andockung,
+JSON-Schema) auf Projekt-Memory-Ebene fest.
+
+### Migration
+
+- Alte `bench-results.jsonl` wird von der neuen Version ignoriert,
+  keine Auto-Migration. Einfach zwei frische Runs (1x bench.ps1 +
+  1x bench.sh) und der neue JSON ist da.
+- Nach `install.ps1`-Rerun ist `demo-benchmark/` im Projekt-Menue
+  sichtbar. User, die den Menue-Eintrag `[3] Benchmark` nicht sehen:
+  auch nach `install.ps1`-Rerun muss `wsl-ai-start.sh` aktuell sein
+  (auto-update-Mechanismus greift beim naechsten Start).
+
 ## [2.1.4] - 2026-04-18
 
 ### Added -- `tools/bench.{ps1,sh}` Versions-Stempel im Output

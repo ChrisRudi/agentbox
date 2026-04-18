@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# bench.sh v2 - agentbox Sandbox-Baseline (Linux, ext4 in vhdx)
+# bench.sh v3.0.0 - agentbox Sandbox-Baseline (Linux, ext4 in vhdx)
 #
-# Paar-Script zu bench.ps1. Beide **appenden** ins selbe bench-results.txt
-# (CWD-relativ, ueberschreibbar via $BENCH_OUT). Identische Workloads auf
-# beiden Seiten -> Wirkungsgrad = sandbox / host.
+# Paar-Script zu bench.ps1. Beide schreiben in dasselbe bench-results.json,
+# aber **strict overwrite** pro Seite: diese .sh mergt ihren Run in
+# .sandbox, bench.ps1 in .host. Identische Workloads auf beiden Seiten
+# -> Wirkungsgrad = sandbox / host (berechnet und gerendert in .ps1).
 #
 # Tests:
 #   1. Netzwerk: 100 MB download (Multi-URL-Fallback, gleiche Reihenfolge wie .ps1)
@@ -14,12 +15,14 @@
 #
 # Disk-Tests laufen in $BENCH_DIR (Default /tmp = ext4 in vhdx, Fast-Path).
 # Fuer DrvFs-Messung: BENCH_DIR=/workspace/src bash src/bench.sh
+#
+# Kein HTML, kein Browser-Trigger - das ist Host-Sache (bench.ps1).
 
 set -u
 
-BENCH_VERSION="2.2.0"
+BENCH_VERSION="3.0.0"
 BENCH_DIR="${BENCH_DIR:-/tmp}"
-BENCH_OUT="${BENCH_OUT:-$(pwd)/bench-results.jsonl}"
+BENCH_OUT="${BENCH_OUT:-$(pwd)/bench-results.json}"
 STAMP=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')
 
 FS_HINT=""
@@ -31,7 +34,7 @@ esac
 echo "========================================"
 echo " agentbox-bench v$BENCH_VERSION platform=sandbox"
 echo "========================================"
-echo " Output-Datei: $BENCH_OUT"
+echo " JSON-Out: $BENCH_OUT"
 
 # --- 1. Network: 100 MB download mit Multi-URL-Fallback ---
 echo ""
@@ -122,18 +125,50 @@ SPAWN_ELAPSED=$(awk "BEGIN{printf \"%.3f\", $END - $START}")
 SPAWN_PER_S=$(awk "BEGIN{printf \"%d\", 500 / $SPAWN_ELAPSED}")
 echo "   -> $SPAWN_PER_S procs/s (in ${SPAWN_ELAPSED}s)"
 
-# --- Summary (stdout + append an bench-results.jsonl) ---
-JSON_LINE=$(printf '{"timestamp":"%s","platform":"sandbox","version":"%s","net_mbs":%s,"net_url":"%s","disk_seq_mbs":%s,"disk_small_files_per_s":%s,"cpu_sha256_mbs":%s,"proc_spawn_per_s":%s}' \
-    "$STAMP" "$BENCH_VERSION" "$NET_MBS" "$NET_URL" "$SEQ_WRITE_MBS" "$SMALL_FILES_PER_S" "$CPU_MBS" "$SPAWN_PER_S")
+# --- JSON merge: .sandbox-Seite ueberschreiben, .host bleibt erhalten ---
+# python3 ist im Sandbox-Template garantiert (wird oben schon fuer SHA256
+# verwendet) - daher kein jq-Fallback noetig.
+OUT_DIR=$(dirname "$BENCH_OUT")
+mkdir -p "$OUT_DIR" 2>/dev/null || true
+
+python3 - "$BENCH_OUT" <<PYEOF
+import json, os, sys
+
+out_path = sys.argv[1]
+existing = {}
+if os.path.exists(out_path):
+    try:
+        with open(out_path, 'r', encoding='utf-8') as f:
+            raw = f.read().strip()
+        if raw:
+            existing = json.loads(raw)
+    except Exception as e:
+        print(f"[WARN] bestehende JSON konnte nicht gelesen werden, ueberschreibe: {e}", file=sys.stderr)
+        existing = {}
+
+if not isinstance(existing, dict):
+    existing = {}
+
+existing["sandbox"] = {
+    "timestamp": "$STAMP",
+    "platform": "sandbox",
+    "version": "$BENCH_VERSION",
+    "net_mbs": float("$NET_MBS") if "$NET_MBS" else 0.0,
+    "net_url": "$NET_URL",
+    "disk_seq_mbs": float("$SEQ_WRITE_MBS") if "$SEQ_WRITE_MBS" else 0.0,
+    "disk_small_files_per_s": int("$SMALL_FILES_PER_S") if "$SMALL_FILES_PER_S" else 0,
+    "cpu_sha256_mbs": float("$CPU_MBS") if "$CPU_MBS" else 0.0,
+    "proc_spawn_per_s": int("$SPAWN_PER_S") if "$SPAWN_PER_S" else 0,
+}
+
+with open(out_path, 'w', encoding='utf-8') as f:
+    json.dump(existing, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+
+print(json.dumps(existing["sandbox"], ensure_ascii=False))
+PYEOF
 
 echo ""
 echo "========================================"
-echo " Ergebnis (auch angehaengt an $BENCH_OUT)"
+echo " Ergebnis in $BENCH_OUT (Schluessel .sandbox)"
 echo "========================================"
-echo "$JSON_LINE"
-
-OUT_DIR=$(dirname "$BENCH_OUT")
-mkdir -p "$OUT_DIR" 2>/dev/null || true
-if ! printf '%s\n' "$JSON_LINE" >> "$BENCH_OUT" 2>/dev/null; then
-    echo "[WARN] Konnte nicht an $BENCH_OUT anhaengen." >&2
-fi

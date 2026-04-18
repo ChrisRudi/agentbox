@@ -93,6 +93,40 @@ Bash-seitig ist die einzige Lese-Schnittstelle `lib/config.sh`
 kein direktes python/jq/sed-Gemurkse in Scripts. Neue Reader gehören
 in `lib/config.sh`, nicht ad-hoc an den Callsite.
 
+## tools/ — Benchmark-Demoprojekt
+
+`tools/` ist kein gewoehnlicher Script-Ordner, sondern ein mitgeliefertes
+Demo-Projekt, das agentbox' WSL-Performance-Vorsprung zeigt. Beim Install
+wird der Inhalt idempotent nach `<AI_PROJECTS_ROOT>\demo-benchmark\`
+geseedet (Funktion `Seed-AgentboxDemoBenchmark` in `win-setup-core.ps1`,
+laeuft nach `Register-AgentboxTaskRunner` in beiden Install-Pfaden).
+
+Agent-Kontext steht in `tools/CLAUDE.md` — nicht hier dupliziert. Kurz:
+
+- **bench.ps1** (Host) + **bench.sh** (Sandbox), paired Scripts, identische
+  Workloads. Output: **`bench-results.json`** mit strict-overwrite-Schema
+  `{ host: {latest}, sandbox: {latest} }` — nur letzter Run pro Seite,
+  **kein JSONL** mehr (war bis 2.2.0 JSONL-Append).
+- Nur **bench.ps1** generiert `index.html` und oeffnet es via
+  `Start-Process` im Host-Browser. `bench.sh` ist stumm, schreibt nur die
+  `.sandbox`-Seite der JSON via python3.
+- Trigger ueber den bestehenden Task-Runner-Flow: Config-Submenue
+  `[3] Benchmark ausfuehren` in `wsl-ai-start.sh` misst die Sandbox-Seite
+  synchron und legt ein Task-JSON in `demo-benchmark/_tasks/` ab. Der
+  `agentbox-task-runner` Scheduled-Task (AtLogon → `win-task-runner.ps1
+  -watch`) greift es ueber `FileSystemWatcher` auf, fuehrt
+  `build.command` aus der `project.json` aus und schreibt Audit-Events
+  1001/1002/1003 in Application-Event-Log (Source `AIProjects`).
+- **build_whitelist** muss `powershell -NoProfile -ExecutionPolicy Bypass
+  -File bench.ps1` enthalten (steht in `config.json` und im hardcoded
+  Fallback in `win-task-runner.ps1`).
+
+Wer das Demo-Projekt aendert, aendert die Source-of-truth in `tools/` —
+die User-Kopie unter `demo-benchmark/` wird bei jedem `install.ps1`-Rerun
+nur fuer **fehlende** Dateien nachgezogen (nie ueberschrieben, damit
+User-Modifikationen erhalten bleiben). Fuer Force-Re-Seed: die fehlenden
+Dateien in `demo-benchmark/` loeschen und install.ps1 rerun.
+
 ## Git-Workflow
 
 - **Immer direkt auf `main` committen und pushen.** Keine Feature-Branches

@@ -168,6 +168,53 @@ function Register-AgentboxTaskRunner {
     Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
 }
 
+# Seeded das Demo-Benchmark-Projekt aus <scriptDir>\tools\ nach
+# <baseDir>\demo-benchmark\. Idempotent: kopiert eine Datei nur, wenn sie
+# im Ziel noch nicht existiert — User-Modifikationen bleiben unberuehrt.
+# Wird nach Register-AgentboxTaskRunner aufgerufen, damit der Task-Runner
+# den Demo-Build gleich aufgreifen kann.
+function Seed-AgentboxDemoBenchmark {
+    param(
+        $cfg,
+        [Parameter(Mandatory)][string]$ScriptDir,
+        [Parameter(Mandatory)][string]$BaseDir
+    )
+
+    $toolsSrc = Join-Path $ScriptDir "tools"
+    if (-not (Test-Path -LiteralPath $toolsSrc)) {
+        Write-Host "[INFO] $toolsSrc nicht vorhanden — ueberspringe Demo-Seed" -ForegroundColor Gray
+        return
+    }
+    if (-not (Test-Path -LiteralPath $BaseDir)) {
+        Write-Host "[INFO] BaseDir '$BaseDir' existiert nicht — ueberspringe Demo-Seed" -ForegroundColor Gray
+        return
+    }
+
+    Write-Host "Seede Demo-Benchmark-Projekt..." -ForegroundColor Cyan
+    $demoDir = Join-Path $BaseDir "demo-benchmark"
+    if (-not (Test-Path -LiteralPath $demoDir)) {
+        [System.IO.Directory]::CreateDirectory($demoDir) | Out-Null
+    }
+
+    # Exclude-Liste: Runtime-Artefakte nicht seeden, damit jeder neue
+    # User einen sauberen Stand bekommt. index.html ist Placeholder aus
+    # dem Repo, darf mit rein; bench-results.json wird beim Run erzeugt.
+    $excluded = @("bench-results.json")
+    $copied = 0; $kept = 0
+    Get-ChildItem -LiteralPath $toolsSrc -File | ForEach-Object {
+        if ($excluded -contains $_.Name) { return }
+        $dest = Join-Path $demoDir $_.Name
+        if (Test-Path -LiteralPath $dest) {
+            $kept++
+        } else {
+            Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
+            $copied++
+        }
+    }
+    Write-Host "[OK] demo-benchmark: $copied neu kopiert, $kept unberuehrt gelassen" -ForegroundColor Green
+    Write-Host "     Pfad: $demoDir" -ForegroundColor Gray
+}
+
 # Seed-Helper: schreibt Datei nur wenn sie fehlt ODER leer/whitespace-only ist.
 # Letzteres ist wichtig, weil manche Agents beim ersten Start ihre Config-Datei
 # selbst als leere Huelle anlegen (z.B. Claude Code legt ein leeres {} an) —
@@ -348,6 +395,19 @@ if (($haveTarGz -or $haveVhd) -and (Test-Path -LiteralPath $configHashFile)) {
         # --- Direkt zu Event-Source + Scheduled Task springen ---
         Write-Host ""
         Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
+
+        # Demo-Benchmark-Projekt idempotent seeden (kann unabhaengig vom
+        # Template-Cache laufen, braucht nur config + scriptDir + baseDir).
+        $demoBaseDir = $null
+        if ($config -and $config.base_path_override -and $config.base_path_override -ne "") {
+            $demoBaseDir = $config.base_path_override
+        } elseif ($env:OneDrive) {
+            $demoBaseName = if ($config -and $config.base_dir_name) { $config.base_dir_name } else { "AI_Projects_Source" }
+            $demoBaseDir = Join-Path $env:OneDrive $demoBaseName
+        }
+        if ($demoBaseDir) {
+            Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
+        }
 
         Write-Host ""
         Write-Host "=== Setup abgeschlossen (Template aus Cache) ===" -ForegroundColor Green
@@ -785,6 +845,18 @@ Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 # --- Event-Source + Scheduled Task registrieren ---
 Write-Host ""
 Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
+
+# --- Demo-Benchmark-Projekt seeden (idempotent) ---
+$demoBaseDir = $null
+if ($config -and $config.base_path_override -and $config.base_path_override -ne "") {
+    $demoBaseDir = $config.base_path_override
+} elseif ($env:OneDrive) {
+    $demoBaseName = if ($config -and $config.base_dir_name) { $config.base_dir_name } else { "AI_Projects_Source" }
+    $demoBaseDir = Join-Path $env:OneDrive $demoBaseName
+}
+if ($demoBaseDir) {
+    Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
+}
 
 # --- Fertig ---
 Write-Host ""
