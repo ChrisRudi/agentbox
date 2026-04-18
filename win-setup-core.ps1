@@ -188,8 +188,12 @@ function Register-AgentboxTaskRunner {
 # Seeded das Demo-Benchmark-Projekt aus <scriptDir>\tools\ nach
 # <baseDir>\demo-benchmark\. Idempotent: kopiert eine Datei nur, wenn sie
 # im Ziel noch nicht existiert — User-Modifikationen bleiben unberuehrt.
-# Wird nach Register-AgentboxTaskRunner aufgerufen, damit der Task-Runner
-# den Demo-Build gleich aufgreifen kann.
+# Wird VOR Register-AgentboxTaskRunner aufgerufen, damit der Watch-Daemon
+# demo-benchmark/ beim initialen Projekt-Enumerate sieht und einen
+# FileSystemWatcher auf _tasks/ setzt. Bei umgekehrter Reihenfolge
+# (Register-erst, Seed-spaeter) wuerde das Task-File aus dem
+# Benchmark-Menu niemals aufgegriffen, weil der Daemon den neuen Ordner
+# nicht dynamisch entdeckt.
 function Seed-AgentboxDemoBenchmark {
     param(
         $cfg,
@@ -409,12 +413,12 @@ if (($haveTarGz -or $haveVhd) -and (Test-Path -LiteralPath $configHashFile)) {
         Write-Host "     Hash: $savedHash" -ForegroundColor Gray
         Write-Host "     Erzwinge Rebuild: loesche $configHashFile oder aendere config.json" -ForegroundColor Gray
 
-        # --- Direkt zu Event-Source + Scheduled Task springen ---
-        Write-Host ""
-        Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
-
-        # Demo-Benchmark-Projekt idempotent seeden (kann unabhaengig vom
-        # Template-Cache laufen, braucht nur config + scriptDir + baseDir).
+        # --- Demo-Benchmark zuerst seeden, DANN Task-Runner starten ---
+        # Reihenfolge ist kritisch: der Watch-Daemon enumeriert Projekte
+        # einmalig beim Start und setzt FileSystemWatcher nur auf dann
+        # existierende _tasks/-Ordner. Wenn demo-benchmark erst nach
+        # Register-AgentboxTaskRunner angelegt wird, sieht der Daemon
+        # ihn nie und Task-Files bleiben liegen.
         $demoBaseDir = $null
         if ($config -and $config.base_path_override -and $config.base_path_override -ne "") {
             $demoBaseDir = $config.base_path_override
@@ -425,6 +429,9 @@ if (($haveTarGz -or $haveVhd) -and (Test-Path -LiteralPath $configHashFile)) {
         if ($demoBaseDir) {
             Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
         }
+
+        Write-Host ""
+        Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
 
         Write-Host ""
         Write-Host "=== Setup abgeschlossen (Template aus Cache) ===" -ForegroundColor Green
@@ -859,11 +866,10 @@ if ([System.IO.Directory]::Exists($tempSetup)) {
 }
 Write-Host "[OK] Build-Distro entfernt" -ForegroundColor Green
 
-# --- Event-Source + Scheduled Task registrieren ---
-Write-Host ""
-Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
-
-# --- Demo-Benchmark-Projekt seeden (idempotent) ---
+# --- Demo-Benchmark-Projekt seeden VOR Task-Runner-Start ---
+# Reihenfolge kritisch: der Watch-Daemon enumeriert Projekte einmalig
+# beim Start. Seed muss vorher stehen, sonst sieht der Daemon das
+# demo-benchmark/-Verzeichnis nicht und Task-Files bleiben unbemerkt.
 $demoBaseDir = $null
 if ($config -and $config.base_path_override -and $config.base_path_override -ne "") {
     $demoBaseDir = $config.base_path_override
@@ -874,6 +880,10 @@ if ($config -and $config.base_path_override -and $config.base_path_override -ne 
 if ($demoBaseDir) {
     Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
 }
+
+# --- Event-Source + Scheduled Task registrieren ---
+Write-Host ""
+Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
 
 # --- Fertig ---
 Write-Host ""

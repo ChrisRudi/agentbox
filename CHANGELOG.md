@@ -5,6 +5,45 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2026-04-18
+
+### Fixed -- Seed-Reihenfolge: demo-benchmark VOR Task-Runner-Registrierung
+
+User-Report nach 2.2.1-Fix: "Audit-Trail Event-Log Application Source
+AIProjects keine Eintraege obwohl ich [3] Benchmark ausfuehren gemacht
+habe und vorher neu installiert."
+
+Root Cause: Race Condition in `win-setup-core.ps1`. `Register-AgentboxTaskRunner`
+lief VOR `Seed-AgentboxDemoBenchmark` (beide Install-Pfade). Der 2.2.1-
+Watch-Daemon startet sofort via `Start-ScheduledTask` und enumeriert die
+Projekt-Verzeichnisse **einmalig** in `win-task-runner.ps1:441-444`
+(`Get-ChildItem -LiteralPath $baseDir -Directory`). Zu diesem Zeitpunkt
+existierte `demo-benchmark/` noch nicht -- der Daemon setzte keinen
+FileSystemWatcher auf `demo-benchmark/_tasks/`. Folge: Task-Files aus dem
+Benchmark-Menue-Handler landen im Ordner, niemand greift sie auf, kein
+EventLog-Audit, kein Host-Build.
+
+Fix: Aufruf-Reihenfolge getauscht. In beiden Install-Pfaden
+(Skip-Build und Full-Build) laeuft `Seed-AgentboxDemoBenchmark` jetzt
+**vor** `Register-AgentboxTaskRunner`. Der Daemon sieht beim Start das
+existierende `demo-benchmark/`-Projekt, setzt den FileSystemWatcher auf
+`_tasks/` und verarbeitet Benchmark-Task-Files live.
+
+Kommentar am `Seed-AgentboxDemoBenchmark`-Funktionsprototyp entsprechend
+korrigiert (war: "nach Register", jetzt: "vor Register mit Begruendung").
+
+### Migration
+
+- `.update_class` bleibt **major**. Installer-Rerun ist Pflicht: der
+  Daemon muss mit der neuen Projekt-Liste neu starten. Durch
+  `Stop-ScheduledTask`+`Unregister-ScheduledTask` in
+  `Register-AgentboxTaskRunner` (2.2.1) wird der alte Daemon sauber
+  beendet, bevor der neue hochfaehrt.
+- **Task-Files aus fruehem 2.2.1-Versuch** liegen evtl. noch in
+  `demo-benchmark/_tasks/`. Beim naechsten Daemon-Start werden sie durch
+  den Initial-Sweep (`Process-AllTasks` in `win-task-runner.ps1:439`)
+  aufgegriffen und verarbeitet.
+
 ## [2.2.1] - 2026-04-18
 
 ### Fixed -- Scheduled Task `agentbox-task-runner` laeuft jetzt als Daemon (watch statt once)
