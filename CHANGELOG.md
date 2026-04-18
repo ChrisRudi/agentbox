@@ -5,6 +5,59 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-04-18
+
+### Fixed -- Scheduled Task `agentbox-task-runner` laeuft jetzt als Daemon (watch statt once)
+
+Die 2.2.0-Doku behauptete, der Scheduled Task laufe im `-watch`-Modus
+als FileSystemWatcher-Daemon und greife Task-Files live auf. Tatsaechlich
+war er mit `-once` registriert (`win-setup-core.ps1:160`), lief also nur
+einmal bei Logon, verarbeitete bereits queued Tasks und beendete sich.
+
+Konsequenz fuer den 2.2.0 Benchmark-Flow: Config-Menue `[3] Benchmark
+ausfuehren` schrieb zwar korrekt ein Task-JSON in
+`demo-benchmark/_tasks/`, aber niemand hat es aufgegriffen -- kein
+Host-Build, kein `bench.ps1`-Run, kein HTML, kein Browser. Erst beim
+naechsten Logon waere die Datei verarbeitet worden. User-Report:
+"[3] Benchmark geht in WSL, aber dachte es triggert auch build und das
+Powershell und zeigt am Schluss das html?"
+
+Fix in `Register-AgentboxTaskRunner` (`win-setup-core.ps1:141-169`):
+
+- **Argument-Switch** `-once` -> `-watch`. Der Daemon laeuft ab Logon
+  dauerhaft mit FileSystemWatcher auf `<project>/_tasks/*.json` und
+  verarbeitet neue Tasks innerhalb von ~500ms.
+- **`-WindowStyle Hidden`** zusaetzlich, damit kein Console-Fenster beim
+  Logon blitzt.
+- **`-ExecutionTimeLimit` = 0** (`New-TimeSpan -Seconds 0`). Ohne diesen
+  Setter killt Task Scheduler den Prozess nach Default-3-Tagen. Fuer
+  einen Daemon toedlich.
+- **`-MultipleInstances IgnoreNew`**: bei einem zweiten Logon-Trigger
+  wird kein zweiter Daemon hochgefahren, solange der erste laeuft.
+- **Restart-on-Crash**: `-RestartCount 3 -RestartInterval 1min`. Wenn der
+  Daemon stirbt, probiert Task Scheduler dreimal im 1-Minuten-Abstand
+  neu zu starten.
+- **Stop-ScheduledTask vor Unregister**: bei `install.ps1`-Rerun muss
+  der alte Daemon-Prozess erst terminiert werden, sonst laeuft er
+  (mit altem Script) weiter.
+- **Start-ScheduledTask nach Register**: der Daemon startet sofort,
+  nicht erst beim naechsten Logon. User bekommt Live-Task-Processing
+  unmittelbar nach dem Installer-Rerun.
+
+Bestehender Initial-Sweep in `win-task-runner.ps1:439` (`Process-AllTasks`
+am Anfang von `-watch`) bleibt -- er drained Tasks, die waehrend
+Daemon-Downtime queued wurden, bevor der FileSystemWatcher aktiv wird.
+
+### Migration / Rollout
+
+- `.update_class` bleibt **major**. Installer-Rerun ist Pflicht, damit
+  der Task neu registriert wird. Der neue Daemon startet sofort mit
+  `Start-ScheduledTask` am Ende von `Register-AgentboxTaskRunner`.
+- **Bestehende Task-Files** in `<project>/_tasks/` werden beim
+  Daemon-Start durch den Initial-Sweep aufgegriffen. Der 2.2.0-Benchmark-
+  Versuch eines Users liegt da evtl. noch -- er wird beim ersten Daemon-
+  Start verarbeitet.
+
 ## [2.2.0] - 2026-04-18
 
 ### Added -- `tools/` als mitgeliefertes Benchmark-Demoprojekt

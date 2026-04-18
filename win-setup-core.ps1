@@ -153,19 +153,36 @@ function Register-AgentboxTaskRunner {
     Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
     $taskName = if ($cfg -and $cfg.scheduled_task_name) { $cfg.scheduled_task_name } else { "agentbox-task-runner" }
     $runnerScript = Join-Path $ScriptDir "win-task-runner.ps1"
+    # Bestehenden Task ggf. stoppen + entfernen. Wichtig vor dem Switch
+    # von -once auf -watch: ein laufender Watch-Daemon muss erst terminiert
+    # werden, sonst bleibt der alte Prozess aktiv (ohne aktualisiertes Script).
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
+    # -watch: Daemon-Modus mit FileSystemWatcher, greift Task-Files live auf.
+    # -WindowStyle Hidden: keine Console-Blitz beim Logon.
     $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -once" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runnerScript`" -watch" `
         -WorkingDirectory $ScriptDir
+    # Daemon-Settings:
+    # - ExecutionTimeLimit=0 -> kein Kill nach Default-3-Tagen
+    # - MultipleInstances=IgnoreNew -> zweiter Logon-Trigger faehrt keinen
+    #   zweiten Daemon hoch, solange der erste noch laeuft
+    # - Restart bei Crash: 3 Versuche im 1-Minuten-Abstand
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries -StartWhenAvailable
+        -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+        -MultipleInstances IgnoreNew `
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
     Register-ScheduledTask -TaskName $taskName -Action $action `
         -Trigger (New-ScheduledTaskTrigger -AtLogon) -Settings $settings `
-        -Description "agentbox Task Runner — verarbeitet Build/Deploy-Tasks von AI-Agenten" `
+        -Description "agentbox Task Runner Daemon — watch-Modus, verarbeitet Build/Deploy-Tasks von AI-Agenten live" `
         -RunLevel Highest | Out-Null
-    Write-Host "[OK] Scheduled Task '$taskName' angelegt" -ForegroundColor Green
+    # Direkt starten, ohne auf naechsten Logon zu warten — der User hat
+    # gerade installiert, der Daemon soll sofort live sein.
+    try { Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
+    Write-Host "[OK] Scheduled Task '$taskName' angelegt (watch-Daemon, sofort gestartet)" -ForegroundColor Green
 }
 
 # Seeded das Demo-Benchmark-Projekt aus <scriptDir>\tools\ nach
