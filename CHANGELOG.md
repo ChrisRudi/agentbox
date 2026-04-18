@@ -5,6 +5,37 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-04-18
+
+### Added — `tools/bench.{ps1,sh}` Host/Sandbox-Perf-Vergleich
+
+Zwei Paar-Scripts um Durchsatz Host vs. Sandbox zu messen. Gleiches
+Output-Format auf beiden Seiten, **gleiche `bench-results.txt`** wenn
+aus einem agentbox-Projektordner ausgefuehrt (CWD bind-mounted in die
+Sandbox → beide Runs appenden in dieselbe Datei, direkt vergleichbar).
+
+Tests:
+1. **Netzwerk:** 500 MB download von `speed.cloudflare.com/__down` —
+   Cloudflare ist SNI-unauffaellig, umgeht ggf. vorhandene Upstream-
+   Filter. Miss in MB/s.
+2. **Disk seq write:** 1 GB via 1 MB-Chunks mit fsync (Linux
+   `conv=fdatasync` / Windows `FileStream.Flush($true)` — fair).
+3. **Disk small-files:** 10'000 × 4 B create — das ist der
+   `npm install`-Proxy, wo agentbox's ext4-Overlay-Architektur
+   glaenzt.
+
+Default-Ausgabe: `./bench-results.txt` in CWD, Append-Mode,
+Separator-Header mit Timestamp + Platform. Ueberschreibbar via
+`BENCH_OUT=/pfad` (bash) bzw. `$env:BENCH_OUT='...'` (PS).
+
+Sandbox-Script akzeptiert `BENCH_DIR=/workspace/src` fuer DrvFs-
+Messung statt der /tmp-ext4-Default.
+
+Typischer Workflow: neues agentbox-Projekt anlegen (`benchmarks/`),
+beide Scripts rein kopieren, `tools/bench.ps1` am Host + `tools/
+bench.sh` in der Sandbox laufen lassen → `bench-results.txt` hat
+beide Runs untereinander, Ratio fuer README rechenbar.
+
 ## [2.1.0] - 2026-04-18
 
 ### Added — `networkingMode=mirrored` Default bei WSL 2.0+/Win11 22H2+
