@@ -71,14 +71,31 @@ if (Test-Path -LiteralPath $legacySandboxDir) {
 }
 
 # --- config.json laden ---
+# Wenn die gemeinsame Helper-Lib mitgepullt wurde (2.0.7+), nutzen
+# wir Read-AgentboxConfig; sonst faellt der Block auf das Inline-
+# Muster zurueck. Test-Path-guarded + try/catch, damit eine defekte
+# oder fehlende Lib den Template-Build nie blockiert.
 $configPath = Join-Path $scriptDir "config.json"
-$config = $null
-try {
-    if (Test-Path -LiteralPath $configPath) {
-        $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+if (-not (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue)) {
+    $agentboxLibConfig = Join-Path $scriptDir "lib\config.ps1"
+    if (Test-Path -LiteralPath $agentboxLibConfig) {
+        try { . $agentboxLibConfig } catch {
+            Write-Host "[INFO] lib/config.ps1 konnte nicht geladen werden — nutze Inline-Fallback." -ForegroundColor Gray
+        }
     }
-} catch {
-    Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
+}
+
+$config = $null
+if (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue) {
+    $config = Read-AgentboxConfig -ConfigPath $configPath
+} else {
+    try {
+        if (Test-Path -LiteralPath $configPath) {
+            $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        }
+    } catch {
+        Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
+    }
 }
 
 # --- WSL2 pruefen ---

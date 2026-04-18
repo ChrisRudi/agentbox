@@ -99,11 +99,14 @@ Sub-Steps verschoben.
   lib/config.ps1 liegt zu dem Zeitpunkt strukturell noch nicht auf
   Disk (erst nach Repo-Clone). Bleibt als Inline-Muster bestehen.
 
-### Teil C (offen) — `win-setup-core.ps1` opts-in
+### Teil C ✅ 2.0.10 — `win-setup-core.ps1` opts-in
 
-- [ ] **3.C.1** Source + Config-Parse (Z.76-82) → `Read-AgentboxConfig`.
-  `$ErrorActionPreference=Continue` bleibt, wird separat in einem
-  Folge-Commit bewertet (zu riskant zusammen mit dem Source-Switch).
+- [x] **3.C.1** Config-Parse (Z.73-82) → `Read-AgentboxConfig` mit
+  Test-Path-guarded Source + Inline-Fallback. Gleiche Struktur wie
+  Teil B.
+- [x] **3.C.2** `$ErrorActionPreference="Continue"` bleibt bewusst —
+  Stop-Umstellung ist Teil E und braucht Invoke-Native-Wrap-
+  Voraussetzungen, nicht in diesem Commit.
 
 ### Teil D (offen) — `win-task-runner.ps1` opts-in
 
@@ -211,7 +214,8 @@ Ziel: Befund F, H. Niedrige Prio. Bewusst in Teil 1 + Teil 2 gesplittet.
 | 2026-04-17 | Etappe 5 Teil 2 (sandbox-init [OK]-Replace) | 2.0.6 | done |
 | 2026-04-17 | Etappe 3 Teil A (lib/config.ps1 additiv) | 2.0.7 | done |
 | 2026-04-17 | 2.0.4-Hotfix (Bug-1+2 aus Etappe 4) | 2.0.8 | done |
-| 2026-04-17 | Etappe 3 Teil B (install.ps1 post-Clone) | 2.0.9 | done (Smoke-Test User offen) |
+| 2026-04-17 | Etappe 3 Teil B (install.ps1 post-Clone) | 2.0.9 | done (Host-Test OK) |
+| 2026-04-17 | Etappe 3 Teil C (win-setup-core.ps1) | 2.0.10 | done (Smoke-Test User offen) |
 | — | Etappe 3 Teil C (win-setup-core.ps1 opts-in) | — | offen |
 | — | Etappe 3 Teil D (win-task-runner.ps1 opts-in) | — | offen |
 | — | Etappe 3 Teil E (Stop-Mode + Invoke-Native-Wrap) | — | offen (hoch-risk) |

@@ -5,6 +5,31 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.10] - 2026-04-17
+
+### Changed — win-setup-core.ps1 nutzt lib/config.ps1
+
+Etappe 3 Teil C aus `refactor.md`. Gleiche Struktur wie Teil B:
+Config-Parse-Block (Z.73-82) ueber `Read-AgentboxConfig` mit
+Test-Path-guarded + try/catch-wrapped Source und Inline-Fallback.
+
+- Guard: `Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue`
+  entscheidet, ob die Lib schon geladen ist. Bei Rerun aus
+  `install.ps1` heraus ist sie das bereits (Teil B). Bei Standalone-
+  Aufruf (User fuehrt `win-setup-core.ps1` direkt aus) wird aus
+  `$scriptDir\lib\config.ps1` nachgeladen.
+- Verhalten identisch: gleiche Log-Zeile bei Fehler
+  (`[INFO] config.json nicht lesbar ...`), gleiche `$config=$null`-
+  Semantik.
+
+### Notes
+
+`win-setup-core.ps1` laeuft mit `$ErrorActionPreference="Continue"` —
+kein Umstellen auf `Stop` in diesem Commit. Das ist Teil E und hat
+eigene Invoke-Native-Wrap-Voraussetzungen. Kein Template-Rebuild
+erzwungen, kein Installer-Struktur-Wechsel. `.update_class` bleibt
+`minor`.
+
 ## [2.0.9] - 2026-04-17
 
 ### Changed — install.ps1 nutzt lib/config.ps1 an post-Clone-Stelle
