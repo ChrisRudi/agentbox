@@ -17,7 +17,7 @@
       "agent": { "working_dir": "src", "entry_point": "main.py" }
     },
     "powershell": {
-      "build": null,
+      "build": { "command": "powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1", "output_dir": "build_out" },
       "deploy": { "target": "", "url": "" },
       "agent": { "working_dir": "src", "entry_point": "main.ps1" }
     },

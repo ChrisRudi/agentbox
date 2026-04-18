@@ -5,6 +5,115 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.5] - 2026-04-18
+
+### Added -- PowerShell-Build-Convention + Default-Demo-Projekt
+
+Bisher hatte der `powershell`-Projekttyp `build: null` in
+`type_defaults.json` und keinen Eintrag in `config.json:build_whitelist`.
+Grund: es gibt keine allgemeingueltige PS-Build-Convention analog zu
+`npm run build` / `make` / `pip install`. Ein neues PS-Projekt konnte
+also keinen Agent-getriggerten Build nutzen, ohne dass der User vorher
+manuell `project.json` editiert + `config.json` um einen Whitelist-
+Eintrag erweitert.
+
+Ab jetzt gilt die agentbox-PS-Convention:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+```
+
+Begruendung der Flags:
+- `-NoProfile` -- reproduzierbar, keine User-Profile-Seiteneffekte.
+- `-ExecutionPolicy Bypass` -- User-Workspace-Skripte sind unsigniert,
+  Default-Policy `RemoteSigned` wuerde sie blocken. Gilt nur fuer
+  diesen einen Invocation, aendert keine globale Policy.
+- `-File build.ps1` -- relativ. Der Runner `cd`t vorher ins
+  `ProjectDir` (`win-task-runner.ps1:231`), daher kein User-/Pfad-
+  Hardcoding noetig.
+
+Neue Default-Convention: jedes PS-Projekt legt ein `build.ps1` im
+Projekt-Root an -- das PowerShell-Aequivalent zu `package.json`-
+`build`-Script / `Makefile`-Target `build`. Whitelist-Match bleibt
+exakt (`win-task-runner.ps1:216`), d.h. die Security-Boundary
+unveraendert.
+
+### Added -- `examples/benchmarks/` als Default-Demo-Projekt
+
+Neuer Unterordner im Repo mit einem kompletten, lauffaehigen Beispiel-
+Projekt (`project.json`, `build.ps1`, `README.md`, `CLAUDE.md`). Zeigt
+den Build-Task-Runner-Flow End-to-End:
+
+1. Agent in der Sandbox schreibt `_tasks/build_001.tmp` -> rename zu
+   `.json` (atomic, wie in `SYSTEM_META_PROMPT.md` vorgeschrieben).
+2. `win-task-runner.ps1` validiert `project.json:build.command` gegen
+   `build_whitelist`.
+3. Bei Match laeuft `build.ps1` auf dem Windows-Host (nicht in
+   Sandbox) -- daher werden echte NTFS-Disk- und Host-Netz-Zahlen
+   gemessen.
+4. Der Bench-Wrapper `build.ps1` ruft die kanonische
+   `tools/bench.ps1` aus dem parallelen `_control/` auf -- kein
+   Script-Dup, eine Source-of-Truth.
+5. Status landet in `_tasks/status_build.json`, Bench-Ergebnis in
+   `bench-results.txt`.
+
+Das mitgelieferte `CLAUDE.md` primt den Agent beim Session-Start:
+er sieht den genauen `cat > _tasks/build_001.tmp ... && mv`-Dance, die
+erwartete Poll-Schleife auf `status_build.json` und warum die
+Execution auf dem Host passiert (Disk-/Netz-Realismus). Das ist das
+erste Projekt in agentbox, das den Build-Flow bewusst selbst-
+dokumentierend zeigt.
+
+### Changed -- `type_defaults.json` PS-Default
+
+`powershell`-Projekte bekommen beim Auto-Detect jetzt:
+```json
+"build": { "command": "powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1",
+           "output_dir": "build_out" }
+```
+statt `null`. Backward-kompatibel: `wsl-ai-start.sh:821-876` generiert
+`project.json` nur wenn sie fehlt. Bestehende PS-Projekte mit
+`build: null` bleiben unveraendert.
+
+### Fixed -- `SYSTEM_META_PROMPT.md` Internet-Beschreibung + Build-Flow
+
+Das Agent-Contract-Dokument behauptete bis 2.1.4 "Kein Internet-
+Zugriff. Du kannst keine Webseiten oeffnen, keine Dokumentation
+herunterladen, kein curl/wget." -- das ist sachlich **falsch**
+(und widerspricht dem Security-Model im README). Die Sandbox-Firewall
+(`wsl-sandbox-init.sh:591-630`) erlaubt TCP/443, TCP/80, DNS raus zu
+oeffentlichen IPs; nur private Netze + Non-HTTP-Ports sind geblockt.
+Folge: Agents verzichteten unnoetig auf Web-Recherche / Doc-Lookups /
+`git clone`, was real verfuegbar war.
+
+Neu in `SYSTEM_META_PROMPT.md`:
+- Klare **Netzwerk-Sektion** mit genauer Allow/Deny-Liste (443, 80,
+  DNS vs. RFC1918 + Multicast + Nicht-HTTP-Ports).
+- Explizites **Build-Flow-Diagramm** (Sandbox-Seite vs. Host-Seite)
+  mit den 9 Schritten vom `_tasks/*.tmp`-Schreiben bis zum Poll auf
+  `status_build.json`. Der Kernpunkt "Build laeuft auf dem Host,
+  nicht in der Sandbox" ist jetzt fett, weil das Agents sonst nicht
+  erwarten (und sich wundern, warum Tools in der Sandbox fehlen).
+- Beispiel-**Poll-Schleife** fuer `status_build.json` (bash while-
+  grep-sleep), damit Agents nicht tight-pollen oder Timeouts ohne
+  Logik implementieren.
+- **Haeufige Fehler**-Tabelle: "nicht in Whitelist" vs. "Exit-Code" --
+  erstes ist ein Infrastruktur-Problem (User muss config.json
+  erweitern), zweites ist Projekt-Code-Problem.
+- Typische Whitelist-Eintraege als Hinweis, inklusive des neuen
+  PS-Default-Eintrags.
+
+### Notes
+
+- Kein Template-Rebuild noetig: `Get-AgentboxConfigHash` in
+  `win-setup-core.ps1` hasht weder `build_whitelist` noch
+  `type_defaults.json` noch `SYSTEM_META_PROMPT.md`.
+  `.update_class = minor`.
+- Security-Boundary unveraendert: exact-match-Whitelist, User-Rechte,
+  `project.json` bleibt read-only fuer den Agent. Die Internet-
+  Aenderung im Contract ist nur eine **Dokumentations-Korrektur** --
+  die Firewall-Regeln selbst sind seit 1.x identisch offen.
+
 ## [2.1.4] - 2026-04-18
 
 ### Added -- `tools/bench.{ps1,sh}` Versions-Stempel im Output

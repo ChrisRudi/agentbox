@@ -27,28 +27,73 @@ persistiert (auch nach Sandbox-Loeschung).
 Dein Projekt ist beschrieben in `project.json` im Projektroot.
 Lies diese Datei zu Beginn, um den Projekttyp und die Konfiguration zu verstehen.
 
-## Was du NICHT hast
+## Netzwerk — was du erreichst und was nicht
 
-- **Kein Internet-Zugriff.** Du kannst keine Webseiten oeffnen, keine Dokumentation
-  herunterladen, kein `curl`/`wget` auf beliebige URLs ausfuehren. Deine Netzwerk-
-  verbindung ist auf deine eigene AI-API und Paketquellen (npm/pip) beschraenkt.
-  Verlasse dich auf dein eingebautes Wissen statt auf Web-Recherche.
-- Du hast keinen Zugriff auf andere Projekte.
-- Du hast keinen Zugriff auf das Hostsystem.
-- Du hast keinen Zugriff auf das Internet (ausser fuer deine eigene API).
-- Du hast kein `sudo` und keine Administratorrechte.
-- Du kannst keine Symlinks nach ausserhalb erstellen.
+Du hast **Internet-Zugriff**, aber nicht unbeschraenkt. Die Firewall
+der Sandbox (iptables default-deny OUTPUT) erlaubt nur:
+
+- **TCP/443 (HTTPS)** und **TCP/80 (HTTP)** raus zu **oeffentlichen
+  IPs** — `curl`, `wget`, `git clone https://…`, `npm install`,
+  `pip install`, Dokumentations-Seiten, GitHub, Registry-APIs
+  funktionieren also.
+- **DNS (UDP/53 + TCP/53)** fuer Namensaufloesung.
+
+Geblockt (per `iptables -j DROP`):
+
+- **Private Netze**: `10/8`, `172.16/12`, `192.168/16`, `169.254/16`,
+  `127/8`, Multicast `224/4`, explizit die Host-Gateway-IP. Du
+  erreichst also weder den Windows-Host noch andere LAN-Geraete,
+  keinen Cloud-Metadata-Endpoint, keine anderen WSL-Distros.
+- **Alle Ports ausser 80/443/53.** SSH (22), SMTP (25), IRC,
+  IMAP etc. sind zu.
+- **IPv6** gleich behandelt (ULA `fc00::/7`, link-local `fe80::/10`,
+  loopback blockiert; Public-IPv6 ueber 443/80/53 offen).
+
+Woran du's merkst: `curl -sS https://api.github.com` = OK.
+`curl http://192.168.1.1` = timeout/DROP. `ssh foo@host` = timeout.
+
+Was du trotzdem NICHT kannst:
+
+- Zugriff auf **andere Projekte** am Host.
+- Zugriff auf das **Host-Dateisystem** (kein `/mnt/c`).
+- `sudo` oder Adminrechte.
+- Symlinks nach ausserhalb der Bind-Mounts anlegen.
 
 ## Build und Deploy
 
-Du kannst Build oder Deploy nicht selbst ausfuehren.
-Es sind keine Build-Tools in deiner Umgebung installiert.
+Du kannst Build/Deploy **nicht selbst** ausfuehren — in der Sandbox
+sind bewusst keine Build-Tools (node, python, dotnet, make, pwsh …)
+installiert. Das ist Security-Design: dein einziger Weg zu Host-
+Execution ist der Task-Runner mit Whitelist-Validierung.
 
-Stattdessen: Schreibe eine JSON-Datei nach `/workspace/_tasks/`.
+### Wie der Build-Flow laeuft (End-to-End)
 
-### So triggerst du einen Build oder Deploy:
+```
+  [du in der Sandbox]                   [Windows-Host, ausserhalb Sandbox]
+  ───────────────────────               ──────────────────────────────────
+  1. schreibe _tasks/build_001.tmp
+  2. mv .tmp → .json                    3. win-task-runner.ps1 sieht .json
+                                        4. liest project.json:build.command
+                                        5. prueft gegen build_whitelist
+                                           (exakter String-Match in config.json)
+                                        6. cmd.exe /c cd /d <ProjectDir>
+                                              && <build.command>
+                                           ↑ laeuft auf dem Host, nicht hier!
+                                        7. schreibt _tasks/status_build.json
+  8. pollst status_build.json
+  9. liest Ergebnis + evtl. Output-
+     Dateien im Projekt-Root
+```
 
-1. Erstelle die Task-Datei zuerst als `.tmp` (wichtig!):
+Kernpunkt: **Der Build laeuft auf dem Host, nicht in der Sandbox.**
+Der Runner `cd`t vorher ins Projekt-Verzeichnis, daher kannst du in
+`build.command` relative Pfade verwenden (`build.ps1`, `package.json`-
+Scripts, etc.).
+
+### So triggerst du einen Build (kanonisch)
+
+1. Erstelle die Task-Datei zuerst als `.tmp` (der Runner ueberwacht
+   nur `.json` — der Rename sorgt fuer atomar vollstaendige Datei):
 
 ```bash
 cat > /workspace/_tasks/build_001.tmp << 'EOF'
@@ -60,57 +105,70 @@ cat > /workspace/_tasks/build_001.tmp << 'EOF'
 EOF
 ```
 
-2. Benenne sie dann zu `.json` um:
+2. Rename zu `.json`:
 
 ```bash
 mv /workspace/_tasks/build_001.tmp /workspace/_tasks/build_001.json
 ```
 
-**Warum erst `.tmp`?** Der externe Runner ueberwacht nur `.json`-Dateien.
-Das Umbenennen stellt sicher, dass die Datei vollstaendig geschrieben ist,
-bevor der Runner sie liest.
+3. Poll das Status-File, bis fertig:
+
+```bash
+while [ ! -f /workspace/_tasks/status_build.json ] || \
+      grep -q '"status": "running"' /workspace/_tasks/status_build.json; do
+    sleep 1
+done
+cat /workspace/_tasks/status_build.json
+```
 
 ### Erlaubte Aktionen
 
-- `"action": "build"` — Fuehrt den in `project.json` definierten Build aus
-- `"action": "deploy"` — Fuehrt das in `project.json` definierte Deploy aus
+- `"action": "build"` — fuehrt `project.json:build.command` aus.
+  Command muss in `config.json:build_whitelist` stehen (exakter
+  Match). Typische Whitelist-Eintraege: `npm run build`, `npm install`,
+  `pip install -r requirements.txt`, `make`, `dotnet build`,
+  `powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1`.
+- `"action": "deploy"` — fuehrt `project.json:deploy.target` aus.
+  Target muss in `config.json:deploy_whitelist` stehen (`local` |
+  `github`).
 
-Andere Aktionen werden abgelehnt.
+Andere Aktionen werden abgelehnt. Du kannst `project.json` nicht
+editieren (read-only fuer dich) — der gueltige Build-Command wurde
+vom Host-User oder per Auto-Detect gesetzt.
 
 ### Ergebnis pruefen
 
-Ein externer Runner auf dem Windows-Host wird die Aktion ausfuehren.
-Das Ergebnis findest du in:
+- `/workspace/_tasks/status_build.json` (nach build)
+- `/workspace/_tasks/status_deploy.json` (nach deploy)
 
-- `/workspace/_tasks/status_build.json` (nach einem Build)
-- `/workspace/_tasks/status_deploy.json` (nach einem Deploy)
-
-Moegliche Status-Werte:
-
-| Status    | Bedeutung                              |
-|-----------|----------------------------------------|
-| `running` | Aktion wird gerade ausgefuehrt         |
-| `done`    | Aktion erfolgreich abgeschlossen       |
+| Status    | Bedeutung                               |
+|-----------|-----------------------------------------|
+| `running` | Aktion wird gerade ausgefuehrt          |
+| `done`    | Aktion erfolgreich abgeschlossen        |
 | `failed`  | Aktion fehlgeschlagen (mit Fehlerdetail)|
 
-Beispiel einer Status-Datei:
+Beispiel (Erfolg):
 
 ```json
-{
-  "status": "done",
-  "timestamp": "2025-01-15T14:30:05"
-}
+{ "status": "done", "timestamp": "2025-01-15T14:30:05" }
 ```
 
-Bei Fehler:
+Beispiel (Fehler):
 
 ```json
 {
   "status": "failed",
   "timestamp": "2025-01-15T14:30:05",
-  "error": "npm ERR! missing script: build"
+  "error": "Build-Kommando nicht in Whitelist: '...'"
 }
 ```
+
+Haeufige Fehler:
+- `"Build-Kommando nicht in Whitelist"`: `project.json:build.command`
+  matched keinen Whitelist-Eintrag character-fuer-character. Du
+  kannst das nicht selbst fixen — User muss `config.json` erweitern.
+- `"Build fehlgeschlagen mit Exit-Code N"`: das Build-Script selbst
+  hat einen Fehler. Debug via Projekt-Code, nicht via Infrastruktur.
 
 ## Session-Kontinuitaet mit CLAUDE.md
 

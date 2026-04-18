@@ -1,0 +1,11 @@
+{
+  "name": "benchmarks",
+  "type": "powershell",
+  "version": "1.0.0",
+  "build": {
+    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1",
+    "output_dir": "build_out"
+  },
+  "deploy": { "target": "", "url": "" },
+  "agent": { "working_dir": ".", "entry_point": "build.ps1" }
+}
