@@ -5,6 +5,57 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3] - 2026-04-18
+
+### Fixed -- PS 5.1 Parse-Error in `win-task-runner.ps1:233` (Invoke-BuildAction)
+
+Diagnose des Users nach 2.2.2-Rerun: Scheduled Task-State = "Ready",
+keine Events im Task-Scheduler-Log, kein PS-Prozess. Manueller Start
+von `win-task-runner.ps1 -once` zeigte die Ursache direkt:
+
+```
+Das Token "&&" ist in dieser Version kein gueltiges Anweisungstrennzeichen.
+   -ArgumentList "/c", "cd /d `"$ProjectDir`" && $buildCmd" `
+                                              ~~
+```
+
+PS 5.1 bricht an dem Backtick-escapten String aus und parset `&&` als
+Operator. Das ist ein pre-existing Bug -- schon vor 2.2.0 da, aber nie
+getriggert weil der alte `-once`-Task offenbar nie wirklich lief (oder
+lief nur wenn PS 7 als Default aktiv war). Mit dem neuen Watch-Daemon
+lud PS 5.1 den Script-Inhalt beim Task-Start, scheiterte am Parse, und
+beendete sich sofort -- daher Task immer in "Ready"-State, keine Events
+im Task-Scheduler-Log (Task startete nie erfolgreich).
+
+Fix in `Invoke-BuildAction`:
+
+```powershell
+# vorher
+Start-Process -FilePath "cmd.exe" `
+    -ArgumentList "/c", "cd /d `"$ProjectDir`" && $buildCmd" `
+    -Wait -NoNewWindow -PassThru
+
+# nachher
+Start-Process -FilePath "cmd.exe" `
+    -ArgumentList "/c", $buildCmd `
+    -WorkingDirectory $ProjectDir `
+    -Wait -NoNewWindow -PassThru
+```
+
+Kein `&&`-Chain mehr. Start-Process setzt die CWD ueber das
+`-WorkingDirectory`-Parameter, cmd.exe /c bekommt nur den reinen
+Build-Command. Kein Backtick-Escape-Grenzfall mehr.
+
+### Migration
+
+- `.update_class` bleibt **major**. Installer-Rerun ist Pflicht.
+- Nach Rerun: Daemon startet erfolgreich (Script ist parsbar), Task
+  geht auf "Running"-State. Initial-Sweep `Process-AllTasks` verarbeitet
+  **alle angesammelten Task-Files** aus den 2.2.0/2.2.1/2.2.2-Versuchen.
+  User bekommt beim ersten Daemon-Start einen Schwall HTML-Browser-
+  Fenster (eins pro queued Task-File) -- danach ist der Queue leer und
+  [3] Benchmark laeuft live.
+
 ## [2.2.2] - 2026-04-18
 
 ### Fixed -- Seed-Reihenfolge: demo-benchmark VOR Task-Runner-Registrierung

@@ -229,8 +229,17 @@ function Invoke-BuildAction {
 
     Write-Log "Fuehre Build aus: $buildCmd" "INFO"
 
+    # PS 5.1 parset den vorher verwendeten Ausdruck
+    #   "cd /d `"$ProjectDir`" && $buildCmd"
+    # nicht korrekt -- trotz Backtick-Escape bricht der Parser am `&&`
+    # aus dem String aus und meldet 'Das Token "&&" ist kein gueltiges
+    # Anweisungstrennzeichen'. Fix: kein cmd-chain mit && bauen, stattdessen
+    # Start-Process mit -WorkingDirectory aufrufen. cmd.exe /c bekommt dann
+    # nur den reinen Build-Command, die CWD wird vom Start-Process-Cmdlet
+    # gesetzt. Keine Backtick-Escapes, keine && im PS-Source.
     $process = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c", "cd /d `"$ProjectDir`" && $buildCmd" `
+        -ArgumentList "/c", $buildCmd `
+        -WorkingDirectory $ProjectDir `
         -Wait -NoNewWindow -PassThru
 
     if ($process.ExitCode -ne 0) {
