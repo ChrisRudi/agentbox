@@ -5,6 +5,43 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.6] - 2026-04-18
+
+### Added -- examples/benchmarks/ an bench v2.2.0 angebunden
+
+Upstream (commit 7207f3f auf main) hat die Bench-Scripts auf v2.2.0
+erweitert: bench.ps1 und bench.sh messen jetzt 5 statt 3 Workloads
+(neu: CPU SHA256 ueber 500 MB + Process-spawn 500 x), schreiben
+JSONL-Zeilen an bench-results.jsonl statt Text-Bloecke in
+bench-results.txt, und bench.ps1 generiert nach der Messung ein
+statisches index.html mit Durchschnitten ueber alle bisherigen Host-
+und Sandbox-Runs + Traffic-Light-Wirkungsgrad-Tabelle (gruen >= 100 %,
+gelb >= 50 %, rot).
+
+Der Demo-Wrapper examples/benchmarks/build.ps1 bleibt unveraendert in
+der Logik (`& $controlBench` -- delegiert an die kanonische
+tools/bench.ps1), funktioniert also automatisch mit v2.2.0 mit. Doku
+nachgezogen:
+
+- build.ps1: Kommentar erweitert um v2.2.0-Erklaerung (5 Workloads,
+  JSONL, index.html-Generation, Pair-Script-Handshake via JSONL).
+- README.md: Output-Dateien auf bench-results.jsonl + index.html
+  aktualisiert; neuer Abschnitt "Fuer vollstaendigen Vergleich
+  vorher bench.sh in Sandbox laufen lassen".
+- CLAUDE.md: Agent bekommt jetzt die exakten Schritte fuer den
+  optionalen Sandbox-Pre-Run (bash /workspace/_control/tools/bench.sh)
+  und weiss, dass index.html nach dem Build frisch generiert wird.
+  Plus Troubleshooting-Zeile fuer SNI-Filter-Faelle, bei denen alle
+  drei Default-Bench-URLs blockiert sein koennten.
+
+### Notes
+
+- Kein Template-Rebuild, keine Config-Hash-Aenderung, reine
+  Doc-/Wrapper-Nachfuehrung. `.update_class = minor`.
+- tools/bench.ps1 + bench.sh + index.html in diesem Release nicht
+  aus diesem Branch geaendert -- kommt aus Upstream-Commit 7207f3f
+  auf main.
+
 ## [2.1.5] - 2026-04-18
 
 ### Added -- PowerShell-Build-Convention + Default-Demo-Projekt
