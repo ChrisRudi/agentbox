@@ -126,11 +126,33 @@ Sub-Steps verschoben.
   also kein `Invoke-Native`-Wrap noetig. Urspruengliche Planung im
   Ur-Plan war eine Fehldiagnose.
 
-### Teil E (offen, sensibel) — `$ErrorActionPreference='Stop'`
+### Teil E 🚫 — bewusst nicht gemacht
 
-- [ ] **3.E.1** `win-setup-core.ps1:7` + alle Native-Calls dort in
-  `Invoke-Native` wrappen. **Nur nach** Teil C gruen ist. Hoechstes
-  Regressions-Risiko der Etappe.
+`$ErrorActionPreference='Stop'` in `win-setup-core.ps1` + breiter
+`Invoke-Native`-Wrap aller nativen Calls.
+
+**Begruendung skip:**
+
+- Survey zeigt 19 native `& wsl.exe`-Calls in `win-setup-core.ps1`,
+  einige an den kritischsten Stellen des gesamten Lifecycles
+  (`--import`, `--export --vhd`, `--export`, `--unregister`).
+- Der Umbau erfordert fuer jede Stelle: Wrap in `Invoke-Native { ... }`,
+  Erhalt der Output-Capture-Kompatibilitaet (Assignments, Pipes in
+  ForEach-Object), Erhalt der `$LASTEXITCODE`-Lesbarkeit. Plus einen
+  vollstaendigen Template-Build-Regressions-Test auf Windows-Host.
+- **Originale Motivation (Befund E: "latenter Crash in
+  win-task-runner.ps1 Z.252-265") hat sich in Teil D als
+  Fehldiagnose entpuppt.** Der Block nutzt `Start-Process -PassThru`,
+  nicht direktes `&`, also kein Stderr-Routing durch den PS-Error-
+  Stream und kein Crash-Risiko unter `"Stop"`.
+- Damit ist die Inkonsistenz zwischen den drei Scripts
+  (`Continue` in `win-setup-core.ps1`, `Stop` in den beiden anderen)
+  ein **Smell**, kein **Bug**. Aktueller Zustand funktioniert seit
+  mehreren Releases problemlos.
+- Kosten/Nutzen-Verhaeltnis: hoch/null.
+
+Entscheidung dokumentiert statt umgesetzt. Wenn zukuenftig ein echter
+Bug auftaucht, der `Stop` erzwingt, greift man Teil E gezielt auf.
 
 **Freigabe fuer naechste Teil:** nach User-Smoke-Test des aktuellen
 Teils auf Windows-Host (`install.ps1` clean + `install.ps1` update).
@@ -227,5 +249,5 @@ Ziel: Befund F, H. Niedrige Prio. Bewusst in Teil 1 + Teil 2 gesplittet.
 | 2026-04-17 | Etappe 3 Teil B (install.ps1 post-Clone) | 2.0.9 | done (Host-Test OK) |
 | 2026-04-17 | Etappe 3 Teil C (win-setup-core.ps1) | 2.0.10 | done (Smoke-Test User offen) |
 | 2026-04-17 | Etappe 3 Teil D (win-task-runner.ps1) | 2.0.11 | done (Smoke-Test User offen) |
-| — | Etappe 3 Teil E (Stop-Mode + Invoke-Native-Wrap) | — | offen (hoch-risk) |
+| 2026-04-17 | Etappe 3 Teil E (Stop-Mode) | 2.0.12 (doku) | **skipped** — Fehldiagnose, hoher Kost/null Nutzen |
 | — | Etappe 5 Teil 3 (Stderr-Split) | — | offen (Follow-up) |

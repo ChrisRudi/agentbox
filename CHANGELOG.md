@@ -5,6 +5,50 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.12] - 2026-04-17
+
+### Decided — Etappe 3 Teil E wird nicht umgesetzt
+
+Dokumentation-only Commit. `refactor.md` haelt jetzt fest, dass der
+Umstieg von `$ErrorActionPreference="Continue"` auf `"Stop"` in
+`win-setup-core.ps1` **bewusst nicht gemacht** wird.
+
+Gruende:
+- Survey zeigt 19 native `wsl.exe`-Calls im Template-Builder, viele
+  an kritischen Phasen (`--import`, `--export --vhd`, `--export`,
+  `--unregister`). Umbau auf `Invoke-Native`-Wrap haette fuer jeden
+  Call Kompatibilitaet mit bestehenden Output-Captures + Pipes
+  sicherstellen muessen — plus vollstaendigen Template-Build-
+  Regressions-Test auf Windows-Host.
+- Die **originale Motivation** aus dem Architektur-Review (Befund E:
+  angeblicher „latenter Crash" in `win-task-runner.ps1:252-265`
+  unter `"Stop"` ohne Wrap) hat sich in Etappe 3 Teil D (2.0.11)
+  als **Fehldiagnose** entpuppt. Der Block nutzt
+  `Start-Process -PassThru` statt direkter `&`-Invocation; Stderr
+  wird nicht durch den PS-Error-Stream geroutet, `ExitCode` kommt
+  aus dem Process-Objekt. Kein Crash-Risiko.
+- Ohne echten Crash-Pfad ist die Inkonsistenz zwischen den drei
+  Scripts ein Smell, kein Bug. Aktueller Zustand (Continue hier,
+  Stop in den anderen beiden) laeuft seit mehreren Releases
+  problemlos.
+- Kosten/Nutzen: hoch/null.
+
+Wenn zukuenftig ein echter Bug auftaucht, der `"Stop"` in
+`win-setup-core.ps1` erzwingt, wird Teil E gezielt aufgegriffen.
+
+### Status — Architektur-Refactor aus 2.0.2ff
+
+- Etappe 1 (Drift-Fixes): ✅ 2.0.2–2.0.3
+- Etappe 2 (--list-sessions-Regression): ✅ 2.0.3
+- Etappe 3 (lib/config.ps1, Teil A–D): ✅ 2.0.7–2.0.11; Teil E skipped
+- Etappe 4 (Agent-Liste aus Config): ✅ 2.0.4 + Hotfix 2.0.8
+- Etappe 5 Teil 1+2 (lib/log.sh + Config-Topologie-Doku + sandbox-
+  init-[OK]): ✅ 2.0.5–2.0.6; Teil 3 (Stderr-Split) bleibt Follow-up.
+
+Der Umbrella-Refactor aus dem Session-Start ist damit funktional
+abgeschlossen. Eine offene Leftover-Position (5 Teil 3) dokumentiert,
+keine offene Risk-Position mehr.
+
 ## [2.0.11] - 2026-04-17
 
 ### Changed — win-task-runner.ps1 nutzt lib/config.ps1
