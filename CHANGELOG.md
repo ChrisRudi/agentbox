@@ -5,6 +5,62 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.11] - 2026-04-18
+
+### Fixed -- win-task-runner.ps1: Parser-Landmine im Kommentarblock der Invoke-BuildAction
+
+Task-Runner starb seit 2.2.3 **konsistent mit Exit-Code 1 beim Parser-
+Tokenize**, nicht im aktiven Code. Symptom beim User: blauer PowerShell-
+Flash beim Trigger, aber keinerlei EventLog-Eintraege 1001/1002/1003,
+pending Tasks stapeln sich in `_tasks/`, `_control/history/` bleibt
+leer. diagnose.ps1 (2.2.10) hat das in 10 Sekunden lokalisiert.
+
+**Root Cause:** Die in 2.2.3 hinzugefuegten Erklaer-Kommentare ueber
+dem Start-Process-Aufruf enthielten den Bug-Trigger, den sie dokumen-
+tieren sollten:
+
+```
+# PS 5.1 parset den vorher verwendeten Ausdruck
+#   "cd /d <backtick>"$ProjectDir<backtick>" && $buildCmd"  <-- hier
+# nicht korrekt -- trotz Backtick-Escape bricht der Parser am <backtick>&&<backtick>
+```
+
+Die `&&` zwischen Backticks sind eigentlich in einem `#`-Kommentar und
+sollten vom Parser ignoriert werden. PS 5.1 hat aber einen Tokenizer-
+Bug mit diesem speziellen Muster: Backticks gelten als Line-Continuation,
+der Comment-Scope wird dadurch unklar gescopet, und das darin eingebet-
+tete `&&` wird als Token `Das Token "&&" ist kein gueltiges
+Anweisungstrennzeichen` geflagt. Der Tokenizer kaskadiert danach in
+alle folgenden Zeilen (Function-Definitionen, switch-case, Closing-
+Braces), die Datei wird als Ganzes als nicht parsebar verworfen, Exit-
+Code 1 ohne jede Ausgabe.
+
+Der 2.2.3-Fix damals hatte nur den aktiven Code fixgestellt (von cmd-
+chain auf Start-Process umgestellt), die Erklaer-Kommentare darueber
+aber unveraendert gelassen. Genau die Zeilen, die "so macht man es
+NICHT" dokumentieren, waren selber der Bug-Trigger. Klassischer
+schlafender Landmine ueber 8 Releases, weil auf Entwicklerseite (und
+in der Codex-CI-Umgebung) der File mit UTF-8 BOM oder in PS 7 geparst
+wird, wo der Bug nicht greift.
+
+**Fix:** Kommentarblock so umformuliert, dass weder `&&` noch
+Backtick-Escapes enthalten sind. Text paraphrasiert auf rein
+beschreibende Sprache ("cmd-Operator-Zeichen", "die beiden Ampersands"),
+historische Begruendung bleibt erhalten.
+
+**Deployment-Pfad zum User:** reines Script-Update, kein Template-
+Rebuild noetig, kein `install.ps1`-Admin-Rerun noetig. Der naechste
+agentbox-Session-Start zieht das Update via Auto-Check in
+`wsl-ai-start.sh`. Alternativ manuell:
+
+```
+irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
+```
+
+Nach dem Update: pending Tasks in `demo-benchmark/_tasks/` werden beim
+naechsten Trigger oder AtLogon-Sweep abgearbeitet. `.update_class`
+bleibt `minor`.
+
 ## [2.2.10] - 2026-04-18
 
 ### Added -- diagnose.ps1: Host-Side Diagnose fuer den Task-Runner-Flow
