@@ -5,6 +5,33 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.18] - 2026-04-18
+
+### Changed — Post-Install-Timer als aufgelistetes Menue [1/2/3]
+
+User-Report (Forts.): "v tut nichts" — Ursache war UX, nicht Code. Die
+inline-Prompt `[J/n/v] (10s Timeout = ja, v = VS Code + Filewatch)` war
+nicht als auswaehlbares Menue erkennbar. Der User hat auf eine Auflistung
+gewartet und in der Zwischenzeit die 10s Timeout abgelaufen.
+
+Jetzt identisches Multi-Line-Format wie der fruehere Launcher-Prompt
+(Z. 1025–1063):
+
+```
+Jetzt agentbox starten?
+  [1] Ja                 — starten mit aktuellem Launcher (Default)
+  [2] Nein               — manuell via Desktop-Shortcut starten
+  [3] VS Code + Filewatch — starten UND neuen Default setzen
+  Auswahl [1/2/3, 10s Timeout = 1]  [2.0.18]:
+```
+
+Ziffern `1`/`2`/`3` als Primaer-Eingabe (konsistent mit dem Launcher-
+Prompt), alte Buchstaben `J`/`N`/`V` weiter akzeptiert fuer
+Rueckwaerts-Kompat mit Muscle-Memory. Versionsmarke `[2.0.18]` bleibt
+am Ende der Auswahlzeile. Beim Timeout wird `1  (Timeout)` in DarkGray
+echoed, damit sichtbar ist dass der Default ausgeloest wurde (statt nur
+stummer Leerzeile).
+
 ## [2.0.17] - 2026-04-18
 
 ### Fixed — Post-Install-Timer: Key-Input robuster + Versionsmarke

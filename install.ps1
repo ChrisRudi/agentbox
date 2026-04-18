@@ -1409,23 +1409,27 @@ Write-Host "  - Oder Konsole: wsl -d agentbox-host" -ForegroundColor White
 Write-Host ""
 
 # --- Direkt starten? ---
-# Prompt mit Versionsmarke — falls der User glaubt die v-Auswahl waere
-# kaputt, kann er an [2.0.17] sofort erkennen ob er ueberhaupt die
-# aktuelle install.ps1 laufen laesst (oder ne alte via Cache/Local-File).
-Write-Host "Jetzt agentbox starten? [J/n/v] (10s Timeout = ja, v = VS Code + Filewatch, wird neuer Default) [2.0.17]" -ForegroundColor Cyan -NoNewline
+# Menuestil identisch zum frueheren Launcher-Prompt (Z. 1025–1063),
+# damit der User die Optionen als Liste sieht statt inline [J/n/v].
+# Versionsmarke [2.0.18] am Ende der Auswahlzeile — falls "v tut
+# nichts" erneut gemeldet wird, ist an der Marke sofort ersichtlich
+# ob die aktuelle install.ps1 laeuft oder ein alter Cache.
+Write-Host ""
+Write-Host "Jetzt agentbox starten?" -ForegroundColor Cyan
+Write-Host "  [1] Ja                 — starten mit aktuellem Launcher (Default)" -ForegroundColor White
+Write-Host "  [2] Nein               — manuell via Desktop-Shortcut starten" -ForegroundColor White
+Write-Host "  [3] VS Code + Filewatch — starten UND neuen Default setzen" -ForegroundColor White
+Write-Host "  Auswahl [1/2/3, 10s Timeout = 1]  [2.0.18]: " -ForegroundColor Cyan -NoNewline
+
 $startNow = $true
 $forceVsCode = $false
 $timeoutSec = 10
 $startTime = Get-Date
-$keySeen = $false
 
-# Zwei-Wege-Input: primaer $Host.UI.RawUI (PS-nativ, funktioniert auch
-# wenn die Console-Klasse vom Host anders exposed wird — z.B. bei
-# `irm ... | iex` oder in manchen Terminal-Hosts), Fallback auf
-# [Console]. Wir pollen beide pro Iteration; was zuerst einen Key
-# liefert, gewinnt. Nach dem Key wird der gedrueckte Buchstabe SOFORT
-# farbig echoed, damit der User visuell bestaetigt bekommt dass die
-# Taste ankam — das war der entscheidende Debug-Gap in 2.0.15/2.0.16.
+# Zwei-Wege-Input: primaer $Host.UI.RawUI (PS-nativ), Fallback auf
+# [Console]. Pollen pro Iteration; was zuerst einen Key liefert
+# gewinnt. Der gedrueckte Buchstabe/Ziffer wird nach dem break
+# farbig echoed — visuelles Feedback dass die Taste ankam.
 while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
     $char = $null
     $isEnter = $false
@@ -1434,44 +1438,44 @@ while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
             $k = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             $char = "$($k.Character)"
             if ($k.VirtualKeyCode -eq 13) { $isEnter = $true }
-            $keySeen = $true
         }
     } catch { }
-    if (-not $keySeen) {
+    if (-not $char -and -not $isEnter) {
         try {
             if ([Console]::KeyAvailable) {
                 $ck = [Console]::ReadKey($true)
                 $char = "$($ck.KeyChar)"
                 if ($ck.Key -eq 'Enter') { $isEnter = $true }
-                $keySeen = $true
             }
         } catch { }
     }
     if ($char -or $isEnter) {
         $uc = "$char".ToUpperInvariant()
-        if ($uc -eq 'N') {
-            Write-Host " n" -ForegroundColor Yellow
+        # Akzeptiere sowohl Ziffern [1/2/3] als auch J/N/V-Buchstaben
+        # (Rueckwaerts-Kompat mit der alten [J/n/v]-Inline-Prompt),
+        # plus Enter = Default.
+        if ($uc -eq '2' -or $uc -eq 'N') {
+            Write-Host "2" -ForegroundColor Yellow
             $startNow = $false
             break
         }
-        if ($uc -eq 'V') {
-            Write-Host " v  ← VS Code + Filewatch" -ForegroundColor Green
+        if ($uc -eq '3' -or $uc -eq 'V') {
+            Write-Host "3  (VS Code + Filewatch)" -ForegroundColor Green
             $forceVsCode = $true
             break
         }
-        if ($isEnter -or $uc -eq 'J' -or $uc -eq 'Y') {
-            Write-Host " j" -ForegroundColor Green
+        if ($isEnter -or $uc -eq '1' -or $uc -eq 'J' -or $uc -eq 'Y') {
+            Write-Host "1" -ForegroundColor Green
             break
         }
-        # Unbekannte Taste — Debug-Hint anzeigen, Loop weiterlaufen
-        # lassen damit der User noch drueckt was er wirklich wollte.
-        Write-Host " [?=$char ignoriert]" -ForegroundColor DarkGray -NoNewline
-        $keySeen = $false
+        # Unbekannte Taste — Debug-Hint, Loop weiterlaufen lassen.
+        Write-Host "[?=$char] " -ForegroundColor DarkGray -NoNewline
     }
     Start-Sleep -Milliseconds 100
 }
-if (-not $forceVsCode -and $startNow) {
-    Write-Host ""
+if ((((Get-Date) - $startTime).TotalSeconds -ge $timeoutSec)) {
+    # Timeout: kein Echo bisher — Default-"1" anzeigen fuer saubere Zeile.
+    Write-Host "1  (Timeout)" -ForegroundColor DarkGray
 }
 
 if ($startNow) {
