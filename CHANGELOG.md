@@ -5,6 +5,37 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.2] - 2026-04-18
+
+### Fixed — `tools/bench.{ps1,sh}`: robuster bei SNI-Filter + Progress
+
+User-Report vom Host-Run: `speed.cloudflare.com` blockiert (vermutlich
+SNI-Filter-Subdomain-unscharf), `curl.exe -s` hat den Fehler still
+geschluckt → `0 MB/s` ohne Hinweis. Small-Files-Test schien zu
+haengen, weil kein Progress-Indikator.
+
+Aenderungen beide Scripts symmetrisch:
+
+- **`BENCH_URL` / `$env:BENCH_URL` Override** fuer den Download-Endpoint.
+- **Fallback-Kette** wenn kein Override: Cloudflare → npm-Registry →
+  OVH (100 MB). Erstes funktionierendes Ziel gewinnt, ~80 MB reichen
+  auch fuer ne stabile MB/s-Messung wenn die 500-MB-Targets alle
+  blockiert sind.
+- **Verbose Curl-Output** mit HTTP-Code + Size-Downloaded + Exit-Code
+  pro Versuch. Bei Fehlschlag sichtbarer `[FAIL]`-Tag mit Grund.
+- **Progress-Indikator bei small-files**: alle 1000 Files wird der
+  aktuelle Durchsatz in DarkGray ausgegeben. Unter Windows-Defender-
+  Real-Time-Scan dauert der Test teils 30+ Sekunden — mit Progress
+  klar dass er laeuft.
+- **TEMP-Drive-Info im Header** (nur PS1): manche Setups haben
+  `D:\Temp` oder ein externes Drive, das erklaert langsame Zahlen.
+- **`net_url=` im Summary-Block**: welcher Endpoint erfolgreich war,
+  wichtig fuer die Fairness-Debatte im README.
+
+Hinweis im Script-Header neu: Windows-Defender-Real-Time-Scan kann
+die Disk-Zahlen um 50 %+ druecken — fuer "saubere" Messung kurz
+Defender-Exclusion auf `$env:TEMP` setzen.
+
 ## [2.1.1] - 2026-04-18
 
 ### Added — `tools/bench.{ps1,sh}` Host/Sandbox-Perf-Vergleich
