@@ -5,6 +5,97 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-04-18
+
+**Performance + Diagnose Milestone.**
+
+Mit 2.3.0 schliesst sich der Bogen von "agentbox startet Agenten
+sicher" zu "agentbox startet Agenten **schneller als der Host** und
+kann sich bei Stoerungen **selbst diagnostizieren**". Drei Saeulen
+der 2.3-Linie, zusammengefasst aus den Arbeitsstaenden der 2.2.9-2.2.14-
+Serie.
+
+### Highlights
+
+- **Performance als First-Class-Feature.** README.md + docs/README.de.md
+  haben eine dedizierte Performance-Section mit den Wirkungsgrad-Ratios
+  aus dem bundled Demo-Benchmark: **18.7x** Disk sequential write,
+  **17.3x** Process spawn, **9.1x** Small files, 1.9x CPU SHA256, 1.1x
+  Netzwerk. Nur Verhaeltnisse, keine Absolutwerte -- Hardware-agnostisch
+  und alterungsbestaendig. tools/CLAUDE.md haelt den Referenz-Snapshot
+  mit den Absolutwerten als Engineering-Anker fuer Regressions-Checks
+  (siehe 2.2.9).
+
+- **Self-Diagnosing Task-Runner.** Neues Repo-Root-Skript `diagnose.ps1`
+  laeuft die komplette Host-Side-Kette (Scheduled Task -> Event-Source
+  -> config.json Whitelist -> project.json -> demo-benchmark Seed ->
+  _tasks -> history -> EventLog -> bench-Output -> Versions) in einem
+  Durchlauf durch. Farbcodiert [OK]/[WARN]/[FAIL] mit Summary und
+  Exit-Code. Hat prompt einen seit 2.2.3 schlafenden PS-5.1-Parser-Bug
+  aufgedeckt (siehe Fixes, siehe 2.2.10).
+
+- **Convention-over-Configuration fuer PS-Projekte.** `type=powershell`
+  hat jetzt einen Default-Build-Command `powershell -File build.ps1`
+  -- parallel zu `npm run build` (node) und
+  `pip install -r requirements.txt` (python). User legt `build.ps1`
+  im Projekt-Root ab, Task-Runner feuert die beim Trigger, kein
+  project.json-Handtuning mehr noetig (siehe 2.2.14).
+
+### Fixes (schlafende Parser-Landmines abgeraeumt)
+
+- **2.2.11:** Kommentarblock in `win-task-runner.ps1:Invoke-BuildAction`
+  enthielt Ampersand-Tokens zwischen Backticks in einem `#`-Kommentar.
+  PS 5.1 Tokenizer verwirrte sich, Datei wurde als ganzes nicht-
+  parsebar verworfen, Scheduled Task exitete konsistent mit Exit-Code
+  1 **ohne jede EventLog-Ausgabe**. Symptom beim User: blauer Flash
+  beim Trigger, pending Tasks stapeln sich, `history/` bleibt leer.
+  Landmine seit 2.2.3, 8 Releases schlafend, weil Entwicklerseite
+  UTF-8-BOM oder PS 7 parst.
+- **2.2.12:** direkt danach kaskadierte der Parser auf den naechsten
+  non-ASCII-Landmine -- Em-Dashes (U+2014) in Write-Log-Messages und
+  Arrow-Unicode in Comments. Windows-seitige ANSI/CP850-Decodierung
+  von UTF-8-Bytes brach Tokenizer-Positionen. Fix: alle non-ASCII chars
+  in `win-task-runner.ps1` raus, ASCII-only durchgezogen wie in
+  CLAUDE.md gefordert.
+- **2.2.13:** 2.2.11-Erklaer-Kommentar wieder entfernt -- Code spricht
+  fuer sich, Historie lebt im CHANGELOG.
+
+### Architecture Invariants (locked for 2.3.x)
+
+- **Sandbox-Isolation unveraendert**: kein `/mnt/c`, kein Host-LAN,
+  default-deny iptables + ip6tables, mirrored oder NAT gleichwertig
+  isoliert.
+- **Whitelist bleibt exact-match**, kein Wildcard, kein Prefix. Der
+  neue `build.ps1`-Default ist ein fester String-Eintrag wie jeder
+  andere -- die Konvention lebt ueber den Dateinamen, nicht ueber
+  Pattern-Matching.
+- **Task-Trigger bleibt user-initiated**: EventID 2000 aus dem
+  `[3] Benchmark ausfuehren`-Menue oder AtLogon-Sweep. Keine Agent-
+  getriggerten Host-Executions.
+- **`project.json:build.command` bleibt read-only gemountet** -- der
+  Agent kann den Build-Pfad zur Laufzeit nicht umbiegen. Build fuehrt
+  agent-modifizierbaren Code (src/package.json:scripts.build,
+  src/build.py, build.ps1) by design aus -- dasselbe Threat-Model
+  fuer alle Typen.
+- **PS 5.1 Kompatibilitaet** fuer alle Scripts, die der Scheduled
+  Task oder install.ps1 aufruft: keine Here-Strings, kein `New-Item
+  -LiteralPath`, ASCII-only, kein `-Encoding utf8NoBOM`.
+
+### Upgrade-Pfad
+
+Minor-Update (`.update_class = minor`), kein Template-Rebuild, kein
+Admin-Rerun. Naechster agentbox-Session-Start zieht das Update via
+`wsl-ai-start.sh`-Auto-Check. Alternativ manuell:
+
+```
+irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
+```
+
+Nach dem Update: `diagnose.ps1` einmal laufen lassen -- erwartetes
+Ergebnis ist "All green" oder nur WARN-Zeilen fuer rein kosmetische
+Drift. Bei FAIL-Zeilen ist der Report so praezise, dass Debug in
+Minuten statt Stunden geht.
+
 ## [2.2.14] - 2026-04-18
 
 ### Added -- Default-Build-Command fuer type=powershell: build.ps1
