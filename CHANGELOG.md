@@ -5,6 +5,74 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-04-18
+
+### Added — `networkingMode=mirrored` Default bei WSL 2.0+/Win11 22H2+
+
+Sandbox-Netzwerk-Durchsatz war durch WSL2-NAT ca. halbiert (~16 MB/s
+Sandbox vs. ~33 MB/s Host, ~264 Mbps). Microsofts experimentelles
+`networkingMode=mirrored` umgeht das NAT komplett. Nachteil: die
+Sandbox haengt dann direkt am Host-Netz-Stack statt hinter NAT — ohne
+Gegenmassnahmen ein Bruch der CLAUDE.md-Invariante `kein Host-LAN`.
+
+Mit dem erweiterten Firewall-Hardening in `wsl-sandbox-init.sh` (siehe
+unten) ist mirrored mode in der agentbox-Sandbox **genauso LAN-
+isoliert** wie NAT — nur ohne den NAT-Overhead.
+
+**Aktivierung:**
+
+- **`config.json` Key `network_mode`** neu eingefuehrt. Werte:
+  - `"auto"` (Default) — `install.ps1` probed `wsl --version` und
+    Windows-Build. Bei WSL 2.0+ und Win11 22H2+ (Build ≥22621) wird
+    `"mirrored"` persistiert; sonst `"nat"`.
+  - `"mirrored"` erzwingt mirrored, unabhaengig von Detection.
+  - `"nat"` erzwingt NAT (Rueckweg bei Problemen).
+- **`.wslconfig` merge-aware Rewrite:** der `# agentbox`-Block wird
+  bei jedem Install idempotent neu geschrieben (User-Content davor
+  bleibt). Bei `network_mode=mirrored` enthaelt der Block zusaetzlich
+  `networkingMode=mirrored`, `firewall=true`, `dnsTunneling=true`,
+  `autoProxy=false`.
+- **`wsl --shutdown` automatisch** am Ende des Installers wenn
+  `.wslconfig` veraendert wurde — damit die neuen Werte beim naechsten
+  Start auch fuer andere WSL-Distros (docker-desktop etc.) greifen.
+- **Gelbe Warnung** wenn mirrored aktiviert wird: `.wslconfig`-Setting
+  ist **global**, betrifft ALLE WSL-Distros am Host. User wird auf
+  den Rueckweg (`network_mode=nat` + re-install) hingewiesen.
+
+### Added — Firewall-Hardening laeuft jetzt immer, unabhaengig vom Mode
+
+`wsl-sandbox-init.sh` bekommt fuenf zusaetzliche Regel-Familien die
+pure Safety-Additions sind — kein Performance-Cost, laeuft auch unter
+NAT (wo sie meist redundant zur existierenden OUTPUT-Kette sind).
+Kritisch werden sie unter mirrored mode.
+
+1. **INPUT-Chain default-deny**: nur loopback + ESTABLISHED erlaubt.
+   In NAT Mode ohnehin unerreichbar, unter mirrored schliesst das
+   versehentlich geoeffnete Agent-Ports vom LAN aus.
+2. **FORWARD default-deny**: Sandbox ist kein Router.
+3. **ip6tables-Mirror**: OUTPUT default-deny mit 443/80/DNS-Ausnahmen,
+   IPv6-Private-Ranges (`fc00::/7`, `fe80::/10`, `::1/128`) + Multicast
+   (`ff00::/8`) explizit DROPped. INPUT chain analog. Schuetzt wenn
+   sysctl-IPv6-Disable durch eine kuenftige Regression fehlschlaegt.
+4. **Multicast-IPv4-Block** (`224.0.0.0/4`): blockt mDNS/SSDP-Discovery.
+5. **Host-IP-Autodetect-DROP**: `ip route show default` → erste Hop-
+   IP wird explizit per `/32` geblockt. Belt-and-suspenders gegen
+   Carrier-Grade-NAT (`100.64/10`) oder seltene Gateway-Ranges die
+   nicht von RFC1918 abgedeckt sind.
+
+### Added — Firewall-Seal-Test als Pre-Flight-Check
+
+Nach Firewall-Apply wird versucht, zwei RFC1918-Canary-IPs (`192.168.1.1`,
+`10.0.0.1`) zu erreichen. Schlaegt das durch (= Firewall hat ein Leck),
+wird die Sandbox sofort abgebrochen statt den Agent in ein offenes
+Netz zu spawnen. Zwei Canaries × 1s Timeout = ~2s Init-Overhead.
+
+### Changed — `.update_class` = major
+
+Siehe oben: `.wslconfig` wird global aktualisiert und `wsl --shutdown`
+ist noetig. Der User kriegt den bewussten `[1]/[2]`-UAC-Prompt statt
+stillem Upgrade.
+
 ## [2.0.19] - 2026-04-18
 
 ### Changed — Post-Install-Prompt auf Read-Host umgestellt

@@ -63,6 +63,9 @@
   "launch_ui": "",
   "_doc_launch_ui": "Launcher beim Shortcut-Klick: 'wt' = Windows Terminal, 'vscode' = VS Code mit agentbox-Terminal-Profil (Live-Filewatch), 'both' = beide Shortcuts. Leer = install.ps1 fragt beim ersten Run einmal und persistiert die Wahl hier.",
 
+  "network_mode": "auto",
+  "_doc_network_mode": "Netzwerk-Mode fuer WSL2-Sandbox: 'auto' (Default) erkennt WSL-Version + Windows-Build und aktiviert mirrored wenn unterstuetzt (WSL 2.0+, Win11 22H2+), sonst nat. 'mirrored' erzwingt mirrored (volle Host-Speed, teilt Host-Netz-Stack — ACHTUNG: globaler .wslconfig-Setting, betrifft ALLE WSL-Distros am Host). 'nat' erzwingt NAT (~50% Throughput-Overhead, maximale Default-Isolation). Die Sandbox-Firewall (iptables/ip6tables default-deny, Seal-Test, Host-IP-Block) laeuft in allen Modi identisch — 'mirrored' bleibt durch die Zusatzregeln genauso LAN-isoliert wie NAT.",
+
   "ubuntu_image_url": "https://cloud-images.ubuntu.com/minimal/releases/noble/release/ubuntu-24.04-minimal-cloudimg-amd64-root.tar.xz",
   "nodejs_setup_url": "https://deb.nodesource.com/setup_20.x"
 }

@@ -603,6 +603,23 @@ iptables -A OUTPUT -d 192.168.0.0/16  -j DROP 2>/dev/null || true
 iptables -A OUTPUT -d 169.254.0.0/16  -j DROP 2>/dev/null || true
 iptables -A OUTPUT -d 127.0.0.0/8     -j DROP 2>/dev/null || true
 
+# Multicast blockieren (verhindert LAN-Discovery / mDNS / SSDP-Probes —
+# besonders relevant unter networkingMode=mirrored wo die Sandbox am
+# Host-LAN haengt).
+iptables -A OUTPUT -d 224.0.0.0/4     -j DROP 2>/dev/null || true
+
+# Host-IP-Autodetect: Default-Gateway ermitteln und explizit blocken.
+# Belt-and-suspenders — in NAT mode ist das 172.x.x.1 (bereits von der
+# 172.16/12-Regel erfasst), in mirrored mode ist es die echte Host-
+# LAN-IP (von 192.168/16 oder 10/8 erfasst). Der zusaetzliche /32-
+# DROP schuetzt auch dann, wenn der Host in einem Range laegt der nicht
+# standardmaessig RFC1918 ist (Carrier-Grade-NAT 100.64/10 u.ae.).
+_host_ip=$(ip -4 route show default 2>/dev/null | awk '/^default/{print $3; exit}')
+if [ -n "$_host_ip" ]; then
+    iptables -A OUTPUT -d "${_host_ip}/32" -j DROP 2>/dev/null || true
+    log_info "Host-IP blockiert: $_host_ip"
+fi
+
 # Default: loggen + droppen. LOG per NFLOG (asynchron, kein Kernel-
 # Ringbuffer-Spinlock pro Paket wie bei -j LOG). Blockierte-Verbindungen-
 # Diagnostik am Session-Ende liest weiterhin aus dmesg, NFLOG schreibt
@@ -612,7 +629,67 @@ iptables -A OUTPUT -j NFLOG --nflog-prefix "agentbox-blocked: " --nflog-group 1 
     || iptables -A OUTPUT -j LOG --log-prefix "agentbox-blocked: " --log-level 4 2>/dev/null || true
 iptables -A OUTPUT -j DROP 2>/dev/null || true
 
-log_ok "Firewall-Regeln angewendet (HTTPS erlaubt, private Netze blockiert)"
+# --- INPUT-Chain default-deny ---
+# In NAT mode ist die Sandbox ohnehin vom LAN unerreichbar (wir haengen
+# hinter WSL2-NAT). Unter mirrored mode hingegen haengt die Sandbox
+# direkt am Host-LAN — jeder Port den ein Agent aus Versehen aufmacht,
+# waere LAN-weit erreichbar. Default-deny mit ESTABLISHED-Ausnahme
+# schliesst das hermetisch: Eigenes Outgoing bleibt auf den Return-Weg
+# moeglich, aber kein ungefragter Inbound-Traffic.
+iptables -F INPUT 2>/dev/null || true
+iptables -A INPUT -i lo -j ACCEPT 2>/dev/null || true
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+iptables -P INPUT DROP 2>/dev/null || iptables -A INPUT -j DROP 2>/dev/null || true
+iptables -P FORWARD DROP 2>/dev/null || iptables -A FORWARD -j DROP 2>/dev/null || true
+
+# --- ip6tables-Mirror (IPv6 identisch hart default-deny) ---
+# IPv6 ist unter mirrored mode in der Sandbox aktiv (bzw. kann aktiv
+# werden). sysctl net.ipv6.conf.all.disable_ipv6=1 deckt den primaeren
+# Pfad, aber zweite Linie: ip6tables mit gleichem Regelwerk. Ohne diese
+# Regeln wuerde IPv6-Traffic an der IPv4-Firewall vorbeigehen.
+if command -v ip6tables >/dev/null 2>&1; then
+    ip6tables -F OUTPUT 2>/dev/null || true
+    ip6tables -A OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+    ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    ip6tables -A OUTPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+    ip6tables -A OUTPUT -p tcp --dport 80  -j ACCEPT 2>/dev/null || true
+    ip6tables -A OUTPUT -p udp --dport 53  -j ACCEPT 2>/dev/null || true
+    ip6tables -A OUTPUT -p tcp --dport 53  -j ACCEPT 2>/dev/null || true
+    ip6tables -A OUTPUT -d fc00::/7  -j DROP 2>/dev/null || true   # Unique local
+    ip6tables -A OUTPUT -d fe80::/10 -j DROP 2>/dev/null || true   # Link-local
+    ip6tables -A OUTPUT -d ::1/128   -j DROP 2>/dev/null || true   # Loopback
+    ip6tables -A OUTPUT -d ff00::/8  -j DROP 2>/dev/null || true   # Multicast
+    ip6tables -A OUTPUT -j DROP 2>/dev/null || true
+    ip6tables -F INPUT 2>/dev/null || true
+    ip6tables -A INPUT -i lo -j ACCEPT 2>/dev/null || true
+    ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    ip6tables -P INPUT DROP 2>/dev/null || ip6tables -A INPUT -j DROP 2>/dev/null || true
+    ip6tables -P FORWARD DROP 2>/dev/null || true
+fi
+
+log_ok "Firewall-Regeln angewendet (HTTPS erlaubt, private Netze + LAN + Multicast + IPv6 blockiert)"
+
+# --- Firewall-Seal-Test ---
+# Pre-Flight-Check: eine Handvoll RFC1918-Canaries muessen aktiv
+# blockiert sein. Wenn auch nur einer durchkommt, ist die Firewall
+# verbogen — in dem Fall lieber die Sandbox gar nicht erst starten
+# lassen, statt den Agent in ein Netz mit Host/LAN-Zugriff zu spawnen.
+# Zwei Canaries × 1s Timeout = ~2s Overhead pro Session. Vertretbar
+# fuer die Gewissheit.
+echo ""
+echo "Teste Firewall-Seal (RFC1918-Canaries muessen blocken)..."
+_seal_ok=true
+for _canary in 192.168.1.1 10.0.0.1; do
+    if timeout 1 bash -c "</dev/tcp/$_canary/80" 2>/dev/null; then
+        log_error "Firewall-LEAK: $_canary erreichbar — Sandbox nicht sicher." >&2
+        _seal_ok=false
+    fi
+done
+if ! $_seal_ok; then
+    echo "FATAL: Firewall-Regeln haben ein Leck. Abbruch." >&2
+    exit 1
+fi
+log_ok "Firewall-Seal bestaetigt"
 
 # --- Konnektivitaets-Test: beide Anthropic-Hosts ---
 echo ""

@@ -983,32 +983,144 @@ $resMem  = if ($installConfig -and $installConfig.resources_memory)     { $insta
 $resCpu  = if ($installConfig -and $installConfig.resources_processors) { $installConfig.resources_processors } else { 2 }
 $resSwap = if ($installConfig -and $installConfig.resources_swap)       { $installConfig.resources_swap }       else { "1GB" }
 
+# --- network_mode aufloesen (auto/nat/mirrored) ---
+# Seit 2.1.0: `networkingMode=mirrored` in .wslconfig gibt der Sandbox
+# volle Host-Netz-Speed (NAT-Overhead ~50% weg). Isolation bleibt durch
+# das erweiterte iptables/ip6tables-Hardening in wsl-sandbox-init.sh
+# gewahrt. Auto-Modus erkennt WSL-Version + Windows-Build und waehlt
+# mirrored nur wenn beides unterstuetzt. Config-Wert 'nat' oder
+# 'mirrored' erzwingt den Mode unabhaengig von der Detection.
+$networkModeRaw = if ($installConfig -and $installConfig.network_mode) { "$($installConfig.network_mode)".ToLowerInvariant().Trim() } else { "auto" }
+$networkMode = switch ($networkModeRaw) {
+    "nat"      { "nat" }
+    "mirrored" { "mirrored" }
+    default    { "auto" }
+}
+$networkModeSource = if ($networkMode -eq "auto") { "auto-resolved" } else { "forced" }
+if ($networkMode -eq "auto") {
+    # WSL-Version-Probe. Format variiert: "WSL-Version: 2.2.4.0" oder
+    # "WSL version: 2.2.4.0" je nach Lokalisierung / Version. 2.0+ = OK.
+    $wslVerOk = $false
+    try {
+        $wslVerOut = (& wsl.exe --version 2>&1) | Out-String
+        if ($wslVerOut -match "WSL[- ]Version:?\s+(\d+)\.(\d+)") {
+            if ([int]$Matches[1] -ge 2) { $wslVerOk = $true }
+        }
+    } catch { }
+    # Windows-Build 22621 = Win11 22H2 (Minimum fuer stabilen mirrored-Support)
+    $winBuildOk = ([System.Environment]::OSVersion.Version.Build -ge 22621)
+    if ($wslVerOk -and $winBuildOk) {
+        $networkMode = "mirrored"
+        Write-Host "[OK] network_mode=auto aufgeloest auf 'mirrored' (WSL 2.0+, Win11 22H2+ erkannt)" -ForegroundColor Green
+    } else {
+        $networkMode = "nat"
+        $wslInfo = if ($wslVerOk) { "WSL OK" } else { "WSL <2.0" }
+        $winInfo = if ($winBuildOk) { "Win11 22H2+" } else { "Windows <22H2 (Build $([System.Environment]::OSVersion.Version.Build))" }
+        Write-Host "[INFO] network_mode=auto aufgeloest auf 'nat' ($wslInfo, $winInfo)" -ForegroundColor Gray
+    }
+}
+
+# --- .wslconfig schreiben/mergen ---
+Write-Host ""
+Write-Host "Pruefe WSL Ressourcen-Limits..." -ForegroundColor Cyan
+
 $wslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
 $wslConfigMarker = "# agentbox"
 
+# Agentbox-Block aus Zeilen-Array bauen (statt Here-String — PS 5.1
+# Style-Regel laut CLAUDE.md).
+$wslConfigLines = @(
+    "$wslConfigMarker --- Ressourcen-Limits fuer Sandbox-Distros",
+    "[wsl2]",
+    "memory=$resMem",
+    "processors=$resCpu",
+    "swap=$resSwap"
+)
+if ($networkMode -eq "mirrored") {
+    $wslConfigLines += @(
+        "$wslConfigMarker --- networking (mirrored, global fuer alle WSL-Distros)",
+        "networkingMode=mirrored",
+        "firewall=true",
+        "dnsTunneling=true",
+        "autoProxy=false"
+    )
+}
+$agentboxBlock = ($wslConfigLines -join "`r`n") + "`r`n"
+
+$wslConfigAction = "none"
 if (-not (Test-Path -LiteralPath $wslConfigPath)) {
-    # .wslconfig existiert nicht — mit Werten aus config.json erstellen
-    $wslConfigContent = @"
-$wslConfigMarker — Ressourcen-Limits fuer Sandbox-Distros
-[wsl2]
-memory=$resMem
-processors=$resCpu
-swap=$resSwap
-"@
-    $wslConfigContent | Out-File -LiteralPath $wslConfigPath -Encoding ascii -NoNewline
-    Write-Host "[OK] .wslconfig erstellt ($resMem RAM, $resCpu CPUs, $resSwap Swap)" -ForegroundColor Green
-    Write-Host "     Anpassbar unter: $wslConfigPath oder in config.json" -ForegroundColor Gray
+    # Fall A: .wslconfig existiert nicht → komplett neu schreiben.
+    [IO.File]::WriteAllText($wslConfigPath, $agentboxBlock, (New-Object System.Text.ASCIIEncoding))
+    $wslConfigAction = "created"
 } else {
-    # .wslconfig existiert — pruefen ob bereits konfiguriert
     $existingConfig = Get-Content -LiteralPath $wslConfigPath -Raw -ErrorAction SilentlyContinue
+    if (-not $existingConfig) { $existingConfig = "" }
     if ($existingConfig -match [regex]::Escape($wslConfigMarker)) {
-        Write-Host "[OK] .wslconfig bereits durch agentbox konfiguriert" -ForegroundColor Green
+        # Fall B: agentbox-Block vorhanden. Alles AB dem ersten
+        # "# agentbox"-Vorkommen bis EOF strippen + frischen Block
+        # anhaengen. Content DAVOR (User-Eigenes) bleibt unangetastet.
+        $idx = $existingConfig.IndexOf($wslConfigMarker)
+        $preAgentbox = $existingConfig.Substring(0, $idx).TrimEnd()
+        $newContent = if ($preAgentbox.Length -gt 0) { $preAgentbox + "`r`n`r`n" + $agentboxBlock } else { $agentboxBlock }
+        [IO.File]::WriteAllText($wslConfigPath, $newContent, (New-Object System.Text.ASCIIEncoding))
+        $wslConfigAction = "merged"
     } else {
-        Write-Host "[INFO] .wslconfig existiert bereits mit eigenen Einstellungen." -ForegroundColor Yellow
-        Write-Host "       Empfehlung: memory=4GB und processors=2 setzen," -ForegroundColor Yellow
-        Write-Host "       damit ein Agent den Host nicht lahmlegen kann." -ForegroundColor Yellow
+        # Fall C: existiert, aber ohne unseren Marker → User hat eigene
+        # Config. Wir fassen das nicht an.
+        $wslConfigAction = "user-skipped"
+    }
+}
+
+switch ($wslConfigAction) {
+    "created" {
+        Write-Host "[OK] .wslconfig erstellt ($resMem RAM, $resCpu CPUs, $resSwap Swap, network=$networkMode)" -ForegroundColor Green
+        Write-Host "     Anpassbar unter: $wslConfigPath oder in config.json" -ForegroundColor Gray
+    }
+    "merged" {
+        Write-Host "[OK] .wslconfig agentbox-Block aktualisiert ($resMem RAM, $resCpu CPUs, $resSwap Swap, network=$networkMode)" -ForegroundColor Green
+    }
+    "user-skipped" {
+        Write-Host "[INFO] .wslconfig existiert bereits mit eigenen Einstellungen — nicht angetastet." -ForegroundColor Yellow
+        Write-Host "       Empfehlung: memory=4GB und processors=2 setzen, damit ein Agent den Host nicht lahmlegen kann." -ForegroundColor Yellow
+        if ($networkMode -eq "mirrored") {
+            Write-Host "       Fuer mirrored networking manuell hinzufuegen:" -ForegroundColor Gray
+            Write-Host "         [wsl2]" -ForegroundColor Gray
+            Write-Host "         networkingMode=mirrored" -ForegroundColor Gray
+            Write-Host "         firewall=true" -ForegroundColor Gray
+            Write-Host "         dnsTunneling=true" -ForegroundColor Gray
+            Write-Host "         autoProxy=false" -ForegroundColor Gray
+        }
         Write-Host "       Datei: $wslConfigPath" -ForegroundColor Gray
     }
+}
+
+# Warnung wenn mirrored aktiviert ist — der Setting ist global.
+if ($networkMode -eq "mirrored" -and $wslConfigAction -ne "user-skipped") {
+    Write-Host ""
+    Write-Host "[WARN] networkingMode=mirrored ist aktiv." -ForegroundColor Yellow
+    Write-Host "       Das ist ein GLOBALER .wslconfig-Setting — betrifft ALLE WSL-Distros (docker-desktop, andere Ubuntus etc.)." -ForegroundColor Yellow
+    Write-Host "       Bei Problemen 'network_mode=nat' in config.json setzen + install.ps1 neu laufen lassen." -ForegroundColor Gray
+}
+
+# --- network_mode zurueck in config.json persistieren ---
+# Gleicher Smart-Merge-Pattern wie launch_ui: nur den Key setzen, Rest
+# unangetastet. Damit ist die resolvte Wahl beim naechsten Install
+# stabil (kein erneutes Auto-Resolve noetig).
+try {
+    if ($installConfig -and $installConfig.PSObject.Properties['network_mode']) {
+        $installConfig.network_mode = $networkMode
+    } elseif ($installConfig) {
+        $installConfig | Add-Member -NotePropertyName network_mode -NotePropertyValue $networkMode -Force
+    }
+    if ($installConfig) {
+        $newJson = $installConfig | ConvertTo-Json -Depth 20
+        $newJson = $newJson -replace "`r`n", "`n" -replace "`r", "`n"
+        if (-not $newJson.EndsWith("`n")) { $newJson += "`n" }
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText($installConfigPath, $newJson, $utf8NoBom)
+    }
+} catch {
+    Write-Host "[WARN] network_mode konnte nicht in config.json gespeichert werden — Wahl gilt nur fuer diesen Run." -ForegroundColor Yellow
 }
 
 # --- Launcher-UI bestimmen (wt vs vscode vs beide) ---
@@ -1395,6 +1507,25 @@ try {
 } catch {
     Write-Host "WARNUNG: Shortcut-Erstellung komplett fehlgeschlagen." -ForegroundColor Yellow
     Write-Host $_.Exception.Message -ForegroundColor Yellow
+}
+
+# --- wsl --shutdown wenn .wslconfig veraendert wurde ---
+# Neue Keys wie networkingMode=mirrored greifen erst nach einem
+# Shutdown der WSL-Subsysteme. Agentbox ist ohnehin ephemer (importiert
+# pro Session neu), aber andere Distros am Host (docker-desktop, etc.)
+# brauchen diesen einmaligen Kick damit sie den neuen Setting sehen.
+# Shutdown nur wenn wir die Datei auch wirklich aendern mussten —
+# sonst kein Grund andere Workflows zu killen.
+if ($wslConfigAction -in @("created","merged")) {
+    Write-Host ""
+    Write-Host "Fuehre 'wsl --shutdown' aus, damit neue .wslconfig-Werte greifen..." -ForegroundColor Cyan
+    try {
+        Invoke-Native { & wsl.exe --shutdown 2>&1 | ForEach-Object { "$_" } }
+        Write-Host "[OK] WSL-Subsysteme heruntergefahren — neue Settings sind beim naechsten Start aktiv." -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] 'wsl --shutdown' fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "       Manuell: 'wsl --shutdown' ausfuehren bevor agentbox das erste Mal startet." -ForegroundColor Gray
+    }
 }
 
 # --- Erfolgsmeldung ---

@@ -55,6 +55,17 @@ einer ephemeren WSL2-Sandbox auf Windows. Kern-Invarianten beim Ändern von Code
     werden — die Regel gilt **nur** für `New-Item`.
 - **Agent startet in `/workspace`** (Bind-Mount des Projektordners), damit die
   Projekt-Root für den Agent sichtbar ist.
+- **Netzwerk-Mode:** seit 2.1.0 standardmäßig `networkingMode=mirrored` in
+  `.wslconfig` bei WSL 2.0+ / Win11 22H2+ (Build ≥22621), sonst NAT. Die
+  Isolation wird in **beiden** Modi durch iptables + ip6tables mit OUTPUT +
+  INPUT default-deny, Host-IP-Autodetect-DROP und einen pflicht­mäßigen
+  Firewall-Seal-Test aufrechterhalten — `mirrored` ist **kein** Isolations-
+  Downgrade, nur ein NAT-Overhead-Bypass (Host-Speed statt ~50 %). Override
+  per `network_mode` in `config.json` (`auto` | `nat` | `mirrored`). Achtung:
+  `.wslconfig`-Setting ist **global**, betrifft ALLE WSL-Distros am Host
+  (docker-desktop, andere Ubuntus etc.) — der Installer warnt gelb und
+  triggert `wsl --shutdown` einmal beim Enabling. Wer das nicht will:
+  `network_mode=nat` in `config.json` + `install.ps1` re-run.
 
 ## Config-Topologie
 
