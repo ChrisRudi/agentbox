@@ -6,6 +6,23 @@
 
 set -euo pipefail
 
+# --- Logging-Helper (inline, weil das Script in der Sandbox laeuft und
+# /sandbox-init.sh kein Sourcing aus _control/lib/ kann — _control/ ist
+# bewusst nicht in der Sandbox gemounted). Verhalten identisch zu
+# lib/log.sh: log_info/log_ok auf stdout, log_warn/log_error auf stderr
+# (2.0.14, Stderr-Split). Definiert VOR der Parameter-Validierung, damit
+# auch der fruehe FEHLER-Pfad die Helper nutzen kann. ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
+log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+log_error() { echo -e "${RED}[FEHLER]${NC} $1" >&2; }
+
 # --- Parameter ---
 WIN_PROJECT_PATH="${1:-}"
 AGENT_CMD="${2:-claude}"
@@ -20,8 +37,8 @@ AGENT_INSTALL="${6:-}"
 AUTH_SPEC="${7:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
-    echo "FEHLER: Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC]"
+    log_error "Kein Projektpfad angegeben."
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC]" >&2
     exit 1
 fi
 
@@ -50,21 +67,6 @@ PROJECT_PATH=$(_to_linux_path "$WIN_PROJECT_PATH")
 CACHE_PATH=$(_to_linux_path "$WIN_CACHE_PATH")
 AUTH_BASE=$(_to_linux_path "$AUTH_BASE_IN")
 
-# --- Logging-Helper (inline, weil das Script in der Sandbox laeuft und
-# /sandbox-init.sh kein Sourcing aus _control/lib/ kann — _control/ ist
-# bewusst nicht in der Sandbox gemounted). Verhalten identisch zu
-# lib/log.sh: alle Levels auf stdout, Farben immer aktiv. ---
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
-log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
-
 echo "=== agentbox Sandbox-Init ==="
 echo "Projekt: $PROJECT_PATH"
 echo "Agent: $AGENT_CMD"
@@ -74,7 +76,9 @@ echo ""
 # SANDBOX_USER kommt aus Parameter $4 (Default: "agent")
 # Sicherheit: root und system-User verbieten
 if [ "$SANDBOX_USER" = "root" ] || [ "$(id -u "$SANDBOX_USER" 2>/dev/null)" = "0" ] 2>/dev/null; then
-    echo "FEHLER: Sandbox-User darf nicht 'root' sein — verwende Default 'agent'."
+    # Semantisch ein WARN — der Code recovered auf Default 'agent' und laeuft
+    # weiter. Vor 2.0.14 war das irrefuehrenderweise als "FEHLER:" geloggt.
+    log_warn "Sandbox-User darf nicht 'root' sein — verwende Default 'agent'."
     SANDBOX_USER="agent"
 fi
 SANDBOX_HOME="/home/$SANDBOX_USER"
@@ -862,7 +866,7 @@ cd "$START_DIR"
 
 # Agent-Kommando validieren (nur alphanumerisch + Bindestrich, keine Sonderzeichen)
 if ! [[ "$AGENT_CMD" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    echo "FEHLER: Ungueltiges Agent-Kommando '$AGENT_CMD' — nur Buchstaben, Zahlen, Bindestrich erlaubt."
+    log_error "Ungueltiges Agent-Kommando '$AGENT_CMD' — nur Buchstaben, Zahlen, Bindestrich erlaubt."
     exit 1
 fi
 
@@ -888,8 +892,8 @@ EXIT_CODE=0
 if command -v "$AGENT_CMD" &> /dev/null; then
     su - "$SANDBOX_USER" -c "cd '$START_DIR' && exec $AGENT_CMD $AGENT_FLAGS" || EXIT_CODE=$?
 else
-    echo "FEHLER: Agent '$AGENT_CMD' nicht in der Sandbox installiert."
-    echo "Bitte Agent in config.json aktivieren und win-setup.ps1 erneut ausfuehren (Template-Rebuild)."
+    log_error "Agent '$AGENT_CMD' nicht in der Sandbox installiert."
+    echo "Bitte Agent in config.json aktivieren und win-setup.ps1 erneut ausfuehren (Template-Rebuild)." >&2
     exit 1
 fi
 

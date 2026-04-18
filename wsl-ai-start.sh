@@ -26,8 +26,9 @@ while [ $# -gt 0 ]; do
         --replay)
             REPLAY_SESSION="${2:-}"
             if [ -z "$REPLAY_SESSION" ]; then
-                echo "FEHLER: --replay braucht eine Session-ID."
-                echo "Verfuegbare Sessions: agentbox --list-sessions"
+                # Frueh im Script (vor lib/log.sh-Source): plain echo + >&2
+                echo "FEHLER: --replay braucht eine Session-ID." >&2
+                echo "Verfuegbare Sessions: agentbox --list-sessions" >&2
                 exit 1
             fi
             shift 2
@@ -40,8 +41,8 @@ while [ $# -gt 0 ]; do
             COMPARE_MODE=true
             COMPARE_SESSIONS=("${2:-}" "${3:-}")
             if [ -z "${COMPARE_SESSIONS[0]}" ] || [ -z "${COMPARE_SESSIONS[1]}" ]; then
-                echo "FEHLER: --compare braucht zwei Session-IDs."
-                echo "Verwendung: agentbox --compare <session1> <session2>"
+                echo "FEHLER: --compare braucht zwei Session-IDs." >&2
+                echo "Verwendung: agentbox --compare <session1> <session2>" >&2
                 exit 1
             fi
             shift 3
@@ -65,12 +66,34 @@ fi
 # --- Konfiguration ---
 AI_PROJECTS_ROOT="${AI_PROJECTS_ROOT:-}"
 if [ -z "$AI_PROJECTS_ROOT" ]; then
-    echo "FEHLER: AI_PROJECTS_ROOT ist nicht gesetzt."
-    echo "Bitte zuerst install.ps1 ausfuehren."
+    # Frueh im Script (vor lib/log.sh-Source): plain echo + >&2
+    echo "FEHLER: AI_PROJECTS_ROOT ist nicht gesetzt." >&2
+    echo "Bitte zuerst install.ps1 ausfuehren." >&2
     exit 1
 fi
 
 CONTROL_DIR="$AI_PROJECTS_ROOT/_control"
+
+# --- Farben + log_*-Helper aus gemeinsamer Library laden (single source) ---
+# Frueh geladen, damit alle FEHLER-/WARN-Pfade ab hier die gleichen Helper
+# nutzen (seit 2.0.14: log_warn/log_error schreiben auf stderr). Die noch
+# frueheren Pfade (argparse + AI_PROJECTS_ROOT-Check) arbeiten mit plain
+# `echo "FEHLER: ..." >&2` — log.sh braucht CONTROL_DIR, das ist dort noch
+# nicht verfuegbar.
+# Inline-Fallback fuer Pre-2.0.5-Upgrades bleibt als Kompatibilitaetsnetz.
+if [ -f "$CONTROL_DIR/lib/log.sh" ]; then
+    . "$CONTROL_DIR/lib/log.sh"
+else
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'
+    NC='\033[0m'
+    log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
+    log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
+    log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+    log_error() { echo -e "${RED}[FEHLER]${NC} $1" >&2; }
+fi
 
 # --- config.json laden ---
 CONFIG_LIB="$CONTROL_DIR/lib/config.sh"
@@ -84,28 +107,28 @@ if [ -f "$CONFIG_LIB" ]; then
     # Vor dem source einmal probelesen; wenn das scheitert, geben wir eine
     # klare Anleitung aus statt den Fehler weiter zu reichen.
     if ! head -c 1 "$CONFIG_LIB" >/dev/null 2>&1; then
-        echo ""
-        echo "FEHLER: '$CONFIG_LIB' konnte nicht gelesen werden (I/O error)."
-        echo ""
+        echo "" >&2
+        log_error "'$CONFIG_LIB' konnte nicht gelesen werden (I/O error)."
+        echo "" >&2
         case "$CONFIG_LIB" in
             /mnt/c/*[Oo]ne[Dd]rive*)
-                echo "Wahrscheinliche Ursache: OneDrive Files-On-Demand."
-                echo "Die Datei ist nur als Cloud-Placeholder vorhanden, und OneDrive"
-                echo "scheint nicht zu laufen — WSL kann sie nicht transparent holen."
-                echo ""
-                echo "Fix (einmalig):"
-                echo "  1) OneDrive starten (Startmenue -> OneDrive)"
-                echo "     ODER"
-                echo "  2) Im Windows Explorer rechtsklick auf den _control-Ordner"
-                echo "     -> 'Immer auf diesem Geraet behalten' (gruener Haken)"
-                echo "  3) agentbox nochmal starten"
+                echo "Wahrscheinliche Ursache: OneDrive Files-On-Demand." >&2
+                echo "Die Datei ist nur als Cloud-Placeholder vorhanden, und OneDrive" >&2
+                echo "scheint nicht zu laufen — WSL kann sie nicht transparent holen." >&2
+                echo "" >&2
+                echo "Fix (einmalig):" >&2
+                echo "  1) OneDrive starten (Startmenue -> OneDrive)" >&2
+                echo "     ODER" >&2
+                echo "  2) Im Windows Explorer rechtsklick auf den _control-Ordner" >&2
+                echo "     -> 'Immer auf diesem Geraet behalten' (gruener Haken)" >&2
+                echo "  3) agentbox nochmal starten" >&2
                 ;;
             *)
-                echo "Pfad liegt nicht in OneDrive — pruefe Dateisystem-Berechtigung"
-                echo "oder ob der Storage hinter '$CONFIG_LIB' ueberhaupt gemounted ist."
+                echo "Pfad liegt nicht in OneDrive — pruefe Dateisystem-Berechtigung" >&2
+                echo "oder ob der Storage hinter '$CONFIG_LIB' ueberhaupt gemounted ist." >&2
                 ;;
         esac
-        echo ""
+        echo "" >&2
         exit 1
     fi
     . "$CONFIG_LIB"
@@ -195,7 +218,7 @@ _resolve_agentbox_local_root() {
 }
 AGENTBOX_LOCAL_ROOT=$(_resolve_agentbox_local_root || echo "")
 if [ -z "$AGENTBOX_LOCAL_ROOT" ]; then
-    echo "FEHLER: %LOCALAPPDATA% nicht ermittelbar — Runtime-State nicht lokalisierbar." >&2
+    log_error "%LOCALAPPDATA% nicht ermittelbar — Runtime-State nicht lokalisierbar."
     echo "        Versucht wurden:" >&2
     echo "          1) powershell.exe (UTF-8)" >&2
     echo "          2) cmd.exe (OEM-Codepage)" >&2
@@ -247,7 +270,7 @@ _migrate_from_control() {
             rm -rf "$_old" 2>/dev/null || true
             echo "[MIGRATE] $_label (kopiert): $_old → $_new"
         else
-            echo "[WARN] Migration $_label fehlgeschlagen — bitte manuell pruefen"
+            log_warn "Migration $_label fehlgeschlagen — bitte manuell pruefen"
         fi
     fi
 }
@@ -294,9 +317,9 @@ if [ "$COMPARE_MODE" = true ]; then
     _s2="$SESSIONS_DIR/${COMPARE_SESSIONS[1]}"
 
     if [ ! -d "$_s1" ] || [ ! -d "$_s2" ]; then
-        echo "FEHLER: Session nicht gefunden."
-        [ ! -d "$_s1" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[0]}"
-        [ ! -d "$_s2" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[1]}"
+        log_error "Session nicht gefunden."
+        [ ! -d "$_s1" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[0]}" >&2
+        [ ! -d "$_s2" ] && echo "  Nicht gefunden: ${COMPARE_SESSIONS[1]}" >&2
         exit 1
     fi
 
@@ -340,24 +363,6 @@ if [ ! -f "$_legacy_shortcut_marker" ] && command -v powershell.exe &> /dev/null
         "\$d=[Environment]::GetFolderPath('Desktop'); foreach(\$n in 'agentbox-installer.lnk','agentbox-update.lnk'){\$p=Join-Path \$d \$n; if(Test-Path -LiteralPath \$p){Remove-Item -LiteralPath \$p -Force -ErrorAction SilentlyContinue}}" \
         2>/dev/null || true
     touch "$_legacy_shortcut_marker" 2>/dev/null || true
-fi
-
-# Farben + log_*-Helper aus gemeinsamer Library laden (single source).
-# Wir tolerieren fehlende Datei (Pre-2.0.5-Upgrade-Pfad): wenn das Source
-# scheitert, weisen wir die alten Inline-Definitionen als Fallback zu.
-# Der Fallback bleibt als Kompatibilitaetsnetz bis mindestens 2.1 drin.
-if [ -f "$CONTROL_DIR/lib/log.sh" ]; then
-    . "$CONTROL_DIR/lib/log.sh"
-else
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    CYAN='\033[0;36m'
-    NC='\033[0m'
-    log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
-    log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
-    log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-    log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
 fi
 
 # --- Hilfsfunktionen ---

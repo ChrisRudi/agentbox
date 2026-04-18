@@ -62,8 +62,9 @@ angefasst wurde:
 
 ## Offene Follow-ups
 
-- **Stderr-Split fuer `log_warn`/`log_error`.** In `lib/log.sh`
-  und im Inline-Copy in `wsl-sandbox-init.sh` schreiben WARN und
-  ERROR heute auf stdout — semantisch sauberer waere stderr, aber
-  potenziell pipe-breaking fuer User-Scripts, die das Output in
-  Logfiles umleiten. Separate Etappe mit bewusstem User-Announce.
+Keine. Der ehemals offene Stderr-Split (`log_warn`/`log_error` auf
+`>&2`) ist mit 2.0.14 durch. In demselben Commit wurden auf der
+Bash-Seite zusaetzlich alle `echo "FEHLER: ..."`-Plains auf
+`log_error` harmonisiert, damit der Stream-Split vollstaendig greift
+(die Plain-Form waere sonst weiter auf stdout geblieben und haette
+den Split unterlaufen).

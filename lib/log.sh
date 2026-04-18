@@ -2,18 +2,17 @@
 # log.sh — agentbox Logging-Helper
 # Einbinden: . "$CONTROL_DIR/lib/log.sh"
 #
-# Bewusst klein gehalten. Nur 4 Levels, keine Filter, kein Zielwechsel.
-# **Alle Levels auf stdout** — Verhalten identisch zur frueheren
-# inline-Definition in wsl-ai-start.sh. Ein Wechsel auf stderr fuer
-# WARN/ERROR waere semantisch sauberer, aber User-/Skript-Konsumenten
-# koennten sich auf das aktuelle Verhalten verlassen (Pipe in Logfile).
-# Aenderung bewusst verschoben, bis ein eigener Stream-Split als
-# Ticket drin ist.
+# Bewusst klein gehalten. Nur 4 Levels, keine Filter.
+# - log_info / log_ok    → stdout
+# - log_warn / log_error → stderr  (seit 2.0.14, Stderr-Split)
+#   Damit koennen User Output mit `agentbox 2>errors.log` sauber
+#   trennen. Call-Sites mit Follow-up-Zeilen fuegen dort manuell
+#   `>&2` hinzu, damit der ganze Block zusammen geht.
 #
-# ANSI-Farben: wir lassen sie immer drin. wsl-ai-start.sh laeuft
-# praktisch immer interaktiv (Host-Terminal / WT / VS Code) oder mit
-# `agentbox --auto` in TTY-Umgebung. TTY-Detection koennte in einem
-# Nachfolge-Patch fuer CI-Ausgaben kommen.
+# ANSI-Farben immer aktiv — wsl-ai-start.sh + wsl-sandbox-init.sh
+# laufen praktisch immer in einem TTY (WT, VS Code, agentbox-Shortcut).
+# TTY-Detection koennte in einem Nachfolge-Patch fuer CI-Ausgaben
+# kommen; heute kein Bedarf.
 
 # Nur definieren, falls noch nicht gesetzt — erlaubt ueberschreiben
 # durch spezialisierte Scripts und Re-Source ohne Kollision.
@@ -32,6 +31,6 @@ if [ -z "${AGENTBOX_LOG_SH_SOURCED:-}" ]; then
 
     log_info()  { echo -e "${CYAN}[INFO]${NC} $1"; }
     log_ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
-    log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-    log_error() { echo -e "${RED}[FEHLER]${NC} $1"; }
+    log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+    log_error() { echo -e "${RED}[FEHLER]${NC} $1" >&2; }
 fi

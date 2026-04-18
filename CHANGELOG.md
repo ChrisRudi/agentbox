@@ -5,6 +5,75 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.14] - 2026-04-17
+
+### Changed — Error-Level-Konsistenz auf Bash-Seite + Stderr-Split
+
+Der letzte offene Follow-up aus `refactor.md` ist durch. Zwei
+zusammenhaengende Aenderungen in einem Commit:
+
+**1. Stderr-Split fuer `log_warn` + `log_error`**
+
+- `lib/log.sh`: `log_warn` und `log_error` schreiben jetzt auf
+  stderr (`>&2`). `log_info` und `log_ok` bleiben auf stdout.
+  Damit kann der User `agentbox 2>errors.log` zum sauberen
+  Trennen nutzen.
+- `wsl-sandbox-init.sh`: gleiche Aenderung in den inline-Kopien
+  der Funktionen (Script laeuft in der Sandbox ohne `_control/`-
+  Mount, kann `lib/log.sh` nicht sourcen).
+
+**2. Bash-Harmonisierung: `echo "FEHLER: ..."` → `log_error`**
+
+Im ganzen Codebase existierten zwei parallele Error-Conventions:
+die kanonische `log_error "msg"` (nur 4 Call-Sites) und die
+dominantere Plain-Form `echo "FEHLER: ..."` (~8 Call-Sites auf
+Hard-Exit-Pfaden). Das war vor der stderr-Umstellung rein
+kosmetisch, danach wirkte es — die Plain-Form haette weiter auf
+stdout geschrieben und den Split unterlaufen.
+
+- Alle `echo "FEHLER: ..."` in `wsl-ai-start.sh` und
+  `wsl-sandbox-init.sh` → `log_error "..."` (wo Helper verfuegbar)
+  oder `echo "FEHLER: ..." >&2` (fuer die paar Early-Exit-Pfade,
+  die vor dem lib/log.sh-Source laufen).
+- Follow-up-Zeilen nach `log_error`-Blocks bekommen `>&2`, damit
+  der gesamte Fehlerkontext zusammen auf stderr landet.
+- `echo "[WARN] Migration ..."` → `log_warn "..."`.
+- `wsl-sandbox-init.sh:77` (Sandbox-User-Root-Check, der auf
+  Default `agent` recovered) semantisch korrigiert: vorher
+  irrefuehrend als `FEHLER` geloggt, jetzt `log_warn` — der Code
+  exitet nicht, warnt nur.
+
+**3. Ordering-Fixes fuer frueh verfuegbare Helper**
+
+- `wsl-ai-start.sh`: Der `lib/log.sh`-Source-Block wurde von
+  ~Z.345 zu Z.75 vorgezogen (direkt nach der `CONTROL_DIR`-
+  Definition), damit `log_error`/`log_warn` moeglichst frueh
+  verfuegbar sind. Pre-2.0.5-Inline-Fallback bleibt als
+  Kompatibilitaetsnetz drin, ebenfalls mit stderr-Split.
+- `wsl-sandbox-init.sh`: Die Inline-log-Defs wurden an den
+  absoluten Script-Anfang (direkt nach `set -euo pipefail`)
+  gezogen — auch die Parameter-Validierung ganz oben kann
+  jetzt `log_error` nutzen.
+
+### Notes
+
+- Semantisch identisches Format `[LEVEL] message` — Scripts, die
+  nach Prefixen grep'en, bleiben funktionsfaehig. Einzige
+  User-sichtbare Aenderung: FEHLER-Zeilen haben jetzt **Brackets**
+  und ANSI-rot (frueher `FEHLER: ...` ohne Brackets, ohne Farbe).
+- **Pipe-Breaking-Warnung**: User, die ihren agentbox-Output in
+  eine Logdatei umleiten und dabei **nur** stdout erwischen
+  (z.B. `agentbox > log.txt`), sehen ab 2.0.14 WARN/ERROR-Zeilen
+  nicht mehr in der Datei. Fuer alle Zeilen zusammen:
+  `agentbox > log.txt 2>&1`. Fuer saubere Fehlertrennung:
+  `agentbox 1>info.log 2>errors.log`.
+- PowerShell-Seite bewusst unberuehrt. `Write-Host` in PS laeuft
+  outside dem stdout/stderr-Modell; Migration haette keinen
+  praktischen Nutzen, nur Kosten (Option C wurde verworfen).
+- Damit ist der einzige dokumentierte Follow-up aus dem Umbrella-
+  Refactor erledigt. `refactor.md` verliert den letzten offenen
+  Punkt.
+
 ## [2.0.13] - 2026-04-17
 
 ### Docs — refactor.md auf Philosophie reduziert
