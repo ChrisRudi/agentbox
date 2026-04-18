@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang=de>
+<meta charset=utf-8>
+<title>agentbox-bench Wirkungsgrad</title>
+<style>
+body{font:14px/1.5 system-ui,sans-serif;max-width:780px;margin:2rem auto;padding:0 1rem;color:#222}
+h1{margin-bottom:.2rem}
+.sub{color:#666;margin-bottom:1.5rem}
+table{width:100%;border-collapse:collapse;margin-bottom:1rem}
+th,td{padding:.5rem .7rem;border-bottom:1px solid #ddd;text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{background:#f4f4f4;font-weight:600}
+.u{color:#888;font-size:.85em}
+.na{color:#bbb}
+.good{background:#d4f4d4;font-weight:600}
+.ok{background:#fff4c4;font-weight:600}
+.bad{background:#f8d4d4;font-weight:600}
+.meta{font-size:.85em;color:#666;margin-top:1.5rem}
+</style>
+<h1>agentbox-bench &mdash; Wirkungsgrad</h1>
+<div class=sub>Durchschnittswerte aus 2 Host- und 2 Sandbox-Lauf/Laeufen. Build: 2026-04-18T16:05:20+02:00</div>
+<table>
+<thead><tr><th>Metrik</th><th>Host (&Oslash;)</th><th>Sandbox (&Oslash;)</th><th>Wirkungsgrad</th></tr></thead>
+<tbody>
+<tr><td>Netzwerk-Download</td><td>26.86 <span class=u>MB/s</span></td><td>29.6 <span class=u>MB/s</span></td><td class=ok>90.7 %</td></tr>
+<tr><td>Disk seq write (1 GB)</td><td>370.34 <span class=u>MB/s</span></td><td>395 <span class=u>MB/s</span></td><td class=ok>93.8 %</td></tr>
+<tr><td>Disk small files (10'000 x 4 B)</td><td>1661 <span class=u>files/s</span></td><td>10253.5 <span class=u>files/s</span></td><td class=bad>16.2 %</td></tr>
+<tr><td>CPU SHA256 (500 MB)</td><td>145.12 <span class=u>MB/s</span></td><td>179.4 <span class=u>MB/s</span></td><td class=ok>80.9 %</td></tr>
+<tr><td>Process spawn (500 procs)</td><td>31 <span class=u>procs/s</span></td><td>656 <span class=u>procs/s</span></td><td class=bad>4.7 %</td></tr>
+</tbody>
+</table>
+<div class=meta>
+Wirkungsgrad = host / sandbox &times; 100&nbsp;%, gedeckelt auf 100&nbsp;%. 100&nbsp;% = Sandbox bremst nicht.<br>
+Quelle: <code>bench-results.jsonl</code>. Generiert von <code>bench.ps1</code> beim Build.
+</div>
+</html>
