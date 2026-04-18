@@ -5,6 +5,40 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.11] - 2026-04-17
+
+### Changed — win-task-runner.ps1 nutzt lib/config.ps1
+
+Etappe 3 Teil D aus `refactor.md`. Gleiche Struktur wie Teil B+C:
+Config-Parse (Z.27-36) ueber `Read-AgentboxConfig` mit Test-Path-
+guarded + try/catch-wrapped Source und Inline-Fallback.
+
+### Revidiert — kein Invoke-Native-Wrap in Teil D
+
+Das Original-Ziel 3.4 aus `refactor.md` („Native-Calls Z.252-265 in
+`Invoke-Native` einhuellen — latenter Crash-Fix") war eine
+Fehldiagnose. Z.252-265 nutzt `Start-Process -Wait -NoNewWindow
+-PassThru` (nicht direkte `& git.exe`-Invocation). Stderr wird dabei
+nicht durch PowerShells Error-Stream geroutet; der ExitCode kommt
+aus dem Process-Objekt. Kein Crash-Risiko unter
+`$ErrorActionPreference="Stop"`, also kein Wrapper noetig.
+
+### Bewusst nicht gemacht
+
+`Write-Log` (Z.77-87) bleibt als lokale Funktion. 30+ Call-Sites
+referenzieren den Namen; Umbenennen auf `Write-AgentboxLog` waere
+reine Noise bei semantisch identischem Verhalten. Die lokale
+Definition ist bereits aequivalent.
+
+### Notes
+
+Kein Template-Rebuild, kein Installer-Struktur-Wechsel.
+`.update_class` bleibt `minor`. Damit ist Etappe 3 Teil B/C/D
+komplett — die drei PS-Installer-Scripts nutzen jetzt alle
+`lib/config.ps1` mit sicherem Fallback. Nur Teil E (Stop-Mode +
+breiter Invoke-Native-Wrap in win-setup-core.ps1) bleibt offen
+und ist bewusst auf eine dedizierte Session verschoben.
+
 ## [2.0.10] - 2026-04-17
 
 ### Changed — win-setup-core.ps1 nutzt lib/config.ps1

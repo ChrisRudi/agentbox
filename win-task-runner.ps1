@@ -25,14 +25,31 @@ if ($env:OneDrive) {
 $controlDir = Join-Path $baseDir "_control"
 
 # --- config.json laden ---
+# Wenn die gemeinsame Helper-Lib mitgepullt wurde (2.0.7+), nutzen
+# wir Read-AgentboxConfig; sonst faellt der Block auf das Inline-
+# Muster zurueck. Test-Path-guarded + try/catch, damit eine defekte
+# oder fehlende Lib den Task-Runner nie blockiert.
 $configPath = Join-Path $controlDir "config.json"
-$config = $null
-try {
-    if (Test-Path -LiteralPath $configPath) {
-        $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+if (-not (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue)) {
+    $agentboxLibConfig = Join-Path $controlDir "lib\config.ps1"
+    if (Test-Path -LiteralPath $agentboxLibConfig) {
+        try { . $agentboxLibConfig } catch {
+            Write-Host "[INFO] lib/config.ps1 konnte nicht geladen werden — nutze Inline-Fallback." -ForegroundColor Gray
+        }
     }
-} catch {
-    Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
+}
+
+$config = $null
+if (Get-Command Read-AgentboxConfig -ErrorAction SilentlyContinue) {
+    $config = Read-AgentboxConfig -ConfigPath $configPath
+} else {
+    try {
+        if (Test-Path -LiteralPath $configPath) {
+            $config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        }
+    } catch {
+        Write-Host "[INFO] config.json nicht lesbar — verwende Standardwerte." -ForegroundColor Gray
+    }
 }
 
 # base_path_override aus Config anwenden

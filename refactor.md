@@ -108,13 +108,23 @@ Sub-Steps verschoben.
   Stop-Umstellung ist Teil E und braucht Invoke-Native-Wrap-
   Voraussetzungen, nicht in diesem Commit.
 
-### Teil D (offen) — `win-task-runner.ps1` opts-in
+### Teil D ✅ 2.0.11 — `win-task-runner.ps1` opts-in
 
-- [ ] **3.D.1** Source + Config-Parse (Z.30-36) → `Read-AgentboxConfig`.
-- [ ] **3.D.2** `Write-Log` durch Re-Export aus `Write-AgentboxLog`
-  ersetzen (oder beibehalten — Entscheidung je nach Call-Sites).
-- [ ] **3.D.3** Native-Calls Z.252-265 in `Invoke-Native` wrappen
-  (latenter Crash-Fix, Teil des Original-Plans Punkt 3.4).
+- [x] **3.D.1** Config-Parse (Z.27-36) → `Read-AgentboxConfig` mit
+  Test-Path-guarded Source + Inline-Fallback. Gleiche Struktur wie
+  Teil B/C.
+- [x] **3.D.2** `Write-Log` (Z.77-87) bewusst **nicht** umbenannt:
+  30+ Call-Sites referenzieren die Funktion; Umbenennen kostet viel
+  Noise bei identischem Verhalten. Die lokale Definition ist bereits
+  semantisch-aequivalent zu `Write-AgentboxLog`. Kein Gewinn durch
+  Migration.
+- [x] **3.D.3** Native-Calls-Wrap **revidiert**: Z.252-265 nutzt
+  `Start-Process -Wait -NoNewWindow -PassThru`, nicht direkte
+  `& git.exe`-Invocation. Stderr wird nicht durch PowerShells
+  Error-Stream geroutet, ExitCode wird aus dem Process-Objekt
+  gelesen. Kein Crash-Risiko unter `$ErrorActionPreference="Stop"`,
+  also kein `Invoke-Native`-Wrap noetig. Urspruengliche Planung im
+  Ur-Plan war eine Fehldiagnose.
 
 ### Teil E (offen, sensibel) — `$ErrorActionPreference='Stop'`
 
@@ -216,7 +226,6 @@ Ziel: Befund F, H. Niedrige Prio. Bewusst in Teil 1 + Teil 2 gesplittet.
 | 2026-04-17 | 2.0.4-Hotfix (Bug-1+2 aus Etappe 4) | 2.0.8 | done |
 | 2026-04-17 | Etappe 3 Teil B (install.ps1 post-Clone) | 2.0.9 | done (Host-Test OK) |
 | 2026-04-17 | Etappe 3 Teil C (win-setup-core.ps1) | 2.0.10 | done (Smoke-Test User offen) |
-| — | Etappe 3 Teil C (win-setup-core.ps1 opts-in) | — | offen |
-| — | Etappe 3 Teil D (win-task-runner.ps1 opts-in) | — | offen |
+| 2026-04-17 | Etappe 3 Teil D (win-task-runner.ps1) | 2.0.11 | done (Smoke-Test User offen) |
 | — | Etappe 3 Teil E (Stop-Mode + Invoke-Native-Wrap) | — | offen (hoch-risk) |
 | — | Etappe 5 Teil 3 (Stderr-Split) | — | offen (Follow-up) |
