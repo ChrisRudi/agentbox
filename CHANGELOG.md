@@ -5,6 +5,17 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.13] - 2026-04-18
+
+### Removed -- Historischer Kontext-Kommentar in Invoke-BuildAction
+
+Der 12-Zeilen-Kommentarblock aus 2.2.11, der die cmd-chain-Historie +
+den Parser-Landmine-Fix dokumentierte, ist raus. Nach dem erfolgreichen
+End-to-End-Test beim User (Runner parst, 3 pending Tasks abgearbeitet,
+bench.ps1 feuert durch) wird die Historie nicht mehr im Code benoetigt
+-- sie steht im CHANGELOG (2.2.3, 2.2.11, 2.2.12). Im Code spricht der
+direkte Start-Process-Aufruf fuer sich.
+
 ## [2.2.12] - 2026-04-18
 
 ### Fixed -- win-task-runner.ps1: non-ASCII chars (em-dash, arrow) brechen PS 5.1 Parser

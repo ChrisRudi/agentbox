@@ -229,18 +229,6 @@ function Invoke-BuildAction {
 
     Write-Log "Fuehre Build aus: $buildCmd" "INFO"
 
-    # Historischer Kontext (2.2.3): frueher lief der Build-Step ueber
-    # einen cmd-Chain-Ausdruck, der das cmd-Operator-Zeichen mitten im
-    # PS-Double-Quoted-String enthielt. PS 5.1 bricht beim Tokenisieren
-    # dieses Ausdrucks ab und meldet die beiden Ampersands als kein
-    # gueltiges Anweisungstrennzeichen. Diese Hinweiszeilen duerfen den
-    # Bug-Trigger selbst NICHT wiederholen -- also weder cmd-Operator
-    # noch Backtick-Escapes im Kommentar, sonst crasht der Parser schon
-    # hier. Siehe CHANGELOG 2.2.3 fuer die Original-Analyse.
-    #
-    # Aktuelle Loesung: kein cmd-chain, sondern Start-Process mit
-    # -WorkingDirectory. cmd.exe /c bekommt nur den reinen Build-Command,
-    # die CWD wird vom Start-Process-Cmdlet gesetzt.
     $process = Start-Process -FilePath "cmd.exe" `
         -ArgumentList "/c", $buildCmd `
         -WorkingDirectory $ProjectDir `
