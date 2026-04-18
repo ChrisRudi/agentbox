@@ -5,6 +5,42 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.16] - 2026-04-18
+
+### Fixed + Changed — `[v]`-Key im Post-Install-Timer: jetzt reaktiv + persistent
+
+Zwei Fixes am 2.0.15-Feature, basierend auf Praxis-Feedback:
+
+**1. `V` wurde stumm geschluckt.** Die Key-Loop hat nur `$key.Key` gegen
+den ConsoleKey-Enum gematcht. In manchen PS-Hosts (abhaengig vom
+Keyboard-Layout / Input-Mode) kommt das Zeichen aber nur in
+`$key.KeyChar` an. Jetzt wird beides geprueft (`$key.Key -eq 'V'
+-or $kc -eq 'V'`), und der gedrueckte Buchstabe wird direkt nach der
+Loop farbig echoed (` v`, ` j`, ` n`) — damit sieht der User sofort
+dass die Taste registriert wurde. Gleiche Defensive auch fuer `N` /
+`J` / `Y`.
+
+**2. `V` persistiert jetzt als Default — nicht nur einmalig.** Bisher
+war `V` ein reiner Session-Override: Config + Shortcut blieben wie
+vorher. Das widersprach der User-Intuition ("was ich da waehle, soll
+der Default sein"). Jetzt laeuft bei `V` die volle VS-Code-Umstellung:
+
+- `launch_ui=vscode` wird in `config.json` persistiert (gleicher
+  Smart-Merge wie der fruehere Launcher-Prompt).
+- Das VS-Code-Terminal-Profil wird via `Merge-AgentboxVsCodeSettings`
+  in die User-`settings.json` gemerged (falls vorher `launch_ui=wt`
+  war, ist das noch nie passiert).
+- Alter `agentbox.lnk` (wt) wird von Desktop + Start-Menue geloescht,
+  `agentbox (VS Code).lnk` angelegt (`New-AgentboxShortcut -Mode
+  vscode`).
+- Fehlt VS Code komplett und winget ist da, wird VS Code on-the-fly
+  via `winget install Microsoft.VisualStudioCode` nachgezogen
+  (~100 MB, einmalig). Schlaegt auch das fehl → Warnung + Fallback
+  in die wt/wsl-Chain, kein Config-Change.
+
+Prompt-Text ergaenzt: `(..., v = VS Code + Filewatch, wird neuer
+Default)` — damit klar ist dass es kein Session-Override mehr ist.
+
 ## [2.0.15] - 2026-04-18
 
 ### Added — Einmalige VS-Code-Option im Post-Install-Timer

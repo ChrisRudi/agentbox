@@ -1409,7 +1409,7 @@ Write-Host "  - Oder Konsole: wsl -d agentbox-host" -ForegroundColor White
 Write-Host ""
 
 # --- Direkt starten? ---
-Write-Host "Jetzt agentbox starten? [J/n/v] (5s Timeout = ja, v = VS Code + Filewatch)" -ForegroundColor Cyan -NoNewline
+Write-Host "Jetzt agentbox starten? [J/n/v] (5s Timeout = ja, v = VS Code + Filewatch, wird neuer Default)" -ForegroundColor Cyan -NoNewline
 $startNow = $true
 $forceVsCode = $false
 $timeoutSec = 5
@@ -1417,29 +1417,125 @@ $startTime = Get-Date
 while (((Get-Date) - $startTime).TotalSeconds -lt $timeoutSec) {
     if ([Console]::KeyAvailable) {
         $key = [Console]::ReadKey($true)
-        if ($key.Key -eq 'N') { $startNow = $false; break }
-        if ($key.Key -eq 'V') { $forceVsCode = $true; break }
-        if ($key.Key -eq 'Enter' -or $key.Key -eq 'J' -or $key.Key -eq 'Y') { break }
+        # Defensive Matching: einige Hosts liefern $key.Key als ConsoleKey-
+        # Enum, andere nur $key.KeyChar als Char — beide checken. Und wir
+        # echoen die Taste sofort, damit der User sieht dass sie registriert
+        # wurde (Bug in 2.0.15: V wurde stumm geschluckt wenn KeyChar-Pfad
+        # griff statt Key-Pfad).
+        $kc = "$($key.KeyChar)".ToUpperInvariant()
+        if ($key.Key -eq 'N' -or $kc -eq 'N') {
+            Write-Host " n" -ForegroundColor Yellow
+            $startNow = $false
+            break
+        }
+        if ($key.Key -eq 'V' -or $kc -eq 'V') {
+            Write-Host " v" -ForegroundColor Green
+            $forceVsCode = $true
+            break
+        }
+        if ($key.Key -eq 'Enter' -or $key.Key -eq 'J' -or $key.Key -eq 'Y' -or $kc -eq 'J' -or $kc -eq 'Y') {
+            Write-Host " j" -ForegroundColor Green
+            break
+        }
     }
     Start-Sleep -Milliseconds 100
 }
-Write-Host ""
+if ($startNow -and -not $forceVsCode) {
+    # Timeout oder Enter ohne explizites Key-Echo → eine Leerzeile fuer
+    # sauberen Umbruch zur naechsten Meldung.
+    Write-Host ""
+}
 
 if ($startNow) {
     Write-Host ""
     # Start-Pfad nach gleicher Praeferenz wie Shortcut:
-    #   forceVsCode (User hat [v] gedrueckt) → einmaliger Override auf
-    #     Workspace-File, unabhaengig vom persistierten launch_ui. VS Code
-    #     wird on-the-fly via Find-VsCodeExe gesucht (falls launch_ui=wt
-    #     vorher nicht geprobed hat). Fehlt VS Code → Fallback in die
-    #     wt/wsl-Chain mit Warnung.
+    #   forceVsCode (User hat [v] gedrueckt) → einmaliger Override UND
+    #     Default-Switch: launch_ui=vscode wird in config.json persistiert,
+    #     VS Code wird bei Bedarf via winget nachinstalliert, das settings.json-
+    #     Terminal-Profil wird gemerged, der alte wt-Shortcut weggeraeumt
+    #     und ein neuer VS-Code-Shortcut angelegt. Danach wird VS Code mit
+    #     dem Workspace fuer diese Session gestartet. Schlaegt irgendwas
+    #     in der Kette fehl (kein winget / kein VS Code danach) → Fallback
+    #     in die wt/wsl-Chain, kein Config-Change.
     #   launch_ui=vscode + VS Code da → Workspace-File oeffnen (Task feuert)
     #   sonst wt verfuegbar           → neues wt-Fenster mit agentbox
     #   sonst                         → wsl.exe in-place
     $workspaceStart = Join-Path $controlDir "agentbox.code-workspace"
+
     if ($forceVsCode) {
+        # 1) VS Code auftreiben. Bei launch_ui=wt wurde er weder geprobed
+        #    noch installiert — also on-the-fly.
         if (-not $vsCodeExe) { $vsCodeExe = Find-VsCodeExe }
+        if (-not $vsCodeExe -and (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+            Write-Host "VS Code fehlt — installiere via winget (~100 MB, einmalig)..." -ForegroundColor Cyan
+            Invoke-Native {
+                & winget.exe install --id Microsoft.VisualStudioCode --exact `
+                    --accept-source-agreements --accept-package-agreements `
+                    --scope user --silent 2>&1 | ForEach-Object { "$_" }
+            }
+            $vsCodeExe = Find-VsCodeExe
+            if ($vsCodeExe) { Write-Host "[OK] VS Code installiert: $vsCodeExe" -ForegroundColor Green }
+        }
+
         if ($vsCodeExe -and (Test-Path -LiteralPath $workspaceStart)) {
+            # 2) VS-Code-Terminal-Profil in User-settings.json mergen (falls
+            #    launch_ui vorher !=vscode war, ist das noch nie passiert).
+            try {
+                $vsCodeSettingsPath = Join-Path $env:APPDATA "Code\User\settings.json"
+                $mergeStatus = Merge-AgentboxVsCodeSettings -Path $vsCodeSettingsPath
+                switch ($mergeStatus) {
+                    "created"        { Write-Host "[OK] VS Code Terminal-Profil 'agentbox' angelegt" -ForegroundColor Green }
+                    "replaced-empty" { Write-Host "[OK] VS Code Terminal-Profil 'agentbox' angelegt" -ForegroundColor Green }
+                    "merged"         { Write-Host "[OK] VS Code Terminal-Profil 'agentbox' eingefuegt" -ForegroundColor Green }
+                    "already-set"    { } # ruhig durchwinken
+                    default          { }
+                }
+            } catch {
+                Write-Host "[WARN] VS Code settings.json-Merge fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+
+            # 3) launch_ui=vscode persistieren — ab jetzt ist VS Code Default.
+            try {
+                if ($installConfig -and $installConfig.PSObject.Properties['launch_ui']) {
+                    $installConfig.launch_ui = "vscode"
+                } elseif ($installConfig) {
+                    $installConfig | Add-Member -NotePropertyName launch_ui -NotePropertyValue "vscode" -Force
+                }
+                if ($installConfig) {
+                    $newJson = $installConfig | ConvertTo-Json -Depth 20
+                    $newJson = $newJson -replace "`r`n", "`n" -replace "`r", "`n"
+                    if (-not $newJson.EndsWith("`n")) { $newJson += "`n" }
+                    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+                    [IO.File]::WriteAllText($installConfigPath, $newJson, $utf8NoBom)
+                    Write-Host "[OK] launch_ui = vscode (neuer Default in config.json)" -ForegroundColor Green
+                }
+            } catch {
+                Write-Host "[WARN] launch_ui konnte nicht in config.json gespeichert werden — Wahl gilt nur fuer diesen Run." -ForegroundColor Yellow
+            }
+
+            # 4) Shortcuts auf VS-Code-Default umstellen: alten wt-Shortcut
+            #    (agentbox.lnk) entfernen, VS-Code-Shortcut (agentbox (VS
+            #    Code).lnk) anlegen/ueberschreiben. Gleicher Stil wie der
+            #    Legacy-Cleanup + New-AgentboxShortcut-Loop oben.
+            try {
+                $shortcutShell = New-Object -ComObject WScript.Shell
+                foreach ($dir in @($desktopPath, $startMenuPath)) {
+                    $oldLnk = Join-Path $dir "agentbox.lnk"
+                    if (Test-Path -LiteralPath $oldLnk) {
+                        try { [System.IO.File]::Delete($oldLnk) } catch { }
+                    }
+                    $newLnk = Join-Path $dir "agentbox (VS Code).lnk"
+                    New-AgentboxShortcut -Shell $shortcutShell -Path $newLnk -Mode "vscode" `
+                        -VsCodeExe $vsCodeExe -WorkspaceFile $workspaceStart
+                    if (Test-Path -LiteralPath $newLnk) {
+                        Write-Host "[OK] Shortcut: $newLnk" -ForegroundColor Green
+                    }
+                }
+            } catch {
+                Write-Host "[WARN] Shortcut-Update fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+
+            # 5) VS Code fuer diese Session starten.
             Write-Host "Oeffne VS Code mit agentbox-Workspace (Filewatch)..." -ForegroundColor Green
             Write-Host ""
             try {
@@ -1449,10 +1545,16 @@ if ($startNow) {
                 $forceVsCode = $false
             }
         } else {
-            Write-Host "WARNUNG: VS Code nicht gefunden — fallback auf Standard-Launcher." -ForegroundColor Yellow
+            if (-not $vsCodeExe) {
+                Write-Host "WARNUNG: VS Code nicht gefunden und konnte nicht automatisch installiert werden — fallback auf Standard-Launcher." -ForegroundColor Yellow
+                Write-Host "         Installiere VS Code manuell und re-run install.ps1, oder setze launch_ui='vscode' in config.json." -ForegroundColor Gray
+            } else {
+                Write-Host "WARNUNG: agentbox.code-workspace nicht gefunden unter $workspaceStart — fallback auf Standard-Launcher." -ForegroundColor Yellow
+            }
             $forceVsCode = $false
         }
     }
+
     if ($forceVsCode) {
         # VS-Code-Start war erfolgreich, nichts weiter tun.
     } elseif ($launchUi -eq "vscode" -and $hasVsCode -and (Test-Path -LiteralPath $workspaceStart)) {
