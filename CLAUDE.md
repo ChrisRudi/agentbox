@@ -1,15 +1,12 @@
 # agentbox — Projekt-Memory
 
-## Laufender Architektur-Refactor (session-übergreifend)
+## Architektur-Refactor (abgeschlossen 2026-04-17)
 
-Es existiert ein aktiver, mehrstufiger Refactor-Plan: `refactor.md` im
-Repo-Root. Die Arbeit wird über mehrere Claude-Sessions hinweg
-abgearbeitet — nicht in einem Rutsch. Wenn eine neue Session startet:
-`refactor.md` lesen, die nächste offene Etappe identifizieren,
-**eine** Etappe (oder Sub-Etappe) umsetzen, committen, pushen, das
-Fortschritts-Log in `refactor.md` aktualisieren. Installer muss nach
-jeder Etappe grün bleiben — bei Unsicherheit Etappe splitten oder mit
-dem User rückfragen.
+Der Umbrella-Refactor aus 2.0.2–2.0.12 ist durch. Prinzipien und
+bewusste Skip-Entscheidungen stehen in `refactor.md`; die einzelnen
+Etappen und Rationalen im `CHANGELOG.md`. Fuer zukuenftige Refactors
+auf derselben Basis: `refactor.md` ist der Startpunkt, nicht
+`CHANGELOG`.
 
 ## Projektziel & Architektur-Constraints
 

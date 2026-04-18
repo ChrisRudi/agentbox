@@ -5,6 +5,31 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.13] - 2026-04-17
+
+### Docs — refactor.md auf Philosophie reduziert
+
+Pure Doku-Release. Nach Abschluss des Umbrella-Refactors (2.0.2–
+2.0.12) enthielt `refactor.md` knapp 250 Zeilen Befundkatalog + pro-
+Etappe-Checklisten, die alle durch waren und Details nur noch im
+CHANGELOG aktuell gehalten werden mussten.
+
+- `refactor.md` auf ~70 Zeilen geschrumpft. Behalten: die
+  Grundregeln fuer agentbox-Refactors (Commit-auf-main, Installer
+  muss nach jeder Etappe gruen bleiben, Kosten/Nutzen-Check,
+  Minor-Release-mit-Fallback, `.update_class`-Hygiene,
+  `template_schema`-Bump-Regel, Doku-im-selben-Commit), die
+  „bewusst-nicht-gemacht"-Liste als Richtungshinweis fuer
+  Nachfolge-Refactors, und der eine offene Follow-up
+  (Stderr-Split).
+- `CLAUDE.md`: Section „Laufender Architektur-Refactor" wurde
+  in „Architektur-Refactor (abgeschlossen 2026-04-17)"
+  umbenannt und auf einen 5-Zeiler reduziert. Verweist weiter
+  auf `refactor.md` als Startpunkt fuer zukuenftige Refactors
+  auf derselben Basis.
+
+Keine Code-Aenderung. `.update_class` bleibt `minor`.
+
 ## [2.0.12] - 2026-04-17
 
 ### Decided — Etappe 3 Teil E wird nicht umgesetzt
