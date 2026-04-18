@@ -178,7 +178,7 @@ Automatisch erkannte Typen und ihre Defaults:
 |-------------------|--------------|----------------------|
 | `package.json` | `node` | `npm run build` |
 | `*.py` | `python` | `pip install -r requirements.txt` |
-| `*.ps1` | `powershell` | — |
+| `*.ps1` | `powershell` | `powershell -File build.ps1` |
 | `*.html` | `html` | — |
 | (nichts davon) | `generic` | — |
 

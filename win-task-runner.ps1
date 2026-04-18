@@ -76,7 +76,8 @@ $buildWhitelist = if ($config -and $config.build_whitelist) {
         "python setup.py install",
         "dotnet build",
         "make",
-        "powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1"
+        "powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1",
+        "powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1"
     )
 }
 

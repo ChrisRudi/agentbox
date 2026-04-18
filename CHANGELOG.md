@@ -5,6 +5,40 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.14] - 2026-04-18
+
+### Added -- Default-Build-Command fuer type=powershell: build.ps1
+
+Parallel zu `npm run build` (node) und `pip install -r requirements.txt`
+(python) bekommt `type=powershell` jetzt einen konventions-basierten
+Default-Build-Command: `powershell -NoProfile -ExecutionPolicy Bypass
+-File build.ps1`. Wer ein neues PS-Projekt anlegt, legt einfach eine
+`build.ps1` im Projekt-Root ab, und der Task-Runner feuert die beim
+`[3] Benchmark ausfuehren`-Trigger. Kein Config-Gefummel mehr, kein
+expliziter build.command in project.json noetig.
+
+Geaenderte Dateien:
+
+- `type_defaults.json`: powershell-Default von `build: null` auf
+  build-Command + output_dir "build_out"
+- `config.json`: neuer Whitelist-Eintrag (parallel zum existierenden
+  bench.ps1-Eintrag aus 2.2.0)
+- `win-task-runner.ps1`: Inline-Fallback-Whitelist um denselben
+  Eintrag ergaenzt, damit die Runner-Logik auch ohne config.json-Read
+  den Command akzeptiert
+- `README.md` + `docs/README.de.md`: Auto-Detect-Tabelle zeigt jetzt
+  `powershell -File build.ps1` statt `-` in der powershell-Zeile
+
+Whitelist-Semantik bleibt **exakt-match, kein Wildcard, kein Prefix**
+(CLAUDE.md-Regel). Der neue Eintrag ist ein fester String wie jeder
+andere Whitelist-Eintrag -- die Konvention lebt ausschliesslich ueber
+den Datei-Namen `build.ps1`, nicht ueber Pattern-Matching in der
+Whitelist.
+
+Bestehende Projekte (inkl. demo-benchmark, das `bench.ps1` direkt
+nennt) sind unberuehrt: ihre project.json-Entries ueberschreiben den
+Default.
+
 ## [2.2.13] - 2026-04-18
 
 ### Removed -- Historischer Kontext-Kommentar in Invoke-BuildAction

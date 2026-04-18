@@ -25,7 +25,8 @@
     "python setup.py install",
     "dotnet build",
     "make",
-    "powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File bench.ps1",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1"
   ],
   "deploy_whitelist": [
     "local",
