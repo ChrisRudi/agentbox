@@ -1,10 +1,19 @@
-# bench.ps1 v3.0.0 -- agentbox Host-Baseline + Build-Schritt (Demo-Projekt)
+# bench.ps1 v3.0.2 -- agentbox Host-Baseline + Build-Schritt (Demo-Projekt)
 #
 # Paar-Script zu bench.sh. Beide schreiben in dasselbe bench-results.json,
-# aber **strict overwrite** pro Seite (nur letzter Run bleibt): diese .ps1
-# mergt ihren Run in .host, bench.sh in .sandbox. Nach dem Messen liest
-# diese .ps1 beide Seiten und generiert index.html mit Wirkungsgrad.
-# Am Ende wird die HTML-Datei im Standard-Browser geoeffnet (Start-Process).
+# aber **strict overwrite** pro Seite (nur letzter Run bleibt):
+#   - diese .ps1  mergt ihren Run in .host (Windows-nativ)
+#   - bench.sh    mergt in .$BENCH_PLATFORM (Default: .agentbox_host)
+#
+# Benennung: die .agentbox_host-Spalte ist ehrlich -- das Config-Submenue
+# startet bench.sh aus agentbox-host heraus (persistente Host-Distro mit
+# Template + Sysctl, aber OHNE Session-Time-Tunings wie ext4-Overlay,
+# BBR, dnsmasq-Cache). Die "echte" Sandbox (ephemer, session-getuned)
+# wird hier nicht gemessen -- das waere ein separates Future-Feature.
+#
+# Nach dem Messen liest diese .ps1 beide Seiten und generiert
+# index.html mit Wirkungsgrad. Am Ende oeffnet Start-Process die HTML
+# im Standard-Browser.
 #
 # Tests: 1) Netz 100 MB  2) Disk seq 1 GB  3) 10'000 small files
 #        4) CPU SHA256 500 MB  5) 500 x cmd /c exit
@@ -12,7 +21,7 @@
 # Hinweis: Windows-Defender kann Disk + Spawn druecken. Zum Validieren
 # kurz Defender-Exclusion auf $env:TEMP setzen.
 
-$BENCH_VERSION = "3.0.1"
+$BENCH_VERSION = "3.0.2"
 
 $ErrorActionPreference = 'Stop'
 $tmp     = $env:TEMP
@@ -173,22 +182,26 @@ try {
     }
 
     # Bestehende JSON laden (falls da), oder leeres Objekt anlegen.
-    $existing = [ordered]@{ host = $null; sandbox = $null }
+    # Bestehende JSON als Hashtable preservieren -- andere Platform-Keys
+    # (agentbox_host, evtl. spaeter sandbox/default_wsl) duerfen nicht
+    # verloren gehen, nur .host wird ueberschrieben.
+    $existing = [ordered]@{}
     if (Test-Path -LiteralPath $outFile) {
         try {
             $raw = [IO.File]::ReadAllText($outFile)
             if (-not [string]::IsNullOrWhiteSpace($raw)) {
                 $parsed = $raw | ConvertFrom-Json
-                # ConvertFrom-Json liefert PSCustomObject; wir kopieren die
-                # sandbox-Seite (falls vorhanden) und ueberschreiben host.
-                if ($parsed.sandbox) { $existing.sandbox = $parsed.sandbox }
-                if ($parsed.host)    { $existing.host    = $parsed.host }
+                foreach ($prop in $parsed.PSObject.Properties) {
+                    if ($prop.Name -ne "host") {
+                        $existing[$prop.Name] = $prop.Value
+                    }
+                }
             }
         } catch {
             Write-Host "[WARN] bestehende JSON konnte nicht gelesen werden, ueberschreibe: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     }
-    $existing.host = $record
+    $existing["host"] = $record
     [IO.File]::WriteAllText($outFile, (ConvertTo-Json $existing -Depth 5) + "`n", $utf8NoBom)
 } catch {
     Write-Host "[WARN] JSON-Write fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -200,14 +213,13 @@ Write-Host "========================================"
 Write-Host " Build: index.html generieren" -ForegroundColor Cyan
 Write-Host "========================================"
 
-function Ratio($s, $h) {
-    # Wirkungsgrad = sandbox / host. Kein Cap -- wenn die Sandbox
-    # schneller ist als der Host (ext4 in vhdx gegen DrvFs/NTFS), soll
-    # das als > 100 % sichtbar werden. Das ist ja der agentbox-Selling-
-    # Point: die Sandbox bremst nicht, sondern kann den Host bei
-    # File-Heavy-Workloads sogar ueberholen.
-    if (-not $s -or -not $h -or $h -eq 0) { return $null }
-    return [Math]::Round(($s / $h) * 100, 1)
+function Ratio($wsl, $h) {
+    # Wirkungsgrad = WSL / host. Kein Cap -- wenn die WSL-Seite schneller
+    # ist als der Host (z.B. ext4 small-files gegen DrvFs/NTFS), soll das
+    # als > 100 % sichtbar werden. Argument-Reihenfolge (wsl, host) ist
+    # historisch; an den Call-Sites steht (wsl_val, host_val).
+    if (-not $wsl -or -not $h -or $h -eq 0) { return $null }
+    return [Math]::Round(($wsl / $h) * 100, 1)
 }
 function Cell($v, $unit) {
     if ($null -eq $v) { return "<td class=na>n/a</td>" }
@@ -225,19 +237,24 @@ function GetField($obj, $field) {
     return $v
 }
 
-# Reload JSON um sandbox-Seite zu bekommen (falls bench.sh vorher lief).
+# Reload JSON um WSL-Seite zu bekommen (falls bench.sh vorher lief).
 $json = $null
 if (Test-Path -LiteralPath $outFile) {
     try { $json = [IO.File]::ReadAllText($outFile) | ConvertFrom-Json } catch {}
 }
 $host_run = GetField $json "host"
-$sand_run = GetField $json "sandbox"
+# Primaerer WSL-Run: agentbox_host (neue Semantik ab v3.0.2). Fallback
+# auf .sandbox fuer alte bench-results.json aus v3.0.0/v3.0.1 -- damit
+# User die ihre Datei aus der Vorversion behalten haben, beim naechsten
+# bench.ps1-Run nicht mit leerer Spalte dastehen, bis bench.sh neu laeuft.
+$wsl_run = GetField $json "agentbox_host"
+if (-not $wsl_run) { $wsl_run = GetField $json "sandbox" }
 
-$h_net = GetField $host_run "net_mbs";                 $s_net = GetField $sand_run "net_mbs"
-$h_seq = GetField $host_run "disk_seq_mbs";            $s_seq = GetField $sand_run "disk_seq_mbs"
-$h_sml = GetField $host_run "disk_small_files_per_s";  $s_sml = GetField $sand_run "disk_small_files_per_s"
-$h_cpu = GetField $host_run "cpu_sha256_mbs";          $s_cpu = GetField $sand_run "cpu_sha256_mbs"
-$h_spw = GetField $host_run "proc_spawn_per_s";        $s_spw = GetField $sand_run "proc_spawn_per_s"
+$h_net = GetField $host_run "net_mbs";                 $s_net = GetField $wsl_run "net_mbs"
+$h_seq = GetField $host_run "disk_seq_mbs";            $s_seq = GetField $wsl_run "disk_seq_mbs"
+$h_sml = GetField $host_run "disk_small_files_per_s";  $s_sml = GetField $wsl_run "disk_small_files_per_s"
+$h_cpu = GetField $host_run "cpu_sha256_mbs";          $s_cpu = GetField $wsl_run "cpu_sha256_mbs"
+$h_spw = GetField $host_run "proc_spawn_per_s";        $s_spw = GetField $wsl_run "proc_spawn_per_s"
 
 $rows = @"
 <tr><td>Netzwerk-Download</td>$(Cell $h_net "MB/s")$(Cell $s_net "MB/s")$(Pct (Ratio $s_net $h_net))</tr>
@@ -248,9 +265,11 @@ $rows = @"
 "@
 
 $host_stamp = GetField $host_run "timestamp"
-$sand_stamp = GetField $sand_run "timestamp"
+$wsl_stamp  = GetField $wsl_run "timestamp"
+$wsl_label  = GetField $wsl_run "platform"
+if (-not $wsl_label) { $wsl_label = "agentbox-host" }
 $host_stamp_txt = if ($host_stamp) { $host_stamp } else { "--" }
-$sand_stamp_txt = if ($sand_stamp) { $sand_stamp } else { "-- (bench.sh noch nicht gelaufen)" }
+$wsl_stamp_txt  = if ($wsl_stamp)  { $wsl_stamp }  else { "-- (bench.sh noch nicht gelaufen)" }
 
 $html = @"
 <!doctype html>
@@ -273,22 +292,23 @@ th{background:#f4f4f4;font-weight:600}
 .meta{font-size:.85em;color:#666;margin-top:1.5rem}
 </style>
 <h1>agentbox-bench &mdash; Wirkungsgrad</h1>
-<div class=sub>Letzter Run pro Seite. Host: $host_stamp_txt &nbsp;|&nbsp; Sandbox: $sand_stamp_txt</div>
+<div class=sub>Letzter Run pro Seite. Host: $host_stamp_txt &nbsp;|&nbsp; $wsl_label: $wsl_stamp_txt</div>
 <table>
-<thead><tr><th>Metrik</th><th>Host</th><th>Sandbox</th><th>Wirkungsgrad</th></tr></thead>
+<thead><tr><th>Metrik</th><th>Host</th><th>$wsl_label</th><th>Wirkungsgrad</th></tr></thead>
 <tbody>
 $rows
 </tbody>
 </table>
 <div class=meta>
-Wirkungsgrad = Sandbox / Host &times; 100&nbsp;%. &gt;100&nbsp;% = Sandbox schneller als Host (ext4 in vhdx vs. DrvFs). 100&nbsp;% = gleich schnell.<br>
+Wirkungsgrad = $wsl_label / Host &times; 100&nbsp;%. &gt;100&nbsp;% = WSL-Seite schneller als Host (z.B. ext4 small-files vs. DrvFs). 100&nbsp;% = gleich schnell.<br>
+Hinweis: <code>agentbox-host</code> ist die persistente Host-Distro mit Template-Paketen + Sysctl, <strong>ohne</strong> Session-Time-Tunings (BBR, ext4-Overlay, dnsmasq-Cache) -- die wirken erst in der ephemeren Agent-Session und werden hier nicht gemessen.<br>
 Quelle: <code>bench-results.json</code>. Generiert von <code>bench.ps1</code> beim Build. Version $BENCH_VERSION.
 </div>
 </html>
 "@
 
 [IO.File]::WriteAllText($htmlOut, $html, $utf8NoBom)
-Write-Host " -> $htmlOut geschrieben (host=$([bool]$host_run), sandbox=$([bool]$sand_run))"
+Write-Host " -> $htmlOut geschrieben (host=$([bool]$host_run), $wsl_label=$([bool]$wsl_run))"
 
 # --- HTML im Standard-Browser oeffnen (Host-only) ---
 if (Test-Path -LiteralPath $htmlOut) {

@@ -1169,9 +1169,13 @@ _run_benchmark_menu() {
     fi
 
     local _out_file="$_demo_dir/bench-results.json"
-    echo "Sandbox-Seite messen (schreibt in $_out_file, Schluessel .sandbox)..."
+    # Honest label: das Config-Submenue laeuft aus agentbox-host heraus,
+    # NICHT aus einer ephemeren session-getunten Sandbox. Der
+    # BENCH_PLATFORM=agentbox_host-Key macht das in bench-results.json
+    # explizit sichtbar.
+    echo "agentbox-host-Seite messen (schreibt in $_out_file, Schluessel .agentbox_host)..."
     echo ""
-    if ! BENCH_OUT="$_out_file" bash "$_demo_dir/bench.sh"; then
+    if ! BENCH_PLATFORM=agentbox_host BENCH_OUT="$_out_file" bash "$_demo_dir/bench.sh"; then
         log_error "bench.sh fehlgeschlagen."
         return
     fi

@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# bench.sh v3.0.0 - agentbox Sandbox-Baseline (Linux, ext4 in vhdx)
+# bench.sh v3.0.2 - agentbox WSL-Seite (Linux)
 #
-# Paar-Script zu bench.ps1. Beide schreiben in dasselbe bench-results.json,
-# aber **strict overwrite** pro Seite: diese .sh mergt ihren Run in
-# .sandbox, bench.ps1 in .host. Identische Workloads auf beiden Seiten
-# -> Wirkungsgrad = sandbox / host (berechnet und gerendert in .ps1).
+# Paar-Script zu bench.ps1. bench.ps1 misst den Windows-Host, dieses
+# Script misst die jeweilige WSL-Distro in der es laeuft. Beide schreiben
+# in dasselbe bench-results.json mit strict-overwrite pro Schluessel:
+#   - bench.ps1  -> .host
+#   - bench.sh   -> .$BENCH_PLATFORM   (Default: agentbox_host)
+#
+# Warum BENCH_PLATFORM? Das Config-Submenue in wsl-ai-start.sh startet
+# diesen Bench aus agentbox-host (persistente Host-Distro) HEARUS, nicht
+# aus der tatsaechlich getunten ephemeren Sandbox. Honest labeling:
+# wir messen agentbox-host. Spaeteres Feature B/C kann bench.sh mit
+# BENCH_PLATFORM=sandbox aus einer frisch-getunten Sandbox heraus
+# aufrufen -- das landet dann unter einem anderen Schluessel.
 #
 # Tests:
 #   1. Netzwerk: 100 MB download (Multi-URL-Fallback, gleiche Reihenfolge wie .ps1)
@@ -13,14 +21,13 @@
 #   4. CPU:  SHA256 ueber 500 MB Nullen (single-thread)
 #   5. Prozesse: 500 x /bin/true (fork+exec Overhead)
 #
-# Disk-Tests laufen in $BENCH_DIR (Default /tmp = ext4 in vhdx, Fast-Path).
-# Fuer DrvFs-Messung: BENCH_DIR=/workspace/src bash src/bench.sh
-#
+# Disk-Tests laufen in $BENCH_DIR (Default /tmp).
 # Kein HTML, kein Browser-Trigger - das ist Host-Sache (bench.ps1).
 
 set -u
 
-BENCH_VERSION="3.0.1"
+BENCH_VERSION="3.0.2"
+BENCH_PLATFORM="${BENCH_PLATFORM:-agentbox_host}"
 BENCH_DIR="${BENCH_DIR:-/tmp}"
 BENCH_OUT="${BENCH_OUT:-$(pwd)/bench-results.json}"
 STAMP=$(date -Iseconds 2>/dev/null || date '+%Y-%m-%d %H:%M:%S')
@@ -32,9 +39,9 @@ case "$BENCH_DIR" in
 esac
 
 echo "========================================"
-echo " agentbox-bench v$BENCH_VERSION platform=sandbox"
+echo " agentbox-bench v$BENCH_VERSION platform=$BENCH_PLATFORM"
 echo "========================================"
-echo " JSON-Out: $BENCH_OUT"
+echo " JSON-Out: $BENCH_OUT (Schluessel .$BENCH_PLATFORM)"
 
 # --- 1. Network: 100 MB download mit Multi-URL-Fallback ---
 echo ""
@@ -125,16 +132,17 @@ SPAWN_ELAPSED=$(awk "BEGIN{printf \"%.3f\", $END - $START}")
 SPAWN_PER_S=$(awk "BEGIN{printf \"%d\", 500 / $SPAWN_ELAPSED}")
 echo "   -> $SPAWN_PER_S procs/s (in ${SPAWN_ELAPSED}s)"
 
-# --- JSON merge: .sandbox-Seite ueberschreiben, .host bleibt erhalten ---
+# --- JSON merge: .$BENCH_PLATFORM-Seite ueberschreiben, andere Keys bleiben ---
 # python3 ist im Sandbox-Template garantiert (wird oben schon fuer SHA256
 # verwendet) - daher kein jq-Fallback noetig.
 OUT_DIR=$(dirname "$BENCH_OUT")
 mkdir -p "$OUT_DIR" 2>/dev/null || true
 
-python3 - "$BENCH_OUT" <<PYEOF
+python3 - "$BENCH_OUT" "$BENCH_PLATFORM" <<PYEOF
 import json, os, sys
 
 out_path = sys.argv[1]
+platform_key = sys.argv[2]
 existing = {}
 if os.path.exists(out_path):
     try:
@@ -149,9 +157,9 @@ if os.path.exists(out_path):
 if not isinstance(existing, dict):
     existing = {}
 
-existing["sandbox"] = {
+existing[platform_key] = {
     "timestamp": "$STAMP",
-    "platform": "sandbox",
+    "platform": platform_key,
     "version": "$BENCH_VERSION",
     "net_mbs": float("$NET_MBS") if "$NET_MBS" else 0.0,
     "net_url": "$NET_URL",
@@ -165,10 +173,10 @@ with open(out_path, 'w', encoding='utf-8') as f:
     json.dump(existing, f, indent=2, ensure_ascii=False)
     f.write("\n")
 
-print(json.dumps(existing["sandbox"], ensure_ascii=False))
+print(json.dumps(existing[platform_key], ensure_ascii=False))
 PYEOF
 
 echo ""
 echo "========================================"
-echo " Ergebnis in $BENCH_OUT (Schluessel .sandbox)"
+echo " Ergebnis in $BENCH_OUT (Schluessel .$BENCH_PLATFORM)"
 echo "========================================"

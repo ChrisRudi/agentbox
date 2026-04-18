@@ -3,23 +3,44 @@
 ## Was ist das?
 
 Dieses Verzeichnis ist ein **mitgeliefertes Beispiel-Projekt**, das den
-Performance-Vorsprung der agentbox-Sandbox (ext4 in vhdx, TCP-Tuning,
-parallele Build-Paths) gegenueber dem nativen Windows-Host demonstriert.
-Beim Install wird der komplette Inhalt **idempotent** nach
-`<AI_PROJECTS_ROOT>\demo-benchmark\` geseedet, damit User direkt einen
-spielbereiten agentbox-Workspace mit Projekt-Auto-Erkennung sehen.
+Performance-Unterschied zwischen Windows-Host und einer WSL-Distro
+misst. Beim Install wird der Inhalt **idempotent** nach
+`<AI_PROJECTS_ROOT>\demo-benchmark\` geseedet.
 
 ## Architektur
 
 Zwei gepaarte Bench-Scripts mit identischen Workloads:
 
 - **`bench.ps1`** (Host, Windows PowerShell 5.1 + PS 7) — misst die
-  Host-Seite, aggregiert beide Seiten zu `bench-results.json`, generiert
-  `index.html` mit Vergleichstabelle und oeffnet sie im Standard-Browser
+  Host-Seite (`.host`), rendert `bench-results.json` zu einer
+  `index.html`-Tabelle und oeffnet sie im Standard-Browser
   (`Start-Process`).
-- **`bench.sh`** (Sandbox, Ubuntu 24.04 in WSL) — misst die Sandbox-Seite
-  und schreibt sie in die gemeinsame `bench-results.json`. Kein HTML,
-  kein Browser-Trigger — das ist Host-Sache.
+- **`bench.sh`** (Linux, in irgendeiner WSL-Distro) — misst die WSL-
+  Seite. Der JSON-Schluessel wird ueber die Env-Variable
+  `BENCH_PLATFORM` bestimmt (Default: `agentbox_host`).
+  Kein HTML, kein Browser-Trigger -- das ist Host-Sache.
+
+## Was ist die `agentbox_host`-Seite?
+
+Das Config-Submenue `[3] Benchmark ausfuehren` in `wsl-ai-start.sh`
+laeuft aus der **persistenten Host-Distro `agentbox-host` heraus**,
+BEVOR die ephemere Agent-Session ueberhaupt importiert und getuned
+wurde. Die gemessene WSL-Seite hat also:
+
+- [x] Template-Paketstand (Node, Python, Agents)
+- [x] Basis-Sysctl-Hardening aus dem Template-Build
+- [ ] **keine** Session-Time-Tunings: kein ext4-Overlay fuer Heavy-I/O,
+      kein BBR, kein dnsmasq-Cache -- die wirken erst in der
+      ephemeren Sandbox waehrend einer Agent-Session.
+
+Deshalb ehrlicher Name: `agentbox_host`. Das HTML sagt das auch in
+der Legende unter der Tabelle explizit.
+
+`BENCH_PLATFORM` ist bewusst parametrisierbar, damit spaetere Features
+(ein `[4] Benchmark inkl. tuned Sandbox`) dieselbe `bench.sh` mit
+`BENCH_PLATFORM=sandbox` aus einer frisch-getunten Sandbox heraus
+aufrufen koennen. Das landet dann neben `.agentbox_host` unter
+`.sandbox` in derselben JSON.
 
 Getestete Metriken pro Seite:
 
@@ -36,14 +57,18 @@ Getestete Metriken pro Seite:
 
 ```json
 {
-  "host":    { "timestamp": "...", "version": "3.0.1", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... },
-  "sandbox": { "timestamp": "...", "version": "3.0.1", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... }
+  "host":          { "timestamp": "...", "platform": "host",          "version": "3.0.2", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... },
+  "agentbox_host": { "timestamp": "...", "platform": "agentbox_host", "version": "3.0.2", "net_mbs": ..., "disk_seq_mbs": ..., "disk_small_files_per_s": ..., "cpu_sha256_mbs": ..., "proc_spawn_per_s": ... }
 }
 ```
 
-Jeder Bench-Lauf liest das File, ueberschreibt **nur seine eigene Seite**
-(`host` oder `sandbox`) und schreibt zurueck. Die andere Seite bleibt
-erhalten, damit bench.ps1 beim HTML-Rendering beide Werte hat.
+Zukuenftig moeglich (nicht jetzt aktiv): `.sandbox` (tuned ephemeral),
+`.default_wsl` (user's plain Ubuntu) als weitere Keys -- dann hat die
+Tabelle mehrere WSL-Spalten.
+
+Jeder Bench-Lauf liest das File, ueberschreibt **nur seinen eigenen
+Key** (per `BENCH_PLATFORM`) und schreibt zurueck. Andere Keys bleiben
+erhalten.
 
 ## Build-Hook — Task-Runner-Integration
 
@@ -54,7 +79,7 @@ noetig):
 
 ```
 Menu [c] Konfiguration -> [3] Benchmark ausfuehren
-  -> bench.sh laeuft synchron in der Sandbox, schreibt .sandbox
+  -> bench.sh laeuft synchron in agentbox-host, schreibt .agentbox_host
   -> Task-JSON landet in demo-benchmark/_tasks/bench-<ts>.json
   -> powershell.exe Write-EventLog Source=AIProjects EventID=2000
   -> Scheduled-Task agentbox-task-runner (EventLog-getriggert) startet
@@ -91,8 +116,8 @@ sondern delegiert an den Host-Runner via EventLog-Trigger.
 | Datei | Zweck |
 |---|---|
 | `bench.ps1` | Host-Bench + HTML-Gen + Browser-Open |
-| `bench.sh`  | Sandbox-Bench, schreibt `.sandbox`-Seite |
-| `bench-results.json` | Output, nur letzter Run pro Seite (gitignored) |
+| `bench.sh`  | WSL-Bench, schreibt `.$BENCH_PLATFORM`-Seite (Default: `.agentbox_host`) |
+| `bench-results.json` | Output, nur letzter Run pro Key (gitignored) |
 | `index.html` | HTML-Report, bei jedem Host-Run ueberschrieben |
 | `project.json` | agentbox Projekt-Config, `build.command` -> bench.ps1 |
 | `CLAUDE.md` | Dieses Dokument |

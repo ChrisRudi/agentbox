@@ -5,6 +5,64 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.7] - 2026-04-18
+
+### Changed -- Ehrliche Labels: bench-Spalte "sandbox" ist eigentlich "agentbox_host"
+
+Beim User-Wunsch, auch eine Default-WSL-Distro mitzubenchmarken, fiel
+auf: die bisherige "Sandbox"-Spalte misst gar nicht die ephemere
+session-getunte Sandbox. Das Config-Submenue `[3] Benchmark ausfuehren`
+laeuft aus der persistenten Host-Distro `agentbox-host` heraus --
+**bevor** eine Agent-Session die ephemere Sandbox ueberhaupt importiert
+und per `wsl-sandbox-init.sh` mit ext4-Overlay, BBR, dnsmasq-Cache
+getuned hat. Die in den Tests gezeigten Zahlen sind also von
+agentbox-host (Template + Sysctl), nicht von der session-getunten
+Sandbox. Misleading.
+
+Fix (Option A aus der Diskussion mit dem User):
+
+- `bench.sh` bekommt eine neue Env-Variable **`BENCH_PLATFORM`**
+  (Default `agentbox_host`). Der JSON-Schluessel und das `"platform"`-
+  Feld in `bench-results.json` werden daraus abgeleitet. `BENCH_VERSION`
+  bump 3.0.1 -> 3.0.2.
+- `wsl-ai-start.sh _run_benchmark_menu` ruft jetzt
+  `BENCH_PLATFORM=agentbox_host BENCH_OUT=... bash bench.sh`. Menu-Text
+  entsprechend: "agentbox-host-Seite messen... Schluessel .agentbox_host".
+- `bench.ps1` liest jetzt `.agentbox_host` primaer, faellt auf
+  `.sandbox` zurueck fuer alte JSON-Dateien aus 3.0.x-Versuchen. HTML-
+  Spaltenheader + Legende adaptieren sich an das `"platform"`-Feld aus
+  der JSON (mit Fallback `agentbox-host`). Zusatz-Zeile in der Legende
+  erklaert ehrlich, was gemessen wurde (Template + Sysctl, keine
+  Session-Tunings).
+- `bench.ps1`-Merge-Logik preserviert jetzt alle nicht-`host`-Keys im
+  JSON, nicht nur `.sandbox`. Damit bleibt Platz fuer spaetere Keys
+  (`.sandbox`, `.default_wsl`) ohne Code-Aenderung an dem Merge-Block.
+
+### Future-Ready fuer echte Sandbox-Messung
+
+`BENCH_PLATFORM` ist bewusst parametrisierbar. Ein spaeteres Feature
+"`[4] Benchmark inkl. tuned Sandbox`" koennte `bench.sh` aus einer
+frisch-importierten, session-getunten Sandbox heraus mit
+`BENCH_PLATFORM=sandbox` aufrufen -- das landet neben `.agentbox_host`
+unter `.sandbox` in derselben JSON. `bench.ps1` rendert dann 3 Spalten
+(Host, agentbox-host, sandbox) -- kein Code-Aufwand beim HTML-Generator,
+nur Zeilen-Layout anpassen.
+
+Diese Erweiterung ist als Follow-up dokumentiert, nicht in 2.2.7
+implementiert. Ein User-Aufruf "mit der Hand" laeuft schon jetzt:
+```
+BENCH_PLATFORM=sandbox BENCH_OUT=... bash bench.sh
+```
+aus jeder beliebigen WSL-Distro -- das HTML zeigt die Zahlen dann als
+"sandbox"-Spalte.
+
+### Docs
+
+`tools/CLAUDE.md` + Root-`CLAUDE.md` umgeschrieben: ehrliche Benennung,
+erklaert `BENCH_PLATFORM`, listet moegliche zukuenftige Keys
+(`sandbox`, `default_wsl`). JSON-Schema-Beispiel aktualisiert auf 3.0.2
++ `agentbox_host` als Key-Name.
+
 ## [2.2.6] - 2026-04-18
 
 ### Changed -- bench.ps1 Wirkungsgrad-Formel: Sandbox / Host (statt host / sandbox)

@@ -103,13 +103,19 @@ laeuft nach `Register-AgentboxTaskRunner` in beiden Install-Pfaden).
 
 Agent-Kontext steht in `tools/CLAUDE.md` — nicht hier dupliziert. Kurz:
 
-- **bench.ps1** (Host) + **bench.sh** (Sandbox), paired Scripts, identische
-  Workloads. Output: **`bench-results.json`** mit strict-overwrite-Schema
-  `{ host: {latest}, sandbox: {latest} }` — nur letzter Run pro Seite,
-  **kein JSONL** mehr (war bis 2.2.0 JSONL-Append).
+- **bench.ps1** (Host) + **bench.sh** (WSL-Seite), paired Scripts,
+  identische Workloads. Output: **`bench-results.json`** mit
+  strict-overwrite pro Schluessel `{ host: {latest}, agentbox_host: {latest} }`
+  — nur letzter Run pro Key, **kein JSONL** mehr (war bis 2.2.0 Append).
+- **bench.sh** parametrisiert via `BENCH_PLATFORM` env var (Default
+  `agentbox_host`), damit derselbe Script aus verschiedenen WSL-Kontexten
+  heraus unter verschiedenen Keys schreiben kann -- heute nur
+  `agentbox_host` (persistente Host-Distro, OHNE Session-Tunings),
+  spaeter auch `sandbox` (ephemer, getuned) oder `default_wsl` (plain
+  User-Ubuntu).
 - Nur **bench.ps1** generiert `index.html` und oeffnet es via
-  `Start-Process` im Host-Browser. `bench.sh` ist stumm, schreibt nur die
-  `.sandbox`-Seite der JSON via python3.
+  `Start-Process` im Host-Browser. `bench.sh` ist stumm, schreibt nur
+  seine Seite der JSON via python3.
 - Trigger ueber den bestehenden Task-Runner-Flow: Config-Submenue
   `[3] Benchmark ausfuehren` in `wsl-ai-start.sh` misst die Sandbox-Seite
   synchron, legt ein Task-JSON in `demo-benchmark/_tasks/` ab und
