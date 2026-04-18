@@ -1142,11 +1142,14 @@ _config_menu() {
     done
 }
 
-# Benchmark-Menu: misst Sandbox-Seite synchron und legt einen Task fuer den
-# Host-Runner an. Der Scheduled-Task agentbox-task-runner (AtLogon gestartet)
-# greift das Task-JSON aus <demo-benchmark>/_tasks/ auf, fuehrt bench.ps1 aus
-# und laesst Start-Process das HTML im Browser oeffnen. Audit-Trail laeuft
-# ueber Windows Application-Event-Log (Source "AIProjects", IDs 1001/1002).
+# Benchmark-Menu: misst Sandbox-Seite synchron, legt ein Task-JSON fuer den
+# Host-Runner in <demo-benchmark>/_tasks/ an und emittiert dann ein
+# Trigger-Event (Source=AIProjects, EventID=2000) via powershell.exe-Interop.
+# Der Scheduled-Task agentbox-task-runner hat dieses Event als Trigger:
+# feuert das Event, startet der Runner im -once-Mode, verarbeitet das
+# Task-File via Process-AllTasks, ruft bench.ps1 via build.command, HTML
+# oeffnet sich im Host-Browser. Audit-Trail ueber dieselbe EventSource
+# 'AIProjects' mit IDs 1001/1002/1003 fuer start/done/fail.
 _run_benchmark_menu() {
     local _demo_dir="$AI_PROJECTS_ROOT/demo-benchmark"
     echo ""
@@ -1182,11 +1185,30 @@ _run_benchmark_menu() {
 
     echo ""
     log_ok "Task angelegt: $_task_file"
+
+    # Trigger-Event emittieren, damit Task Scheduler den Runner sofort
+    # startet. EventSource 'AIProjects' existiert seit Install
+    # (Register-AgentboxTaskRunner). Write-EventLog auf bestehende Source
+    # braucht keine Admin-Rechte, laeuft also im normalen User-Kontext.
+    # Fehler werden ignoriert -- im Worst Case wartet der Task auf den
+    # naechsten Logon-Sweep.
+    local _event_src="${AGENTBOX_EVENT_SOURCE:-AIProjects}"
+    if command -v powershell.exe &>/dev/null; then
+        powershell.exe -NoProfile -Command \
+            "Write-EventLog -LogName Application -Source '$_event_src' -EntryType Information -EventId 2000 -Message 'agentbox Task queued: demo-benchmark build ($_ts)'" \
+            >/dev/null 2>&1 || true
+        log_ok "Trigger-Event emittiert (Source=$_event_src, EventID=2000)"
+    else
+        echo "  [WARN] powershell.exe nicht verfuegbar -- Task wird erst beim naechsten Logon verarbeitet."
+    fi
+
     echo ""
-    echo "  win-task-runner.ps1 (AtLogon-Daemon auf dem Host) greift den Task auf,"
-    echo "  fuehrt bench.ps1 aus und oeffnet index.html im Standard-Browser."
+    echo "  Task Scheduler startet win-task-runner.ps1 -once, der verarbeitet"
+    echo "  das Task-File, fuehrt bench.ps1 aus und oeffnet index.html im"
+    echo "  Standard-Browser."
     echo "  Audit-Trail: Event-Log > Application > Source 'AIProjects'"
-    echo "               (EventID 1001 = gestartet, 1002 = erledigt, 1003 = Fehler)"
+    echo "               (EventID 2000 = getriggert, 1001 = gestartet,"
+    echo "                1002 = erledigt, 1003 = Fehler)"
     echo ""
     read -r -p "[Enter] zurueck ins Konfigurations-Menu..." _
 }

@@ -153,36 +153,48 @@ function Register-AgentboxTaskRunner {
     Write-Host "Erstelle Scheduled Task..." -ForegroundColor Cyan
     $taskName = if ($cfg -and $cfg.scheduled_task_name) { $cfg.scheduled_task_name } else { "agentbox-task-runner" }
     $runnerScript = Join-Path $ScriptDir "win-task-runner.ps1"
-    # Bestehenden Task ggf. stoppen + entfernen. Wichtig vor dem Switch
-    # von -once auf -watch: ein laufender Watch-Daemon muss erst terminiert
-    # werden, sonst bleibt der alte Prozess aktiv (ohne aktualisiertes Script).
+    # Bestehenden Task ggf. stoppen + entfernen. Falls noch ein 2.2.1-Watch-
+    # Daemon laeuft (oder ein -once Task haengt), ihn erst sauber beenden.
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
         try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
-    # -watch: Daemon-Modus mit FileSystemWatcher, greift Task-Files live auf.
-    # -WindowStyle Hidden: keine Console-Blitz beim Logon.
+    # Event-Trigger-Architektur (ab 2.2.5):
+    # - Action: -once (kein Daemon; jede Trigger-Firing macht einen
+    #   Process-AllTasks-Sweep, dann exit).
+    # - Trigger A: AtLogon -> Sweep aller Tasks, die waehrend System-Off
+    #   queued wurden.
+    # - Trigger B: EventLog-Subscription auf Source='AIProjects',
+    #   EventID=2000. wsl-ai-start.sh emittiert dieses Event nach einem
+    #   Task-File-Write, Task Scheduler startet den Runner live.
+    # Vorteile ggueber 2.2.1-Watch-Daemon: kein Long-Running-Process, keine
+    # FileSystemWatcher-Probleme auf OneDrive/DrvFs, lazy Execution, sauber
+    # via Event-Log-Audit nachvollziehbar.
     $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runnerScript`" -watch" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runnerScript`" -once" `
         -WorkingDirectory $ScriptDir
-    # Daemon-Settings:
-    # - ExecutionTimeLimit=0 -> kein Kill nach Default-3-Tagen
-    # - MultipleInstances=IgnoreNew -> zweiter Logon-Trigger faehrt keinen
-    #   zweiten Daemon hoch, solange der erste noch laeuft
-    # - Restart bei Crash: 3 Versuche im 1-Minuten-Abstand
+
+    $atLogon = New-ScheduledTaskTrigger -AtLogon
+
+    # Event-Trigger via CIM (PS 5.1 kompatibel). MSFT_TaskEventTrigger
+    # braucht eine gueltige XPath-Subscription.
+    $eventTriggerClass = Get-CimClass -ClassName MSFT_TaskEventTrigger -Namespace Root/Microsoft/Windows/TaskScheduler
+    $eventTrigger = New-CimInstance -CimClass $eventTriggerClass -ClientOnly
+    $eventTrigger.Enabled = $true
+    $eventTrigger.Subscription = "<QueryList><Query Id=""0"" Path=""Application""><Select Path=""Application"">*[System[Provider[@Name='$eventSource'] and (EventID=2000)]]</Select></Query></QueryList>"
+
+    # MultipleInstances=Queue: zwei schnell hintereinander emittierte Events
+    # fuehren zu zwei Runs nacheinander (nicht ignorieren), damit Task-Files
+    # niemals uebersprungen werden, auch nicht bei Race-Conditions.
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -StartWhenAvailable `
-        -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
-        -MultipleInstances IgnoreNew `
-        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+        -MultipleInstances Queue
+
     Register-ScheduledTask -TaskName $taskName -Action $action `
-        -Trigger (New-ScheduledTaskTrigger -AtLogon) -Settings $settings `
-        -Description "agentbox Task Runner Daemon — watch-Modus, verarbeitet Build/Deploy-Tasks von AI-Agenten live" `
+        -Trigger @($atLogon, $eventTrigger) -Settings $settings `
+        -Description "agentbox Task Runner — triggered by EventLog (Source=$eventSource, EventID=2000) + AtLogon-Sweep" `
         -RunLevel Highest | Out-Null
-    # Direkt starten, ohne auf naechsten Logon zu warten — der User hat
-    # gerade installiert, der Daemon soll sofort live sein.
-    try { Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
-    Write-Host "[OK] Scheduled Task '$taskName' angelegt (watch-Daemon, sofort gestartet)" -ForegroundColor Green
+    Write-Host "[OK] Scheduled Task '$taskName' angelegt (EventLog-Trigger + AtLogon-Sweep)" -ForegroundColor Green
 }
 
 # Seeded das Demo-Benchmark-Projekt aus <scriptDir>\tools\ nach

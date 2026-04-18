@@ -47,23 +47,26 @@ erhalten, damit bench.ps1 beim HTML-Rendering beide Werte hat.
 
 ## Build-Hook — Task-Runner-Integration
 
-`project.json` setzt `build.command = "pwsh -File bench.ps1"`. Damit wird
-der Benchmark ueber den bestehenden agentbox-**Task-Runner-Flow**
-ausgeloest (kein manueller Aufruf noetig):
+`project.json` setzt `build.command = "powershell -NoProfile
+-ExecutionPolicy Bypass -File bench.ps1"`. Damit wird der Benchmark ueber
+den agentbox-**Task-Runner-Flow** ausgeloest (kein manueller Aufruf
+noetig):
 
 ```
 Menu [c] Konfiguration -> [3] Benchmark ausfuehren
   -> bench.sh laeuft synchron in der Sandbox, schreibt .sandbox
   -> Task-JSON landet in demo-benchmark/_tasks/bench-<ts>.json
-  -> win-task-runner.ps1 (-watch Daemon, AtLogon gestartet) greift auf
+  -> powershell.exe Write-EventLog Source=AIProjects EventID=2000
+  -> Scheduled-Task agentbox-task-runner (EventLog-getriggert) startet
+  -> win-task-runner.ps1 -once: Process-AllTasks findet das File
   -> liest project.json, fuehrt build.command aus
   -> bench.ps1 misst Host, mergt .host, schreibt index.html, oeffnet Browser
-  -> Event-Log-Audit (Source AIProjects, IDs 1001 gestartet / 1002 erledigt)
+  -> Event-Log-Audit: 2000 (triggered), 1001 (gestartet), 1002 (erledigt)
 ```
 
 Das zeigt dem User gleichzeitig, wie der **Build-Mechanismus ausserhalb
 der Sandbox** funktioniert — agentbox fuehrt den Build nicht selbst aus,
-sondern delegiert an den Host-Runner.
+sondern delegiert an den Host-Runner via EventLog-Trigger.
 
 ## Agent-Regeln
 

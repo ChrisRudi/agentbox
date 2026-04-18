@@ -5,6 +5,74 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.5] - 2026-04-18
+
+### Changed -- Task-Runner-Architektur: Watch-Daemon -> EventLog-Trigger
+
+User-Vorschlag nach dem Trouble mit dem 2.2.1-Watch-Daemon:
+> "warum daemon das geht ja viel eleganter: Ein Windows-Eventtrigger
+> startet Aktionen basierend auf Protokollereignissen in der
+> Ereignisanzeige, konfigurierbar ueber die Aufgabenplanung"
+
+Zustimmung. Der Watch-Daemon hatte mehrere Nachteile:
+- Long-running Process, Keepalive-Problem, Restart-Logik.
+- FileSystemWatcher auf OneDrive-Folder unzuverlaessig (DrvFs/Reparse-
+  Points vs. Event-Propagation).
+- Debug-schwierig -- keine Logs wenn Daemon still crasht.
+
+Neue Architektur:
+
+1. **Scheduled Task** `agentbox-task-runner` laeuft wieder als `-once`
+   (kein Daemon). Zwei Trigger parallel registriert:
+   - **EventLog-Subscription**: feuert bei jedem Event mit
+     `Source='AIProjects'` + `EventID=2000`. CIM-basiert
+     (`MSFT_TaskEventTrigger`) weil PS 5.1 Keine direkten
+     Event-Trigger-Cmdlets hat.
+   - **AtLogon-Sweep**: Safety-Net fuer Tasks, die waehrend System-Off
+     queued wurden. Drained den Backlog, dann sauberer Exit.
+2. **wsl-ai-start.sh `_run_benchmark_menu`** emittiert nach dem
+   Task-File-Write ein Trigger-Event via `powershell.exe`-Interop:
+   ```
+   powershell.exe Write-EventLog -LogName Application `
+       -Source AIProjects -EventId 2000 `
+       -EntryType Information -Message "..."
+   ```
+   Keine Admin-Rechte noetig (Source existiert schon), Write-EventLog
+   auf bestehende Source ist fuer normale User erlaubt.
+3. **Task Scheduler** startet den Runner innerhalb von ~1s nach dem
+   Event. `-once`-Mode: Process-AllTasks sweep, dann exit. Kein
+   persistent Process, kein FileSystemWatcher-Risiko, lazy Execution.
+4. **MultipleInstances=Queue**: zwei schnell hintereinander gefeuerte
+   Events fuehren zu zwei Runs nacheinander, damit keine Task-Files
+   verloren gehen.
+
+### Audit-Trail
+
+Event-Log > Application > Source `AIProjects`:
+- **2000**: getriggert (von wsl-ai-start.sh oder Agent)
+- **1001**: Task gestartet (vom Runner)
+- **1002**: Task erledigt
+- **1003**: Task fehlgeschlagen
+
+### Hotfix-Kette 2.2.0-2.2.4 auflaufen lassen
+
+Der Weg bis hier war ein Debug-Marathon: 2.2.0 (-once ohne Trigger),
+2.2.1 (Watch-Daemon-Versuch), 2.2.2 (Seed-Reihenfolge), 2.2.3 (PS 5.1
+Parse-Bug am &&), 2.2.4 ($MyInvocation-Fallback). Alles Fixes, aber auf
+falschem Architektur-Fundament. 2.2.5 ist der Architektur-Rewrite, der
+die Probleme an der Wurzel packt -- kein Daemon, keine Watcher, nur
+Event-basiertes Lazy-Scheduling wie von Task Scheduler selbst angeboten.
+
+### Migration
+
+- `.update_class` bleibt **major**. Installer-Rerun noetig fuer
+  Task-Re-Register mit neuen Triggern.
+- Nach Rerun: AtLogon-Sweep verarbeitet alle angesammelten Task-Files
+  aus den 2.2.x-Versuchen. Wahrscheinlich bekommt der User mehrere
+  Browser-Fenster nacheinander -- danach ist der Queue leer.
+- `[3] Benchmark ausfuehren` loest ab jetzt den Host-Build binnen ~1s
+  nach Menu-Auswahl aus.
+
 ## [2.2.4] - 2026-04-18
 
 ### Fixed -- win-task-runner.ps1 Default-Mode Self-Invoke-Crash

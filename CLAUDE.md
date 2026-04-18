@@ -112,11 +112,13 @@ Agent-Kontext steht in `tools/CLAUDE.md` — nicht hier dupliziert. Kurz:
   `.sandbox`-Seite der JSON via python3.
 - Trigger ueber den bestehenden Task-Runner-Flow: Config-Submenue
   `[3] Benchmark ausfuehren` in `wsl-ai-start.sh` misst die Sandbox-Seite
-  synchron und legt ein Task-JSON in `demo-benchmark/_tasks/` ab. Der
-  `agentbox-task-runner` Scheduled-Task (AtLogon → `win-task-runner.ps1
-  -watch`) greift es ueber `FileSystemWatcher` auf, fuehrt
-  `build.command` aus der `project.json` aus und schreibt Audit-Events
-  1001/1002/1003 in Application-Event-Log (Source `AIProjects`).
+  synchron, legt ein Task-JSON in `demo-benchmark/_tasks/` ab und
+  emittiert dann ein **Trigger-Event** (Source `AIProjects`, EventID
+  **2000**) via `powershell.exe`-Interop. Der `agentbox-task-runner`
+  Scheduled-Task hat dieses Event als Trigger (plus AtLogon-Sweep als
+  Safety-Net) — feuert das Event, startet der Runner im `-once`-Mode,
+  fuehrt `build.command` aus der `project.json` aus und schreibt
+  Audit-Events 1001/1002/1003 in Application-Event-Log (gleiche Source).
 - **build_whitelist** muss `powershell -NoProfile -ExecutionPolicy Bypass
   -File bench.ps1` enthalten (steht in `config.json` und im hardcoded
   Fallback in `win-task-runner.ps1`).
