@@ -5,6 +5,26 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.3] - 2026-04-18
+
+### Fixed — `tools/bench.{ps1,sh}`: ASCII-only, PS 5.1 ParseError behoben
+
+User-Report: `bench.ps1` liess sich nicht laufen, PS 5.1 warf Parser-
+Fehler "Unerwartetes Token" wegen Mojibake:
+
+```
+$errMsg = if ($r.error) { " â€" $($r.error.Trim())" } else { "" }
+```
+
+Ursache: das Em-Dash `U+2014` in meinen Strings wird UTF-8-encoded zu
+3 Bytes (E2 80 94), die PS 5.1 ohne BOM als Windows-1252 decodiert
+(`â€"`) -- und die mojibake-Zeichen brechen den Tokenizer. Gleiche
+Falle wie `-Encoding utf8NoBOM` in CLAUDE.md.
+
+Fix: alle Em-Dashes in beiden Scripts durch ASCII `--` ersetzt.
+Gleiches fuer `->`-Pfeile in bench.sh (nicht parse-breaking, aber
+konsistent). Beide Files jetzt 100 % ASCII.
+
 ## [2.1.2] - 2026-04-18
 
 ### Fixed — `tools/bench.{ps1,sh}`: robuster bei SNI-Filter + Progress

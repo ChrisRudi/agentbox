@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# tools/bench.sh — agentbox Sandbox-Baseline (Linux, ext4 in vhdx, mirrored/NAT)
+# tools/bench.sh -- agentbox Sandbox-Baseline (Linux, ext4 in vhdx, mirrored/NAT)
 #
 # Paar-Script zu tools/bench.ps1. Beide **appenden** ins selbe
 # bench-results.txt (CWD-relativ, ueberschreibbar via $BENCH_OUT).
 # Wenn beide in einem agentbox-Projekt-Ordner laufen, teilen sie sich
-# dieselbe Datei ueber den Bind-Mount — Host-Run und Sandbox-Run
+# dieselbe Datei ueber den Bind-Mount -- Host-Run und Sandbox-Run
 # stehen dann direkt untereinander in derselben Datei.
 #
 # Ausfuehrungsreihenfolge:
@@ -41,7 +41,7 @@ echo " Disk-Bench-Dir: $BENCH_DIR$FS_HINT"
 echo ""
 echo "[1/3] Netzwerk: 500 MB download..."
 
-# URL-Liste: BENCH_URL ueberschreibt alles, sonst Cloudflare → npm → OVH.
+# URL-Liste: BENCH_URL ueberschreibt alles, sonst Cloudflare -> npm -> OVH.
 if [ -n "${BENCH_URL:-}" ]; then
     URL_LIST=("$BENCH_URL")
 else
@@ -77,11 +77,11 @@ for U in "${URL_LIST[@]}"; do
     else
         # Erste nicht-key=value-Zeile als Fehlerhinweis.
         ERR_MSG=$(echo "$CURL_OUT" | grep -vE '^(http_code|size_download|speed_download)=' | head -1)
-        echo "   [FAIL] exit=$CURL_EXIT, http=$HTTP_CODE, size=$SIZE_BYTES ${ERR_MSG:+— $ERR_MSG}"
+        echo "   [FAIL] exit=$CURL_EXIT, http=$HTTP_CODE, size=$SIZE_BYTES ${ERR_MSG:+-- $ERR_MSG}"
     fi
 done
 if [ "$NET_MBS" = "0" ] || [ "$NET_MBS" = "0.00" ]; then
-    echo "   [WARN] Alle Download-Ziele fehlgeschlagen — SNI-Filter oder offline."
+    echo "   [WARN] Alle Download-Ziele fehlgeschlagen -- SNI-Filter oder offline."
     echo "          Override: BENCH_URL=https://dein-allowlisted-host/grosse-datei bash tools/bench.sh"
 fi
 echo "   -> $NET_MBS MB/s"

@@ -1,9 +1,9 @@
-# tools/bench.ps1 — agentbox Host-Baseline (Windows, NTFS, Host-Netz)
+# tools/bench.ps1 -- agentbox Host-Baseline (Windows, NTFS, Host-Netz)
 #
 # Paar-Script zu tools/bench.sh. Beide **appenden** ins selbe
 # bench-results.txt (CWD-relativ, ueberschreibbar via $env:BENCH_OUT).
 # Wenn beide in einem agentbox-Projekt-Ordner laufen, teilen sie sich
-# dieselbe Datei ueber den Bind-Mount — Host-Run und Sandbox-Run
+# dieselbe Datei ueber den Bind-Mount -- Host-Run und Sandbox-Run
 # stehen dann direkt untereinander.
 #
 # Ausfuehrungsreihenfolge:
@@ -15,7 +15,7 @@
 #   3. Disk: 10'000 kleine Files create (4 Byte each) mit Progress
 #
 # Alle Tests raeumen danach hinter sich auf. $env:TEMP wird fuer Disk-
-# Tests verwendet — liegt typisch auf dem System-Drive (NTFS).
+# Tests verwendet -- liegt typisch auf dem System-Drive (NTFS).
 #
 # Hinweis: Windows-Defender Real-Time-Scan drueckt die Zahlen bei
 # seq-write + small-files teils brutal (~50 %+). Das ist realistisch
@@ -27,7 +27,7 @@ $tmp     = $env:TEMP
 $outFile = if ($env:BENCH_OUT) { $env:BENCH_OUT } else { Join-Path (Get-Location) "bench-results.txt" }
 $stamp   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz")
 
-# Laufwerksbuchstabe der TEMP-Location — manche Setups haben D:\Temp
+# Laufwerksbuchstabe der TEMP-Location -- manche Setups haben D:\Temp
 # oder ein externes Drive, erklaert langsame Zahlen.
 $tmpDrive = (Split-Path -Qualifier $tmp) -replace '[^A-Za-z:]',''
 $header   = "# ======== $stamp | platform=host | temp_drive=$tmpDrive ========"
@@ -99,12 +99,12 @@ foreach ($u in $urlsToTry) {
         Write-Host "   [OK] $($r.size_bytes) Bytes, HTTP $($r.http_code), $($r.mbs) MB/s"
         break
     } else {
-        $errMsg = if ($r.error) { " — $($r.error.Trim())" } else { "" }
+        $errMsg = if ($r.error) { " -- $($r.error.Trim())" } else { "" }
         Write-Host "   [FAIL] exit=$($r.exit_code), http=$($r.http_code), size=$($r.size_bytes)$errMsg" -ForegroundColor Yellow
     }
 }
 if ($netMbs -eq 0) {
-    Write-Host "   [WARN] Alle Download-Ziele fehlgeschlagen — vermutlich SNI-Filter oder offline." -ForegroundColor Yellow
+    Write-Host "   [WARN] Alle Download-Ziele fehlgeschlagen -- vermutlich SNI-Filter oder offline." -ForegroundColor Yellow
     Write-Host "          Override: `$env:BENCH_URL = 'https://dein-allowlisted-host/grosse-datei'" -ForegroundColor Gray
 }
 Write-Host "   -> $netMbs MB/s"
