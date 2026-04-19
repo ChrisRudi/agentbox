@@ -361,6 +361,14 @@ agentbox --reload-mcp
 
 A generic passthrough-wrapper spawns the server, speaks JSON-RPC over stdio, and bridges it onto agentbox's file-queue. From the next sandbox session on, every agent sees the MCP and its tools.
 
+**Guided setup for KiCad 10 MCP:** there's a dedicated one-shot wizard that auto-detects Python + KiCad + the `_control` folder, runs `pip install`, merges the `config.json` entry, and reloads the dispatcher:
+
+```powershell
+irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/setup-kicad-mcp.ps1 | iex
+```
+
+The script is idempotent (rerun safe) and works as a reference for how to wrap *any* existing MCP — see [`setup-kicad-mcp.ps1`](setup-kicad-mcp.ps1) for the pattern.
+
 **Trust boundary (standard import):** whatever `command` / `args` you put in is what gets run, on the host, as your user. There is **no** command whitelist — this matches Claude Desktop / Cursor behavior. Trust the config like you trust any other MCP-client config.
 
 ### Writing your own MCP inside agentbox (advanced)
