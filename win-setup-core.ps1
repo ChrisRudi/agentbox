@@ -421,57 +421,6 @@ function Initialize-AgentboxAutoApproveDefaults {
 # Rebuild (gleicher Config-Hash) trotzdem neue Seeds nachziehen koennen.
 Initialize-AgentboxAutoApproveDefaults
 
-# --- Scheduled Task fuer MCP-Dispatcher registrieren ---
-# Wird IMMER registriert (auch bei leerem mcp_servers), sodass der User
-# spaeter via Config-Menue MCPs einbinden kann ohne install.ps1 als
-# Admin rerunnen zu muessen. Bei leerem mcp_servers exitet der
-# Dispatcher beim Logon in Millisekunden -- kein Ressourcenverbrauch.
-# Node.js + mcp-proxy werden NICHT hier installiert -- das macht der
-# Wizard (proxy-mcp/setup-mcp.ps1) selbst bei Bedarf, weil das Einbinden
-# eines MCP ueber das agentbox-Menue laeuft, nicht ueber den Installer.
-function Register-AgentboxMcpDispatcher {
-    param(
-        $cfg,
-        [Parameter(Mandatory)][string]$ScriptDir
-    )
-
-    $taskName = "agentbox-mcp-dispatcher"
-    $dispatcherScript = Join-Path $ScriptDir "win-mcp-dispatcher.ps1"
-    if (-not (Test-Path -LiteralPath $dispatcherScript)) {
-        Write-Host "[INFO] win-mcp-dispatcher.ps1 fehlt -- Task nicht registriert" -ForegroundColor Gray
-        return
-    }
-
-    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-        try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    }
-
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dispatcherScript`"" `
-        -WorkingDirectory $ScriptDir
-
-    $atLogon = New-ScheduledTaskTrigger -AtLogon
-
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries -StartWhenAvailable `
-        -MultipleInstances IgnoreNew `
-        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-    $settings.ExecutionTimeLimit = "PT0S"
-
-    Register-ScheduledTask -TaskName $taskName -Action $action `
-        -Trigger $atLogon -Settings $settings `
-        -Description "agentbox MCP dispatcher -- startet mcp-proxy pro eingebundenem MCP" | Out-Null
-    Write-Host "[OK] Scheduled Task '$taskName' registriert (AtLogon, RestartOnFailure)" -ForegroundColor Green
-
-    try {
-        Start-ScheduledTask -TaskName $taskName
-        Write-Host "[OK] MCP-Hintergrund-Prozess gestartet" -ForegroundColor Green
-    } catch {
-        Write-Host "[WARN] Start fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
-}
-
 $configHashFile = Join-Path $sandboxDir ".config_hash"
 $currentHash = Get-AgentboxConfigHash -cfg $config
 
@@ -509,7 +458,6 @@ if (($haveTarGz -or $haveVhd) -and (Test-Path -LiteralPath $configHashFile)) {
 
         Write-Host ""
         Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
-        Register-AgentboxMcpDispatcher -cfg $config -ScriptDir $scriptDir
 
         Write-Host ""
         Write-Host "=== Setup abgeschlossen (Template aus Cache) ===" -ForegroundColor Green
@@ -959,10 +907,9 @@ if ($demoBaseDir) {
     Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
 }
 
-# --- Event-Source + Scheduled Tasks registrieren ---
+# --- Event-Source + Scheduled Task registrieren ---
 Write-Host ""
 Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
-Register-AgentboxMcpDispatcher -cfg $config -ScriptDir $scriptDir
 
 # --- Fertig ---
 Write-Host ""

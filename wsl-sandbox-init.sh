@@ -35,13 +35,10 @@ AGENT_INSTALL="${6:-}"
 # Wenn leer (aelterer wsl-ai-start.sh oder config.sh ohne python3), faellt
 # die Auth-Mount-Schleife unten auf die Legacy-Hardcode-Liste zurueck.
 AUTH_SPEC="${7:-}"
-# $8 = MCP_PORTS_SPEC: "id=port;id=port;..." fuer aktivierte MCP-Server
-#      Leer = kein MCP, keine Firewall-Perforation.
-MCP_PORTS_SPEC="${8:-}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     log_error "Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC] [MCP_PORTS_SPEC]" >&2
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC]" >&2
     exit 1
 fi
 
@@ -371,46 +368,13 @@ fi
 _CLAUDE_JSON="/home/$SANDBOX_USER/.claude.json"
 _CLAUDE_BACKUPS="/home/$SANDBOX_USER/.claude/backups"
 if [ ! -f "$_CLAUDE_JSON" ] && [ -d "$_CLAUDE_BACKUPS" ]; then
-    # ls -t liefert neueste zuerst. Unsere agentbox-mcp-Inject-Datei
-    # (vom Host-seitigen wsl-ai-start.sh geschrieben, enthaelt echte
-    # Claude-Felder PLUS mcpServers) hat keinen Timestamp-Suffix, wird
-    # aber regelmaessig neu geschrieben -- koennte sonst versehentlich
-    # als "Backup" gepickt werden auch wenn sie inkonsistent ist.
-    # Wir filtern sie aus der Kandidatenliste raus und mergen ihren
-    # mcpServers-Key separat nach dem Restore.
-    _newest_backup=$(ls -t "$_CLAUDE_BACKUPS"/.claude.json.backup.* 2>/dev/null \
-                     | grep -v '\.agentbox-mcp$' | head -1)
+    _newest_backup=$(ls -t "$_CLAUDE_BACKUPS"/.claude.json.backup.* 2>/dev/null | head -1)
     if [ -n "$_newest_backup" ] && [ -f "$_newest_backup" ]; then
         cp "$_newest_backup" "$_CLAUDE_JSON" 2>/dev/null || true
         chown "$SANDBOX_USER:$SANDBOX_USER" "$_CLAUDE_JSON" 2>/dev/null || true
         chmod 600 "$_CLAUDE_JSON" 2>/dev/null || true
         log_ok ".claude.json aus Backup wiederhergestellt: $(basename "$_newest_backup")"
     fi
-fi
-
-# MCP-Merge: wenn eine agentbox-mcp-Inject-Datei existiert, ihren
-# mcpServers-Key in die gerade restaurierte .claude.json mergen.
-# Fehlt die Inject-Datei (kein MCP konfiguriert) → kein Merge,
-# Claude bekommt seine echte Config ohne fremde Keys.
-_CLAUDE_MCP_INJECT="$_CLAUDE_BACKUPS/.claude.json.backup.agentbox-mcp"
-if [ -f "$_CLAUDE_JSON" ] && [ -f "$_CLAUDE_MCP_INJECT" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$_CLAUDE_JSON" "$_CLAUDE_MCP_INJECT" << 'MCPMERGE' 2>/dev/null || true
-import json, sys
-tgt, src = sys.argv[1], sys.argv[2]
-try:
-    with open(tgt, encoding='utf-8') as f: dst = json.load(f)
-    with open(src, encoding='utf-8') as f: mcpd = json.load(f)
-    if isinstance(dst, dict) and isinstance(mcpd, dict):
-        mcp = mcpd.get('mcpServers')
-        if isinstance(mcp, dict) and mcp:
-            dst['mcpServers'] = mcp
-            with open(tgt, 'w', encoding='utf-8') as f:
-                json.dump(dst, f, indent=2, ensure_ascii=False); f.write('\n')
-except Exception:
-    pass
-MCPMERGE
-    chown "$SANDBOX_USER:$SANDBOX_USER" "$_CLAUDE_JSON" 2>/dev/null || true
-    chmod 600 "$_CLAUDE_JSON" 2>/dev/null || true
 fi
 
 # --- Auth-Diagnostik (Claude Code .credentials.json) ---
@@ -652,26 +616,8 @@ iptables -A OUTPUT -d 224.0.0.0/4     -j DROP 2>/dev/null || true
 # standardmaessig RFC1918 ist (Carrier-Grade-NAT 100.64/10 u.ae.).
 _host_ip=$(ip -4 route show default 2>/dev/null | awk '/^default/{print $3; exit}')
 if [ -n "$_host_ip" ]; then
-    # MCP-Perforation: pro eingebundenem MCP-Server oeffnen wir genau
-    # einen TCP-Port zur Host-IP. Muss VOR der DROP-Regel kommen (linear
-    # Chain-Auswertung). Sonst alles bleibt so wie immer: Host-IP/32 -> DROP.
-    if [ -n "$MCP_PORTS_SPEC" ]; then
-        IFS=';' read -ra _mcp_pairs <<< "$MCP_PORTS_SPEC"
-        for _pair in "${_mcp_pairs[@]}"; do
-            [ -z "$_pair" ] && continue
-            _mid="${_pair%%=*}"
-            _mport="${_pair#*=}"
-            [ -z "$_mid" ] || [ -z "$_mport" ] && continue
-            # Validierung: Port als Zahl
-            case "$_mport" in
-                ''|*[!0-9]*) continue ;;
-            esac
-            iptables -A OUTPUT -d "${_host_ip}/32" -p tcp --dport "$_mport" -j ACCEPT 2>/dev/null || true
-            log_ok "MCP '$_mid' erreichbar: ${_host_ip}:${_mport}"
-        done
-    fi
     iptables -A OUTPUT -d "${_host_ip}/32" -j DROP 2>/dev/null || true
-    log_info "Host-IP sonst blockiert: $_host_ip"
+    log_info "Host-IP blockiert: $_host_ip"
 fi
 
 # Default: loggen + droppen. LOG per NFLOG (asynchron, kein Kernel-
