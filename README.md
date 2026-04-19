@@ -332,46 +332,42 @@ agentbox ships a first-class MCP integration that lets agents call **Windows-hos
 - Inside the sandbox, a tiny stdio-proxy ([`proxy-mcp.js`](proxy-mcp/proxy-mcp.js)) speaks MCP to the agent and forwards every `tools/call` through a **file-system queue** under `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\` — zero network traffic, the existing sandbox firewall stays unchanged.
 - Steady-state latency is ~10–30 ms per call (PowerShell FileSystemWatcher on NTFS).
 
-### Activate one (menu — recommended)
+### Adding an MCP server (menu)
 
-The agentbox config menu does everything for you, no manual JSON editing:
+The agentbox config menu does everything — no manual JSON editing, no manual command/args/env typing:
 
 ```
-agentbox  →  [c] Konfiguration  →  [4] MCP-Server verwalten
+agentbox  →  [c] Konfiguration  →  MCP-Server einbinden
 
-  [1] KiCad 10 MCP einrichten (Wizard)
-  [2] Custom MCP hinzufuegen (command/args/env manuell)
-  [3] MCP entfernen
-  [4] Dispatcher neu laden
+  [1] Neuen MCP-Server einbinden (Wizard findet alles automatisch)
+  [2] MCP-Server entfernen
+  [3] Hintergrund-Prozess neu laden (bei Problemen)
 ```
 
-- **[1] KiCad Wizard**: auto-detects KiCad's bundled Python (required — system Python doesn't have `pcbnew`), finds KiCad-CLI, runs `pip install`, merges the `config.json` entry, reloads the dispatcher.
-- **[2] Custom**: line-by-line prompts for `command` / `args` / `env` / `cwd` — same shape as any Claude Desktop / Cursor MCP config. Works for every MCP server that follows the MCP spec.
-- **[3] Remove**: list view with heartbeat status (`ok (3s)`, `stale`, `tot`), pick a number to remove.
-- **[4] Reload**: restarts the `agentbox-mcp-dispatcher` Scheduled Task so config changes take effect.
+**[1] Wizard** — you point it at an MCP-server folder (Python or Node.js), it detects everything else:
 
-A fresh `install.ps1` also asks once at the end whether you want to set up a MCP — skip safely if you don't need one yet.
+- Type detection: `pyproject.toml` / `package.json` / `main.py`
+- Entry point: `[project.scripts]` from `pyproject.toml`, `bin`/`main` from `package.json`, or `main.py` / `server.py` / `index.js` in that order
+- Dependencies: `pip install -e .[dev]` if the project declares dev-extras, else `pip install -e .`; `npm install` for Node
+- Environment variables: parses `.env.example` automatically, then prompts only for secrets (`*_TOKEN`, `*_KEY`) that have no default
+- MCP-ID: from `pyproject.toml`/`package.json` `name` field, else folder name (normalized)
+
+If it recognizes a KiCad-related MCP (folder name, `pcbnew` import in source, KiCad references in README), it silently optimizes: uses KiCad's bundled Python (because system Python has no `pcbnew`), sets `KICAD_CLI_PATH` to the detected install path. No prompts, no special path.
+
+A fresh `install.ps1` also asks once at the end whether you want to integrate an MCP — skip safely if you don't need one yet.
 
 ### Manual config (advanced)
 
-If you prefer hand-editing `config.json` (or are scripting from CI), the schema is identical to Claude Desktop / Cursor:
+If you prefer hand-editing `config.json` (or scripting from CI), the schema is identical to Claude Desktop / Cursor:
 
 ```json
 "mcp_servers": [
   {
-    "id": "kicad",
-    "command": "C:\\Program Files\\KiCad\\10.0\\bin\\python.exe",
+    "id": "my-mcp",
+    "command": "C:\\path\\to\\python.exe",
     "args": ["main.py"],
-    "cwd": "C:\\Users\\me\\OneDrive\\AI_Projects_Source\\KiCad_MCP",
-    "env": {
-      "KICAD_CLI_PATH": "C:\\Program Files\\KiCad\\10.0\\bin\\kicad-cli.exe"
-    }
-  },
-  {
-    "id": "github",
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
-    "env": { "GITHUB_TOKEN": "ghp_..." }
+    "cwd": "C:\\Users\\me\\Projects\\MyMcp",
+    "env": { "SOME_TOKEN": "..." }
   }
 ]
 ```
@@ -380,7 +376,7 @@ Apply with `agentbox --reload-mcp` (no admin, no `install.ps1` rerun).
 
 ### Automation / CI
 
-The KiCad wizard is also available headless as [`setup-kicad-mcp.ps1`](setup-kicad-mcp.ps1) — takes `-KicadMcpPath`, `-KicadCliPath`, `-PythonPath`, `-SearchPaths`, `-NonInteractive` parameters. Works as a reference for scripting any MCP import.
+The same wizard runs headless as [`proxy-mcp/setup-mcp.ps1`](proxy-mcp/setup-mcp.ps1) — takes `-McpPath`, `-McpId`, `-ExtraEnv`, `-NonInteractive`. Use it for CI-driven MCP provisioning.
 
 ### Trust boundary
 

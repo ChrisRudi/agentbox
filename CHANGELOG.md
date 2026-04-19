@@ -5,6 +5,81 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.3] - 2026-04-19
+
+**Generischer MCP-Wizard, alles auf Deutsch, keine Manual-Prompts mehr.**
+
+User-Feedback zu 2.4.2:
+- "allgemeiner -- KiCad 10 MCP ist noch nicht veroeffentlicht, er kann
+  jedes MCP anbinden das kompatibel ist; KiCad optimal im Hintergrund
+  wenn erkannt"
+- "Dispatcher bitte alles auf Deutsch"
+- "nix manuell Custom MCP hinzufuegen, alles soll gefunden werden"
+- "sinn macht den neuen proxy-mcp-folder zu verwenden?"
+
+### Generischer Wizard
+
+`setup-kicad-mcp.ps1` -> `proxy-mcp/setup-mcp.ps1`, komplett neu. Nimmt
+einen beliebigen MCP-Server-Ordner (Python oder Node.js) und erkennt
+automatisch:
+
+- **Typ:** pyproject.toml / setup.py / requirements.txt -> Python;
+  package.json -> Node
+- **Startbefehl:**
+  - Python: [project.scripts] in pyproject.toml (scheme "pkg:func" ->
+    python -m pkg), sonst [project] name -> python -m <pkg>, sonst
+    main.py / server.py / __main__.py
+  - Node: bin-Eintrag, sonst main-Eintrag, sonst index.js, sonst
+    npm start
+- **Dependencies:** pip install -e ".[dev]" wenn dev-extras da,
+  sonst -e "."; npm install fuer Node
+- **Environment:** .env.example-File wird geparst; Secrets (*_TOKEN,
+  *_KEY, *_SECRET) mit leerem oder Placeholder-Wert werden explizit
+  abgefragt
+- **MCP-ID:** pyproject.toml [project] name / package.json name /
+  Ordnername, normalisiert
+
+User-Interaktion reduziert auf: Ordner-Pfad + Secrets (wenn noetig).
+
+### KiCad-Spezial-Erkennung (silent)
+
+Markiert als "ist KiCad" wenn Ordnername 'kicad' matcht oder README /
+pyproject.toml / package.json die Begriffe pcbnew / kicad-cli / KiCad
+enthaelt. Dann automatisch:
+- `C:\Program Files\KiCad\10.0\bin\python.exe` statt System-Python
+  (weil System-Python kein pcbnew hat)
+- `KICAD_CLI_PATH` = auto-detected kicad-cli.exe
+- `KICAD_SEARCH_PATHS` = OneDrive\AI_Projects_Source + Documents\KiCad
+
+Kein User-Prompt fuer den KiCad-Spezialfall -- laeuft still.
+
+### Menue vereinfacht
+
+`wsl-ai-start.sh`:
+- [2] "Custom MCP manuell hinzufuegen" ENTFERNT (war Widerspruch zu
+  "alles soll gefunden werden")
+- [1] heisst jetzt "Neuen MCP-Server einbinden (Wizard findet alles
+  automatisch)"
+- Alle Strings auf Deutsch ("Dispatcher" -> "Hintergrund-Prozess",
+  "heartbeat" bleibt als technischer Begriff mit Erklaerung)
+- Status-Legende im Listen-Header ("ok/stale/tot")
+
+### Ordnerstruktur
+
+`setup-mcp.ps1` + `passthrough-handler.ps1` + `proxy-mcp.js` leben
+alle in `proxy-mcp/`. Alle MCP-Infra an einem Ort.
+
+### Geaendert
+
+- `proxy-mcp/setup-mcp.ps1` (neu, ersetzt setup-kicad-mcp.ps1)
+- `wsl-ai-start.sh` -- `_mcp_run_wizard` (ersetzt _mcp_setup_kicad),
+  `_mcp_add_custom` entfernt, Deutsch, Menuepunkte umgestellt
+- `win-setup-core.ps1` -- Install-Prompt-Wording allgemein, zeigt
+  auf proxy-mcp\setup-mcp.ps1
+- `README.md` + `docs/README.de.md` -- Menuepfad fuer beliebige MCPs,
+  KiCad nur als Beispiel im Wizard-Text genannt
+- CHANGELOG bis 2.4.2 unveraendert
+
 ## [2.4.2] - 2026-04-19
 
 **MCP-Setup als integraler Teil von agentbox, nicht als Fremdkoerper.**

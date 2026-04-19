@@ -578,17 +578,20 @@ function Invoke-AgentboxMcpSetupPrompt {
 
     Write-Host ""
     Write-Host "================================================" -ForegroundColor Cyan
-    Write-Host " MCP-Server einrichten?" -ForegroundColor Cyan
+    Write-Host " MCP-Server einbinden?" -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "agentbox kann bestehende MCP-Server (KiCad, GitHub, Filesystem,"
-    Write-Host "...) auf dem Host laufen lassen und den Agenten in jeder Sandbox-"
-    Write-Host "Session per File-Bridge zur Verfuegung stellen -- ohne die"
+    Write-Host "agentbox kann beliebige MCP-Server (Python oder Node.js) auf dem"
+    Write-Host "Host laufen lassen und ihre Tools in jeder Sandbox-Session fuer"
+    Write-Host "den Agenten bereitstellen -- ueber eine File-Bruecke, ohne die"
     Write-Host "Netzwerk-Isolation anzutasten."
     Write-Host ""
-    Write-Host "Du kannst jederzeit spaeter: agentbox -> [c] -> [4] MCP-Server" -ForegroundColor Gray
+    Write-Host "Der Wizard erkennt den MCP-Typ, Startbefehl, Dependencies und" -ForegroundColor Gray
+    Write-Host "Umgebungsvariablen automatisch -- du gibst nur den Ordner an." -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  [1] KiCad 10 MCP jetzt einrichten (Wizard)" -ForegroundColor White
+    Write-Host "Jederzeit spaeter nachholbar: agentbox -> [c] -> MCP-Server einbinden" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [1] Jetzt einen MCP-Server einbinden (Wizard)" -ForegroundColor White
     Write-Host "  [2] Spaeter -- ueberspringen" -ForegroundColor White
     Write-Host ""
 
@@ -597,14 +600,13 @@ function Invoke-AgentboxMcpSetupPrompt {
 
     switch ($pick) {
         "1" {
-            $wizard = Join-Path $ScriptDir "setup-kicad-mcp.ps1"
+            $wizard = Join-Path $ScriptDir "proxy-mcp\setup-mcp.ps1"
             if (-not (Test-Path -LiteralPath $wizard)) {
-                Write-Host "[WARN] setup-kicad-mcp.ps1 nicht gefunden -- manuell:" -ForegroundColor Yellow
-                Write-Host "       irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/setup-kicad-mcp.ps1 | iex" -ForegroundColor Gray
+                Write-Host "[WARN] proxy-mcp\setup-mcp.ps1 nicht gefunden -- agentbox-Installation evtl. unvollstaendig." -ForegroundColor Yellow
                 return
             }
             Write-Host ""
-            Write-Host "Starte KiCad-MCP-Wizard..." -ForegroundColor Cyan
+            Write-Host "Starte MCP-Einbind-Wizard..." -ForegroundColor Cyan
             Write-Host ""
             # Direkt hier ausfuehren -- wir sind in einer Admin-PS, aber der
             # Wizard braucht kein Admin (Scheduled Task ist ja schon gerade
@@ -612,7 +614,7 @@ function Invoke-AgentboxMcpSetupPrompt {
             & $wizard
         }
         default {
-            Write-Host "[OK] MCP-Setup uebersprungen. Jederzeit ueber agentbox-Menue nachholbar." -ForegroundColor Green
+            Write-Host "[OK] Kein MCP eingebunden. Jederzeit ueber agentbox-Menue nachholbar." -ForegroundColor Green
         }
     }
 }

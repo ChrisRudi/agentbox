@@ -322,35 +322,33 @@ print(f\"  {d.get('id','?'):20s}  {d.get('agent','?'):15s}  {d.get('project','?'
 fi
 
 if [ "$RELOAD_MCP_MODE" = true ]; then
-    # MCP-Dispatcher via powershell.exe-Interop neu starten. Laeuft
-    # ausserhalb der Sandbox (in agentbox-host bzw. einer regulaeren
-    # WSL-Session), powershell.exe ist hier erreichbar — der Pfad
+    # MCP-Hintergrund-Prozess via powershell.exe-Interop neu starten.
+    # Laeuft ausserhalb der Sandbox (in agentbox-host bzw. einer regulaeren
+    # WSL-Session), powershell.exe ist hier erreichbar -- der Pfad
     # /mnt/c wurde noch nicht mit tmpfs overmounted.
     if ! command -v powershell.exe >/dev/null 2>&1; then
         log_error "powershell.exe nicht erreichbar. --reload-mcp nur aus agentbox-host oder regulaerer WSL-Shell."
         exit 1
     fi
-    log_info "Stoppe agentbox-mcp-dispatcher..."
+    log_info "Halte MCP-Hintergrund-Prozess an..."
     powershell.exe -NoProfile -Command \
-        "try { Stop-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'stopped' } catch { Write-Output 'stop skipped' }" \
+        "try { Stop-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'gestoppt' } catch { Write-Output 'war nicht aktiv' }" \
         2>/dev/null | tr -d '\r' | sed 's/^/  /'
     sleep 1
-    log_info "Starte agentbox-mcp-dispatcher..."
+    log_info "Starte MCP-Hintergrund-Prozess..."
     _start_out=$(powershell.exe -NoProfile -Command \
-        "try { Start-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'started' } catch { Write-Output \"ERROR: \$(\$_.Exception.Message)\" }" \
+        "try { Start-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'gestartet' } catch { Write-Output \"ERROR: \$(\$_.Exception.Message)\" }" \
         2>/dev/null | tr -d '\r')
     echo "$_start_out" | sed 's/^/  /'
     if echo "$_start_out" | grep -q "^ERROR:"; then
-        log_error "Dispatcher-Start fehlgeschlagen. Task nicht registriert?"
-        echo "  Pruefe in Admin-PS: Get-ScheduledTask -TaskName 'agentbox-mcp-dispatcher'" >&2
-        echo "  Falls nicht vorhanden: install.ps1 als Admin ausfuehren." >&2
+        log_error "Start fehlgeschlagen. Einmaliger Fix: install.ps1 als Admin ausfuehren."
         exit 1
     fi
-    log_ok "Dispatcher neugestartet. Log: %LOCALAPPDATA%\\agentbox\\mcp-runtime\\dispatcher.log"
+    log_ok "MCP-Hintergrund-Prozess neu gestartet."
     echo ""
-    echo "Next steps:"
-    echo "  1. In einer neuen agentbox-Session sollte der MCP im Agent sichtbar sein."
-    echo "  2. Bei Problemen: handler.log pro MCP unter %LOCALAPPDATA%\\agentbox\\mcp-runtime\\<id>\\handler.log"
+    echo "Naechste Schritte:"
+    echo "  1. Neue agentbox-Session starten -- MCP muss im Agent sichtbar sein."
+    echo "  2. Bei Problemen: Log pro MCP unter %LOCALAPPDATA%\\agentbox\\mcp-runtime\\<id>\\handler.log"
     exit 0
 fi
 
@@ -1650,158 +1648,51 @@ _mcp_reload_dispatcher() {
         log_error "powershell.exe nicht erreichbar."
         return 1
     fi
-    log_info "Stoppe agentbox-mcp-dispatcher..."
+    log_info "Halte MCP-Hintergrund-Prozess an..."
     powershell.exe -NoProfile -Command \
         "try { Stop-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop } catch { }" \
         2>/dev/null | tr -d '\r' >/dev/null
     sleep 1
-    log_info "Starte agentbox-mcp-dispatcher..."
+    log_info "Starte MCP-Hintergrund-Prozess..."
     local _out
     _out=$(powershell.exe -NoProfile -Command \
         "try { Start-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'started' } catch { Write-Output \"ERROR: \$(\$_.Exception.Message)\" }" \
         2>/dev/null | tr -d '\r')
     if echo "$_out" | grep -q "^ERROR:"; then
-        log_error "Dispatcher-Start fehlgeschlagen: $_out"
-        echo "  Scheduled Task evtl. nicht registriert -> install.ps1 als Admin rerunnen."
+        log_error "Start fehlgeschlagen: $_out"
+        echo "  Einmaliger Fix: install.ps1 als Admin in Windows-PowerShell ausfuehren."
         return 1
     fi
-    log_ok "Dispatcher neu geladen."
+    log_ok "MCP-Hintergrund-Prozess neu gestartet."
     return 0
 }
 
-_mcp_setup_kicad() {
-    # Interaktives KiCad-Setup ueber den geteilten Wizard. Wir rufen
-    # setup-kicad-mcp.ps1 via powershell.exe-Interop. Das Script lebt
-    # in _control/setup-kicad-mcp.ps1.
-    local _script="$CONTROL_DIR/setup-kicad-mcp.ps1"
+_mcp_run_wizard() {
+    # Universeller MCP-Einbind-Wizard. Zeigt auf setup-mcp.ps1, das den
+    # Rest (Typ-Erkennung, Deps, Startbefehl, Env) automatisch macht.
+    local _script="$CONTROL_DIR/proxy-mcp/setup-mcp.ps1"
     if [ ! -f "$_script" ]; then
-        log_error "setup-kicad-mcp.ps1 fehlt: $_script"
-        echo "  git pull in $CONTROL_DIR sollte das Script holen."
+        log_error "setup-mcp.ps1 fehlt: $_script"
+        echo "  Fehlt typisch nach Update aus Pre-2.4.3 -- git pull in _control sollte das Script holen."
         return 1
     fi
     if ! command -v powershell.exe >/dev/null 2>&1; then
-        log_error "powershell.exe nicht erreichbar -- MCP-Menu nur aus agentbox-host (nicht aus Sandbox)."
+        log_error "powershell.exe nicht erreichbar -- MCP-Menue nur aus agentbox-host nutzbar, nicht aus der Sandbox."
         return 1
     fi
     local _win_script
     _win_script=$(wslpath -w "$_script" 2>/dev/null)
     if [ -z "$_win_script" ]; then
-        log_error "wslpath-Konvertierung von $_script fehlgeschlagen."
+        log_error "wslpath-Konvertierung fehlgeschlagen."
         return 1
     fi
     echo ""
-    log_info "Starte KiCad-MCP-Wizard (Windows-PowerShell uebernimmt)..."
+    log_info "Starte MCP-Einbind-Wizard (Windows-PowerShell uebernimmt)..."
     echo ""
-    # -Wait wartet bis PS-Fenster fertig ist. Keine -Verb RunAs -- kein
-    # Admin noetig wenn der dispatcher-Task schon existiert (Default seit 2.4.1).
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$_win_script"
     echo ""
-    log_info "Wizard zurueck -- MCP-Liste siehst du gleich."
-    read -r -p "[Enter] zurueck ins MCP-Menu..." _
-}
-
-_mcp_add_custom() {
-    # Prompt-basiertes Custom-MCP-Add. Schreibt nach config.json via
-    # python3 (Smart-Merge, behaelt andere mcp_servers-Eintraege).
-    echo ""
-    echo -e "${CYAN}--- Custom MCP hinzufuegen ---${NC}"
-    echo "Entspricht dem Claude-Desktop/Cursor-Config-Format."
-    echo ""
-    read -r -p "  MCP-ID (z.B. 'github', 'memory', 'filesystem'): " _id
-    if [ -z "$_id" ]; then
-        echo "  Abgebrochen (leere ID)."
-        return
-    fi
-    read -r -p "  command (z.B. 'python', 'node', 'npx'): " _cmd
-    if [ -z "$_cmd" ]; then
-        echo "  Abgebrochen (leerer command)."
-        return
-    fi
-    echo "  args: ein Argument pro Zeile, leere Zeile = fertig."
-    echo "        Beispiel fuer 'npx -y @modelcontextprotocol/server-github':"
-    echo "          -y"
-    echo "          @modelcontextprotocol/server-github"
-    local _args_arr=()
-    local _i=1
-    while true; do
-        read -r -p "    arg[$_i]: " _a
-        [ -z "$_a" ] && break
-        _args_arr+=("$_a")
-        _i=$((_i+1))
-    done
-    echo "  env-Vars: key=value pro Zeile, leere Zeile = fertig."
-    echo "        Werte mit = drin werden korrekt geparst (alles nach erstem = ist value)."
-    local _env_lines=()
-    while true; do
-        read -r -p "    env: " _e
-        [ -z "$_e" ] && break
-        _env_lines+=("$_e")
-    done
-    read -r -p "  cwd (optional, Windows-Pfad): " _cwd
-
-    # Python-Script zum Mergen
-    local _args_json="[]"
-    if [ ${#_args_arr[@]} -gt 0 ]; then
-        _args_json=$(python3 -c "
-import json, sys
-print(json.dumps(sys.argv[1:]))
-" "${_args_arr[@]}")
-    fi
-    local _env_json="{}"
-    if [ ${#_env_lines[@]} -gt 0 ]; then
-        _env_json=$(python3 -c "
-import json, sys
-out = {}
-for line in sys.argv[1:]:
-    if '=' in line:
-        k, v = line.split('=', 1)
-        out[k.strip()] = v
-print(json.dumps(out))
-" "${_env_lines[@]}")
-    fi
-
-    python3 - "$AGENTBOX_CONFIG" "$_id" "$_cmd" "$_args_json" "$_env_json" "$_cwd" << 'PYEOF'
-import json, sys, os, shutil, time
-path, mid, cmd, args_json, env_json, cwd = sys.argv[1:7]
-
-with open(path, encoding='utf-8') as f:
-    data = json.load(f)
-
-servers = data.get('mcp_servers')
-if not isinstance(servers, list):
-    servers = []
-    data['mcp_servers'] = servers
-
-# Existing mit gleicher id rauswerfen
-servers[:] = [s for s in servers if not (isinstance(s, dict) and s.get('id') == mid)]
-
-entry = {'id': mid, 'command': cmd}
-args = json.loads(args_json)
-if args:
-    entry['args'] = args
-env = json.loads(env_json)
-if env:
-    entry['env'] = env
-if cwd:
-    entry['cwd'] = cwd
-
-servers.append(entry)
-
-# Backup + write
-bak = path + '.backup.' + time.strftime('%Y%m%d_%H%M%S')
-shutil.copy2(path, bak)
-with open(path, 'w', encoding='utf-8') as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
-    f.write('\n')
-print(f'[OK] {mid} hinzugefuegt. Backup: {bak}')
-PYEOF
-
-    echo ""
-    read -r -p "Dispatcher jetzt neu laden? [J/n] " _reload
-    if [ -z "$_reload" ] || [[ "$_reload" =~ ^[JjYy] ]]; then
-        _mcp_reload_dispatcher
-    fi
-    read -r -p "[Enter] zurueck ins MCP-Menu..." _
+    log_info "Wizard zurueck -- Liste siehst du gleich."
+    read -r -p "[Enter] zurueck ins MCP-Menue..." _
 }
 
 _mcp_remove_entry() {
@@ -1857,45 +1748,42 @@ PYEOF
 
 _mcp_show_list() {
     echo ""
-    echo -e "${CYAN}--- MCP-Server ---${NC}"
+    echo -e "${CYAN}--- Eingebundene MCP-Server ---${NC}"
     local _any=false
     while IFS='|' read -r _id _tier _agents; do
         [ -z "$_id" ] && continue
         _any=true
-        local _tier_label
-        case "$_tier" in
-            1) _tier_label="Import" ;;
-            2) _tier_label="Project" ;;
-            *) _tier_label="?" ;;
-        esac
         local _status
         _status=$(_mcp_heartbeat_status "$_id")
         local _agents_disp="${_agents:-alle}"
-        printf "  %-20s  %-8s  heartbeat=%-18s  agents=%s\n" \
-            "$_id" "[$_tier_label]" "$_status" "$_agents_disp"
+        printf "  %-24s  Status: %-18s  Agenten: %s\n" \
+            "$_id" "$_status" "$_agents_disp"
     done < <(_mcp_list_entries)
 
     if [ "$_any" = false ]; then
-        echo "  (keine MCP-Server konfiguriert)"
+        echo "  (noch keine MCP-Server eingebunden)"
     fi
+    echo ""
+    echo "  Status-Bedeutung:"
+    echo "    ok (Ns)     = laeuft, Heartbeat N Sekunden alt"
+    echo "    stale (Ns)  = Heartbeat > 30s -- Prozess haengt moeglicherweise"
+    echo "    tot (Ns)    = Heartbeat > 2min -- Prozess tot oder nie gestartet"
     echo ""
 }
 
 _mcp_menu() {
     while true; do
         _mcp_show_list
-        echo "  [1] KiCad 10 MCP einrichten (Wizard)"
-        echo "  [2] Custom MCP hinzufuegen (command/args/env manuell)"
-        echo "  [3] MCP entfernen"
-        echo "  [4] Dispatcher neu laden"
+        echo "  [1] Neuen MCP-Server einbinden (Wizard findet alles automatisch)"
+        echo "  [2] MCP-Server entfernen"
+        echo "  [3] Hintergrund-Prozess neu laden (bei Problemen)"
         echo "  [q] Zurueck"
         echo ""
         read -r -p "Auswahl: " _mcp_choice
         case "$_mcp_choice" in
-            1) _mcp_setup_kicad ;;
-            2) _mcp_add_custom ;;
-            3) _mcp_remove_entry ;;
-            4) _mcp_reload_dispatcher; read -r -p "[Enter]..." _ ;;
+            1) _mcp_run_wizard ;;
+            2) _mcp_remove_entry ;;
+            3) _mcp_reload_dispatcher; read -r -p "[Enter]..." _ ;;
             q|Q|"") return ;;
             *) echo "Ungueltige Auswahl." ;;
         esac
