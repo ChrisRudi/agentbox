@@ -1856,9 +1856,17 @@ mkdir -p "$SESSION_DIR"
 if [ -d "$PROJECT_DIR/src" ]; then
     tar -czf "$SESSION_DIR/snapshot.tar.gz" -C "$PROJECT_DIR" src 2>/dev/null || true
 elif [ -d "$PROJECT_DIR" ]; then
-    # Kein src/ Ordner — Projektroot sichern (ohne _tasks, assets, cache)
+    # Kein src/ Ordner — Projektroot sichern (ohne Buildartefakte, Caches,
+    # venvs, node_modules -- die blaehen den Snapshot auf zehntausende
+    # Dateien auf, besonders bei Python-MCP-Projekten nach pip install -e).
     tar -czf "$SESSION_DIR/snapshot.tar.gz" -C "$PROJECT_DIR" \
-        --exclude='_tasks' --exclude='assets' --exclude='.git' . 2>/dev/null || true
+        --exclude='_tasks' --exclude='assets' --exclude='.git' \
+        --exclude='venv' --exclude='.venv' --exclude='env' \
+        --exclude='node_modules' --exclude='__pycache__' \
+        --exclude='*.egg-info' --exclude='.pytest_cache' \
+        --exclude='.mypy_cache' --exclude='.ruff_cache' \
+        --exclude='dist' --exclude='build' --exclude='.next' \
+        . 2>/dev/null || true
 fi
 
 # CLAUDE.md sichern
