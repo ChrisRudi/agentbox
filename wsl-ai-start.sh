@@ -1222,19 +1222,45 @@ def inject_claude():
     backup_dir = os.path.join(auth_base, 'claude', 'backups')
     os.makedirs(backup_dir, exist_ok=True)
     target = os.path.join(backup_dir, '.claude.json.backup.agentbox-mcp')
+
+    # WICHTIG: als Basis den neuesten ECHTEN Claude-Backup nehmen,
+    # nicht einen leeren Dict. Sonst ueberschreiben wir beim
+    # Sandbox-Restore die UserID/Theme/oauthAccount-Felder und
+    # Claude Code haengt beim Auth-Check.
+    import glob as _g
+    cands = []
+    try:
+        cands = sorted(
+            [p for p in _g.glob(os.path.join(backup_dir, '.claude.json.backup.*'))
+             if not p.endswith('.agentbox-mcp')],
+            key=os.path.getmtime, reverse=True
+        )
+    except Exception:
+        pass
+
     data = {}
-    if os.path.isfile(target):
+    # Erstwahl: juengster echter Claude-Backup
+    for source in cands:
         try:
-            with open(target, encoding='utf-8') as f: data = json.load(f)
-            if not isinstance(data, dict): data = {}
-        except: data = {}
+            with open(source, encoding='utf-8') as f: loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data = loaded
+                break
+        except Exception:
+            continue
+    # Fallback: unsere alte agentbox-mcp-Datei (falls kein echter Backup da)
+    if not data and os.path.isfile(target):
+        try:
+            with open(target, encoding='utf-8') as f: loaded = json.load(f)
+            if isinstance(loaded, dict): data = loaded
+        except Exception:
+            pass
+
     mcp = data.setdefault('mcpServers', {})
-    # Alte agentbox-managed entries raus (identifiziert via URL-Host-IP-Pattern)
+    # Alte agentbox-managed entries raus
     for k in list(mcp.keys()):
         v = mcp.get(k, {})
         if isinstance(v, dict) and isinstance(v.get('url'), str) and '/sse' in v['url']:
-            # Heuristik: wenn die URL auf unseren host-ip-Range zeigt, gehoert sie uns.
-            # Simpler: alles in ports entfernen, dann neu schreiben.
             if k in ports: del mcp[k]
     for mid in ports:
         if 'claude' not in agent_map.get(mid, []): continue
