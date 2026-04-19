@@ -5,6 +5,77 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-04-19
+
+**MCP-Integration via HTTP/SSE, schlanker als 2.4.x.**
+
+Ersetzt die File-IPC-Architektur aus 2.4.x (die per Revert-Commit
+`b9538ee` entfernt wurde) durch einen direkten HTTP-Pfad. Agent in der
+Sandbox spricht per HTTP/SSE mit dem auf dem Host laufenden MCP-
+Server. Zwischenschicht: [`mcp-proxy`](https://www.npmjs.com/package/mcp-proxy)
+(npm-Paket), das stdio-MCPs transparent auf HTTP/SSE exposed.
+
+### Komponenten
+
+- **`win-mcp-dispatcher.ps1`** — Scheduled Task startet pro `mcp_servers`-
+  Eintrag eine `npx -y mcp-proxy --port N -- <command> [args]`-Instanz.
+  Port-Vergabe in 2 Phasen: pinned (aus `config.json` `"port": N`)
+  zuerst, dann auto-assigned ab 9000. Zuordnung in `ports.json`.
+  Supervisor-Loop restart-on-crash.
+- **`proxy-mcp/setup-mcp.ps1`** — generischer Wizard, Auto-Detect
+  Python/Node + Entry-Point + Dependencies + `.env.example`;
+  KiCad-Bezug wird still erkannt und das mitgelieferte KiCad-Python
+  statt System-Python genutzt (wegen `pcbnew`-Modul).
+- **`wsl-ai-start.sh`** — `[4] MCP-Server einbinden` im Config-Menue,
+  `--reload-mcp` Subcommand, Agent-Config-Injection mit URLs (Claude/
+  Codex/Gemini/Goose -- Aider skipped, kein stdio-MCP-Client).
+- **`wsl-sandbox-init.sh`** — iptables ACCEPT pro MCP-Port **vor**
+  der Host-IP-DROP-Regel; selektive Perforation, sonst Firewall
+  unveraendert.
+- **`win-setup-core.ps1`** — Node+mcp-proxy werden stumm via winget/
+  npm installiert wenn `mcp_servers` konfiguriert ist; Scheduled Task
+  wird immer registriert; Install-Prompt fragt bei leerem
+  `mcp_servers` ob der User jetzt einen einbinden will.
+
+### Config-Schema
+
+Identisch zu Claude-Desktop / Cursor, plus optionaler `"port"`-
+Override:
+
+```json
+"mcp_servers": [
+  {
+    "id": "kicad",
+    "command": "C:\\Program Files\\KiCad\\10.0\\bin\\python.exe",
+    "args": ["main.py"],
+    "cwd": "C:\\...\\KiCad_MCP",
+    "env": { "KICAD_CLI_PATH": "..." }
+  }
+]
+```
+
+### Vertrauensmodell
+
+- Was in `command`/`args` steht, laeuft auf dem Host. Keine Whitelist,
+  wie bei Claude Desktop / Cursor. User ist verantwortlich fuer die
+  Config.
+- Sandbox-Firewall oeffnet genau **eine** TCP-Port-Regel pro
+  konfiguriertem MCP zur Host-IP. Kein 127.0.0.1, kein anderes
+  Host-Service erreichbar. Alle sonstigen Blocks (RFC1918, Multicast,
+  IPv6) bleiben.
+
+### Migration von 2.4.x
+
+Nicht relevant -- 2.4.0-2.4.3 wurde per `b9538ee` komplett zurueck-
+gerollt. User die zwischendurch MCPs eingetragen hatten muessen via
+Wizard neu einbinden (Schema hat sich geaendert: kein `project`-Key
+mehr).
+
+### Release-Klasse: major
+
+Erzwingt `install.ps1`-Rerun, damit der neue Dispatcher-Task registriert
+wird und Node.js / mcp-proxy auf dem Host installiert werden.
+
 ## [2.3.0] - 2026-04-18
 
 **Performance + Diagnose Milestone.**

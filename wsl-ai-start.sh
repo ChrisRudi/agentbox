@@ -15,6 +15,7 @@ AUTO_MODE=false
 REPLAY_SESSION=""
 LIST_SESSIONS_MODE=false
 COMPARE_MODE=false
+RELOAD_MCP_MODE=false
 COMPARE_SESSIONS=()
 
 while [ $# -gt 0 ]; do
@@ -35,6 +36,10 @@ while [ $# -gt 0 ]; do
             ;;
         --list-sessions)
             LIST_SESSIONS_MODE=true
+            shift
+            ;;
+        --reload-mcp)
+            RELOAD_MCP_MODE=true
             shift
             ;;
         --compare)
@@ -233,6 +238,8 @@ fi
 # nicht "rename src to dst", GNU-Verhalten).
 mkdir -p "$AGENTBOX_LOCAL_ROOT" 2>/dev/null || true
 
+MCP_RUNTIME_BASE="$AGENTBOX_LOCAL_ROOT/mcp-runtime"
+
 TEMPLATE_PATH="$AGENTBOX_LOCAL_ROOT/sandbox/template.tar.gz"
 # agentbox 2.0: vhdx-Fastpath. Wenn das Template-Build eine vhdx erzeugt
 # hat (WSL 2.0.x+), nutzen wir die fuer Session-Start (Copy + import-in-
@@ -282,7 +289,7 @@ _migrate_from_control "$CONTROL_DIR/sessions" "$AGENTBOX_LOCAL_ROOT/sessions" "S
 # nicht mit dem Rename-Verhalten kollidieren.
 mkdir -p "$AGENTBOX_LOCAL_ROOT/sandbox" "$AGENTBOX_LOCAL_ROOT/cache/npm" \
          "$AGENTBOX_LOCAL_ROOT/cache/pip" "$AGENTBOX_LOCAL_ROOT/sessions" \
-         "$AGENTBOX_LOCAL_ROOT/auth" 2>/dev/null || true
+         "$AGENTBOX_LOCAL_ROOT/auth" "$MCP_RUNTIME_BASE" 2>/dev/null || true
 
 # --- Deferred Modi: --list-sessions, --compare ---
 # Diese Modi lesen aus $SESSIONS_DIR. Deshalb Ausfuehrung hier, nach
@@ -309,6 +316,35 @@ print(f\"  {d.get('id','?'):20s}  {d.get('agent','?'):15s}  {d.get('project','?'
     else
         echo "Keine Sessions vorhanden."
     fi
+    exit 0
+fi
+
+if [ "$RELOAD_MCP_MODE" = true ]; then
+    # MCP-Hintergrund-Prozess via powershell.exe-Interop neu starten.
+    # Laeuft in agentbox-host bzw. regulaerer WSL-Session (kein /mnt-
+    # Tmpfs-Overmount -> powershell.exe erreichbar).
+    if ! command -v powershell.exe >/dev/null 2>&1; then
+        log_error "powershell.exe nicht erreichbar. --reload-mcp nur aus agentbox-host oder regulaerer WSL-Shell."
+        exit 1
+    fi
+    log_info "Halte MCP-Hintergrund-Prozess an..."
+    powershell.exe -NoProfile -Command \
+        "try { Stop-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'gestoppt' } catch { Write-Output 'war nicht aktiv' }" \
+        2>/dev/null | tr -d '\r' | sed 's/^/  /'
+    sleep 1
+    log_info "Starte MCP-Hintergrund-Prozess..."
+    _start_out=$(powershell.exe -NoProfile -Command \
+        "try { Start-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'gestartet' } catch { Write-Output \"ERROR: \$(\$_.Exception.Message)\" }" \
+        2>/dev/null | tr -d '\r')
+    echo "$_start_out" | sed 's/^/  /'
+    if echo "$_start_out" | grep -q "^ERROR:"; then
+        log_error "Start fehlgeschlagen. Einmaliger Fix: install.ps1 als Admin ausfuehren."
+        exit 1
+    fi
+    log_ok "MCP-Hintergrund-Prozess neu gestartet."
+    echo ""
+    echo "Naechster Schritt: neue agentbox-Session starten -- MCPs erscheinen dann im Agent."
+    echo "Logs: %LOCALAPPDATA%\\agentbox\\mcp-runtime\\dispatcher.log"
     exit 0
 fi
 
@@ -1093,6 +1129,202 @@ log_ok "Auto-Approve-Seeds: claude=$_claude_status codex=$_codex_status goose=$_
 
 log_ok "Auth-Cache: $AUTH_BASE (Logins persistiert: $AGENTBOX_AUTH_IDS)"
 
+# --- MCP-Agent-Config-Injection ---
+# Ports aus ports.json (vom Host-Dispatcher geschrieben) lesen und pro
+# aktiviertem MCP einen URL-Eintrag in die persistenten Agent-Config-
+# Files in $AUTH_BASE/<agent>/ patchen. Die Agenten sehen den Eintrag
+# beim Sandbox-Start (Auth-Dir ist gemounted) und sprechen dann per
+# HTTP/SSE mit dem Host-MCP-Proxy.
+#
+# Wichtig: Host-IP wird hier aus /proc/net/route ermittelt (Default-
+# Gateway). Das ist die IP, die die Sandbox gleich gegen den Host
+# nutzt (wird auch fuer iptables-Regeln in wsl-sandbox-init.sh
+# verwendet).
+MCP_HOST_IP=""
+MCP_PORTS_SPEC=""   # "id=port;id=port;..." fuer sandbox-init
+MCP_AGENTS_SPEC=""  # "id=agent,agent,agent;..."
+
+_mcp_read_ports() {
+    local _pf
+    _pf=$(_mcp_ports_json_linux 2>/dev/null) || return 1
+    [ -f "$_pf" ] || return 1
+    cat "$_pf"
+}
+
+if declare -F cfg_get_mcp_servers >/dev/null 2>&1; then
+    MCP_HOST_IP=$(ip -4 route show default 2>/dev/null | awk '/^default/{print $3; exit}')
+    _mcp_ports_raw=$(_mcp_read_ports 2>/dev/null || echo '{}')
+
+    # Default-Agent-Liste: alle in config.json aktivierten
+    _default_mcp_agents=""
+    while IFS=: read -r _aid _aname _acmd; do
+        [ -z "$_aid" ] && continue
+        if [ -z "$_default_mcp_agents" ]; then
+            _default_mcp_agents="$_aid"
+        else
+            _default_mcp_agents="$_default_mcp_agents,$_aid"
+        fi
+    done < <(cfg_get_agents)
+
+    # Pro Eintrag: id, port aus ports.json, agents (oder default).
+    while IFS='|' read -r _mcp_id _mcp_pinned _mcp_agents_csv; do
+        [ -z "$_mcp_id" ] && continue
+        # Port aus ports.json auflösen (kann von pinned abweichen wenn Konflikt).
+        _mcp_port=$(echo "$_mcp_ports_raw" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    v = d.get('$_mcp_id')
+    if v: print(v)
+except: pass
+" 2>/dev/null)
+        [ -z "$_mcp_port" ] && continue  # Dispatcher hat den MCP nicht startbar gemacht
+        [ -z "$_mcp_agents_csv" ] && _mcp_agents_csv="$_default_mcp_agents"
+
+        if [ -z "$MCP_PORTS_SPEC" ]; then
+            MCP_PORTS_SPEC="${_mcp_id}=${_mcp_port}"
+            MCP_AGENTS_SPEC="${_mcp_id}=${_mcp_agents_csv}"
+        else
+            MCP_PORTS_SPEC="${MCP_PORTS_SPEC};${_mcp_id}=${_mcp_port}"
+            MCP_AGENTS_SPEC="${MCP_AGENTS_SPEC};${_mcp_id}=${_mcp_agents_csv}"
+        fi
+    done < <(cfg_get_mcp_servers)
+fi
+
+if [ -n "$MCP_PORTS_SPEC" ] && [ -n "$MCP_HOST_IP" ] && command -v python3 >/dev/null 2>&1; then
+    # Ein Python3-Script macht die ganze Arbeit fuer alle 4 Agenten.
+    # Gemeinsames Anker-Schema: '# agentbox-mcp-auto-managed'-Kommentare
+    # markieren unsere Bloecke fuer idempotent remove.
+    python3 - "$AUTH_BASE" "$MCP_HOST_IP" "$MCP_PORTS_SPEC" "$MCP_AGENTS_SPEC" << 'PYEOF' 2>/dev/null || true
+import json, os, re, sys
+
+auth_base = sys.argv[1]
+host_ip   = sys.argv[2]
+ports_sp  = sys.argv[3]
+agents_sp = sys.argv[4]
+
+# Parse specs
+ports = {}
+for p in ports_sp.split(';'):
+    if '=' in p:
+        k,v = p.split('=',1); ports[k.strip()] = v.strip()
+agent_map = {}
+for p in agents_sp.split(';'):
+    if '=' in p:
+        k,v = p.split('=',1)
+        agent_map[k.strip()] = [a.strip() for a in v.strip().split(',') if a.strip()]
+
+def url_for(mid):
+    return f"http://{host_ip}:{ports[mid]}/sse"
+
+# --- Claude: .claude.json-Backup ---
+def inject_claude():
+    backup_dir = os.path.join(auth_base, 'claude', 'backups')
+    os.makedirs(backup_dir, exist_ok=True)
+    target = os.path.join(backup_dir, '.claude.json.backup.agentbox-mcp')
+    data = {}
+    if os.path.isfile(target):
+        try:
+            with open(target, encoding='utf-8') as f: data = json.load(f)
+            if not isinstance(data, dict): data = {}
+        except: data = {}
+    mcp = data.setdefault('mcpServers', {})
+    # Alte agentbox-managed entries raus (identifiziert via URL-Host-IP-Pattern)
+    for k in list(mcp.keys()):
+        v = mcp.get(k, {})
+        if isinstance(v, dict) and isinstance(v.get('url'), str) and '/sse' in v['url']:
+            # Heuristik: wenn die URL auf unseren host-ip-Range zeigt, gehoert sie uns.
+            # Simpler: alles in ports entfernen, dann neu schreiben.
+            if k in ports: del mcp[k]
+    for mid in ports:
+        if 'claude' not in agent_map.get(mid, []): continue
+        mcp[mid] = { 'type': 'sse', 'url': url_for(mid) }
+    with open(target, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False); f.write('\n')
+
+# --- Codex: config.toml mit Anker ---
+def inject_codex():
+    target = os.path.join(auth_base, 'codex', 'config.toml')
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    raw = ''
+    if os.path.isfile(target):
+        try:
+            with open(target, encoding='utf-8') as f: raw = f.read()
+        except: raw = ''
+    ANCHOR = '# agentbox-mcp-auto-managed'
+    pat = re.compile(r"\n?" + re.escape(ANCHOR) + r" START.*?" + re.escape(ANCHOR) + r" END\n?", re.DOTALL)
+    raw = pat.sub("\n", raw)
+    if raw and not raw.endswith("\n"): raw += "\n"
+    blocks = []
+    for mid in ports:
+        if 'codex' not in agent_map.get(mid, []): continue
+        blocks.append(
+            f"\n{ANCHOR} START id={mid}\n"
+            f"[mcp_servers.{mid}]\n"
+            f'type = "sse"\n'
+            f'url  = "{url_for(mid)}"\n'
+            f"{ANCHOR} END\n"
+        )
+    with open(target, 'w', encoding='utf-8') as f:
+        f.write(raw + ''.join(blocks))
+
+# --- Gemini: settings.json ---
+def inject_gemini():
+    target = os.path.join(auth_base, 'gemini', 'settings.json')
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    data = {}
+    if os.path.isfile(target):
+        try:
+            with open(target, encoding='utf-8') as f: data = json.load(f)
+            if not isinstance(data, dict): data = {}
+        except: data = {}
+    mcp = data.setdefault('mcpServers', {})
+    for k in list(mcp.keys()):
+        v = mcp.get(k, {})
+        if isinstance(v, dict) and isinstance(v.get('httpUrl'), str):
+            if k in ports: del mcp[k]
+    for mid in ports:
+        if 'gemini' not in agent_map.get(mid, []): continue
+        mcp[mid] = { 'httpUrl': url_for(mid) }
+    with open(target, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False); f.write('\n')
+
+# --- Goose: config.yaml extensions-Block ---
+def inject_goose():
+    target = os.path.join(auth_base, 'goose', 'config.yaml')
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    raw = ''
+    if os.path.isfile(target):
+        try:
+            with open(target, encoding='utf-8') as f: raw = f.read()
+        except: raw = ''
+    ANCHOR_START = '# agentbox-mcp-auto-managed START'
+    ANCHOR_END   = '# agentbox-mcp-auto-managed END'
+    pat = re.compile(r"\n?" + re.escape(ANCHOR_START) + r".*?" + re.escape(ANCHOR_END) + r"\n?", re.DOTALL)
+    raw = pat.sub("\n", raw)
+    if raw and not raw.endswith("\n"): raw += "\n"
+    entries = []
+    for mid in ports:
+        if 'goose' not in agent_map.get(mid, []): continue
+        entries.append(
+            f"  {mid}:\n"
+            f"    type: sse\n"
+            f"    enabled: true\n"
+            f"    uri: {url_for(mid)}\n"
+        )
+    if entries:
+        raw += '\n' + ANCHOR_START + '\nextensions:\n' + ''.join(entries) + ANCHOR_END + '\n'
+    with open(target, 'w', encoding='utf-8') as f:
+        f.write(raw)
+
+for fn in (inject_claude, inject_codex, inject_gemini, inject_goose):
+    try: fn()
+    except Exception as e:
+        sys.stderr.write(f"inject fail: {e}\n")
+PYEOF
+    log_ok "MCP-Agent-Configs gepatcht (Host-IP: $MCP_HOST_IP)"
+fi
+
 # --- Alte status_*.json loeschen ---
 find "$TASKS_DIR" -name "status_*.json" -type f -delete 2>/dev/null || true
 log_ok "Alte Status-Dateien bereinigt"
@@ -1120,7 +1352,7 @@ _load_enabled_agents() {
     fi
 }
 
-# Config-Untermenue: Agents toggle + Projekte verstecken + Benchmark
+# Config-Untermenue: Agents toggle + Projekte verstecken + Benchmark + MCP
 _config_menu() {
     while true; do
         echo ""
@@ -1129,6 +1361,7 @@ _config_menu() {
         echo "  [1] Agents aktivieren/deaktivieren"
         echo "  [2] Projekte verstecken/einblenden"
         echo "  [3] Benchmark ausfuehren"
+        echo "  [4] MCP-Server einbinden"
         echo "  [q] Zurueck"
         echo ""
         read -r -p "Auswahl: " _cfg_choice
@@ -1136,6 +1369,194 @@ _config_menu() {
             1) _toggle_agents_menu ;;
             2) _toggle_projects_menu ;;
             3) _run_benchmark_menu ;;
+            4) _mcp_menu ;;
+            q|Q|"") return ;;
+            *) echo "Ungueltige Auswahl." ;;
+        esac
+    done
+}
+
+# --- MCP-Verwaltung ---
+_mcp_runtime_root_windows() {
+    if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -NonInteractive -Command \
+            '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Write-Output "$env:LOCALAPPDATA\agentbox\mcp-runtime"' \
+            2>/dev/null | tr -d '\r\n' | tr -d '\000' || true
+    fi
+}
+
+_mcp_ports_json_linux() {
+    local _win _lin
+    _win=$(_mcp_runtime_root_windows)
+    [ -z "$_win" ] && return 1
+    _lin=$(wslpath -u "$_win" 2>/dev/null)
+    [ -z "$_lin" ] && return 1
+    echo "$_lin/ports.json"
+}
+
+_mcp_get_port() {
+    # $1 = mcp-id → echo port oder leer
+    local _id="$1"
+    local _pf
+    _pf=$(_mcp_ports_json_linux) || return 1
+    [ -f "$_pf" ] || return 1
+    python3 -c "
+import json, sys
+try:
+    with open('$_pf') as f: d = json.load(f)
+    v = d.get('$_id')
+    if v: print(v)
+except: pass
+" 2>/dev/null
+}
+
+_mcp_status_string() {
+    # $1 = mcp-id → "Port 9000 | TCP OK" / "kein Port" / etc.
+    local _id="$1"
+    local _port
+    _port=$(_mcp_get_port "$_id")
+    if [ -z "$_port" ]; then
+        echo "nicht zugewiesen"
+        return
+    fi
+    # TCP-Check via bash /dev/tcp zum Host-Gateway
+    local _host_ip
+    _host_ip=$(ip -4 route show default 2>/dev/null | awk '/^default/{print $3; exit}')
+    if [ -n "$_host_ip" ] && timeout 1 bash -c ">/dev/tcp/$_host_ip/$_port" 2>/dev/null; then
+        echo "Port $_port | HTTP erreichbar"
+    else
+        echo "Port $_port | nicht erreichbar (Dispatcher aus?)"
+    fi
+}
+
+_mcp_show_list() {
+    echo ""
+    echo -e "${CYAN}--- Eingebundene MCP-Server ---${NC}"
+    local _any=false
+    while IFS='|' read -r _id _pinned _agents; do
+        [ -z "$_id" ] && continue
+        _any=true
+        local _status
+        _status=$(_mcp_status_string "$_id")
+        local _pin_disp="auto"
+        [ -n "$_pinned" ] && _pin_disp="$_pinned (pinned)"
+        local _agents_disp="${_agents:-alle}"
+        printf "  %-24s  %-28s  Agenten: %s\n" \
+            "$_id" "$_status" "$_agents_disp"
+    done < <(cfg_get_mcp_servers)
+
+    if [ "$_any" = false ]; then
+        echo "  (noch keine MCP-Server eingebunden)"
+    fi
+    echo ""
+}
+
+_mcp_reload_dispatcher() {
+    if ! command -v powershell.exe >/dev/null 2>&1; then
+        log_error "powershell.exe nicht erreichbar."
+        return 1
+    fi
+    log_info "Halte MCP-Hintergrund-Prozess an..."
+    powershell.exe -NoProfile -Command \
+        "try { Stop-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop } catch { }" \
+        2>/dev/null | tr -d '\r' >/dev/null
+    sleep 1
+    log_info "Starte MCP-Hintergrund-Prozess..."
+    local _out
+    _out=$(powershell.exe -NoProfile -Command \
+        "try { Start-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'ok' } catch { Write-Output \"ERROR: \$(\$_.Exception.Message)\" }" \
+        2>/dev/null | tr -d '\r')
+    if echo "$_out" | grep -q "^ERROR:"; then
+        log_error "Start fehlgeschlagen: $_out"
+        echo "  Einmaliger Fix: install.ps1 als Admin in Windows-PowerShell ausfuehren."
+        return 1
+    fi
+    log_ok "MCP-Hintergrund-Prozess neu gestartet."
+    return 0
+}
+
+_mcp_run_wizard() {
+    local _script="$CONTROL_DIR/proxy-mcp/setup-mcp.ps1"
+    if [ ! -f "$_script" ]; then
+        log_error "setup-mcp.ps1 fehlt: $_script"
+        return 1
+    fi
+    if ! command -v powershell.exe >/dev/null 2>&1; then
+        log_error "powershell.exe nicht erreichbar -- MCP-Menue nur aus agentbox-host nutzbar."
+        return 1
+    fi
+    local _win_script
+    _win_script=$(wslpath -w "$_script" 2>/dev/null)
+    [ -z "$_win_script" ] && { log_error "wslpath-Konvertierung fehlgeschlagen."; return 1; }
+    echo ""
+    log_info "Starte MCP-Einbind-Wizard (Windows-PowerShell uebernimmt)..."
+    echo ""
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$_win_script"
+    echo ""
+    read -r -p "[Enter] zurueck ins MCP-Menue..." _
+}
+
+_mcp_remove_entry() {
+    echo ""
+    echo -e "${CYAN}--- MCP-Server entfernen ---${NC}"
+    local _ids=()
+    while IFS='|' read -r _id _pinned _agents; do
+        [ -z "$_id" ] && continue
+        _ids+=("$_id")
+    done < <(cfg_get_mcp_servers)
+
+    if [ ${#_ids[@]} -eq 0 ]; then
+        echo "Keine MCPs in config.json."
+        read -r -p "[Enter]..." _; return
+    fi
+
+    for i in "${!_ids[@]}"; do
+        echo "  [$((i+1))] ${_ids[$i]}"
+    done
+    echo "  [q] Abbrechen"
+    echo ""
+    read -r -p "Nummer zum Entfernen: " _pick
+    [[ "$_pick" =~ ^[qQ]$ ]] && return
+    [[ "$_pick" =~ ^[0-9]+$ ]] || return
+    [ "$_pick" -ge 1 ] 2>/dev/null || return
+    [ "$_pick" -le ${#_ids[@]} ] 2>/dev/null || return
+    local _target="${_ids[$((_pick-1))]}"
+
+    python3 - "$AGENTBOX_CONFIG" "$_target" << 'PYEOF'
+import json, sys, shutil, time
+path, tid = sys.argv[1], sys.argv[2]
+with open(path, encoding='utf-8') as f: data = json.load(f)
+servers = data.get('mcp_servers', [])
+before = len(servers)
+servers[:] = [s for s in servers if not (isinstance(s, dict) and s.get('id') == tid)]
+data['mcp_servers'] = servers
+bak = path + '.backup.' + time.strftime('%Y%m%d_%H%M%S')
+shutil.copy2(path, bak)
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False); f.write('\n')
+print(f'[OK] {tid} entfernt ({before} -> {len(servers)}). Backup: {bak}')
+PYEOF
+    echo ""
+    read -r -p "MCP-Hintergrund-Prozess jetzt neu laden? [J/n] " _reload
+    if [ -z "$_reload" ] || [[ "$_reload" =~ ^[JjYy] ]]; then
+        _mcp_reload_dispatcher
+    fi
+    read -r -p "[Enter]..." _
+}
+
+_mcp_menu() {
+    while true; do
+        _mcp_show_list
+        echo "  [1] Neuen MCP-Server einbinden (Wizard findet alles automatisch)"
+        echo "  [2] MCP-Server entfernen"
+        echo "  [3] MCP-Hintergrund-Prozess neu laden (bei Problemen)"
+        echo "  [q] Zurueck"
+        echo ""
+        read -r -p "Auswahl: " _mcp_choice
+        case "$_mcp_choice" in
+            1) _mcp_run_wizard ;;
+            2) _mcp_remove_entry ;;
+            3) _mcp_reload_dispatcher; read -r -p "[Enter]..." _ ;;
             q|Q|"") return ;;
             *) echo "Ungueltige Auswahl." ;;
         esac
@@ -1662,7 +2083,7 @@ EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
     "$SANDBOX_USER" "$AUTH_BASE" "$AGENT_INSTALL" \
-    "$AGENTBOX_AUTH_SPEC" || EXIT_CODE=$?
+    "$AGENTBOX_AUTH_SPEC" "$MCP_PORTS_SPEC" || EXIT_CODE=$?
 
 # --- Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then

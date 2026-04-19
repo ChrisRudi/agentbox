@@ -421,6 +421,177 @@ function Initialize-AgentboxAutoApproveDefaults {
 # Rebuild (gleicher Config-Hash) trotzdem neue Seeds nachziehen koennen.
 Initialize-AgentboxAutoApproveDefaults
 
+# --- MCP-Dependencies sicherstellen (Node.js + mcp-proxy) ---
+# agentbox 2.5.0: MCP-Server werden via `npx -y mcp-proxy` auf dem Host
+# exposed. Dafuer muss Node installiert sein. Wenn nicht: stumm via
+# winget installieren. `mcp-proxy` wird zusaetzlich via `npm install -g`
+# vorgezogen (npx wuerde sonst beim ersten MCP-Call download-en).
+function Install-AgentboxMcpDependencies {
+    # Nur relevant wenn mcp_servers konfiguriert sind. Leer -> skip,
+    # kein unnoetiger Node-Install auf Systemen ohne MCP-Bedarf.
+    $hasMcp = $false
+    if ($config -and $config.PSObject.Properties['mcp_servers'] -and $config.mcp_servers) {
+        foreach ($s in @($config.mcp_servers)) {
+            if ($s -and $s.PSObject.Properties['id'] -and $s.id) { $hasMcp = $true; break }
+        }
+    }
+    if (-not $hasMcp) {
+        Write-Host "[INFO] mcp_servers leer -- Node/mcp-proxy-Install uebersprungen." -ForegroundColor Gray
+        return
+    }
+
+    Write-Host ""
+    Write-Host "Pruefe MCP-Dependencies (Node.js + mcp-proxy)..." -ForegroundColor Cyan
+
+    # Node-Check
+    $nodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (-not $nodeCmd) {
+        Write-Host "[INFO] Node.js nicht gefunden -- installiere via winget..." -ForegroundColor Yellow
+        $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if (-not $winget) {
+            Write-Host "[WARN] winget nicht verfuegbar -- Node.js bitte manuell installieren:" -ForegroundColor Yellow
+            Write-Host "       https://nodejs.org/  (LTS-Version)" -ForegroundColor Gray
+            return
+        }
+        & winget install -e --id OpenJS.NodeJS.LTS --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+            ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN] Node-Install fehlgeschlagen (rc=$LASTEXITCODE)." -ForegroundColor Yellow
+            return
+        }
+        # PATH neu laden, damit npm in dieser Session gefunden wird
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+                    [System.Environment]::GetEnvironmentVariable('Path','User')
+        Write-Host "[OK] Node.js installiert." -ForegroundColor Green
+    } else {
+        Write-Host "[OK] Node.js vorhanden: $($nodeCmd.Source)" -ForegroundColor Green
+    }
+
+    # mcp-proxy-Check
+    $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $npmCmd) {
+        Write-Host "[WARN] npm nicht gefunden nach Node-Install -- bitte neu anmelden und install.ps1 rerunnen." -ForegroundColor Yellow
+        return
+    }
+
+    # Pruefen ob mcp-proxy installiert ist
+    $mcpProxyCheck = & $npmCmd.Source list -g --depth=0 2>&1 | Select-String "mcp-proxy"
+    if (-not $mcpProxyCheck) {
+        Write-Host "[INFO] mcp-proxy nicht installiert -- installiere via npm..." -ForegroundColor Yellow
+        & $npmCmd.Source install -g mcp-proxy 2>&1 |
+            ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[WARN] mcp-proxy-Install fehlgeschlagen (rc=$LASTEXITCODE)." -ForegroundColor Yellow
+            return
+        }
+        Write-Host "[OK] mcp-proxy installiert." -ForegroundColor Green
+    } else {
+        Write-Host "[OK] mcp-proxy bereits installiert." -ForegroundColor Green
+    }
+}
+
+Install-AgentboxMcpDependencies
+
+# --- Scheduled Task fuer MCP-Dispatcher registrieren ---
+# Wird IMMER registriert (auch bei leerem mcp_servers), sodass der User
+# nach einem Hinzufuegen eines MCP nur `agentbox --reload-mcp` braucht
+# und nicht install.ps1 als Admin rerunnen muss.
+function Register-AgentboxMcpDispatcher {
+    param(
+        $cfg,
+        [Parameter(Mandatory)][string]$ScriptDir
+    )
+
+    $taskName = "agentbox-mcp-dispatcher"
+    $dispatcherScript = Join-Path $ScriptDir "win-mcp-dispatcher.ps1"
+    if (-not (Test-Path -LiteralPath $dispatcherScript)) {
+        Write-Host "[INFO] win-mcp-dispatcher.ps1 fehlt -- Task nicht registriert" -ForegroundColor Gray
+        return
+    }
+
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        try { Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue } catch { }
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dispatcherScript`"" `
+        -WorkingDirectory $ScriptDir
+
+    $atLogon = New-ScheduledTaskTrigger -AtLogon
+
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries -StartWhenAvailable `
+        -MultipleInstances IgnoreNew `
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    $settings.ExecutionTimeLimit = "PT0S"
+
+    Register-ScheduledTask -TaskName $taskName -Action $action `
+        -Trigger $atLogon -Settings $settings `
+        -Description "agentbox MCP dispatcher -- startet mcp-proxy pro eingebundenem MCP" | Out-Null
+    Write-Host "[OK] Scheduled Task '$taskName' registriert (AtLogon, RestartOnFailure)" -ForegroundColor Green
+
+    try {
+        Start-ScheduledTask -TaskName $taskName
+        Write-Host "[OK] MCP-Hintergrund-Prozess gestartet" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Start fehlgeschlagen: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+# --- MCP-Setup-Prompt (Erst-Install, wenn mcp_servers leer) ---
+function Invoke-AgentboxMcpSetupPrompt {
+    param(
+        $cfg,
+        [Parameter(Mandatory)][string]$ScriptDir,
+        [Parameter(Mandatory)][string]$ConfigPath
+    )
+    $hasExisting = $false
+    if ($cfg -and $cfg.PSObject.Properties['mcp_servers'] -and $cfg.mcp_servers) {
+        foreach ($s in @($cfg.mcp_servers)) {
+            if ($s -and $s.PSObject.Properties['id'] -and $s.id) { $hasExisting = $true; break }
+        }
+    }
+    if ($hasExisting) {
+        Write-Host "[INFO] MCP-Server bereits konfiguriert -- Setup-Prompt uebersprungen." -ForegroundColor Gray
+        Write-Host "       Verwaltung: agentbox -> [c] Konfiguration -> [4] MCP-Server einbinden" -ForegroundColor Gray
+        return
+    }
+    Write-Host ""
+    Write-Host "================================================" -ForegroundColor Cyan
+    Write-Host " MCP-Server einbinden?" -ForegroundColor Cyan
+    Write-Host "================================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "agentbox kann beliebige MCP-Server (Python oder Node.js) auf dem"
+    Write-Host "Host laufen lassen und ihre Tools in jeder Sandbox-Session fuer"
+    Write-Host "den Agenten bereitstellen -- ueber HTTP/SSE zum Host-Proxy."
+    Write-Host ""
+    Write-Host "Der Wizard erkennt den Server-Typ, Startbefehl und Dependencies" -ForegroundColor Gray
+    Write-Host "automatisch -- du gibst nur den Ordner an." -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Jederzeit spaeter: agentbox -> [c] -> [4] MCP-Server einbinden" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [1] Jetzt einen MCP-Server einbinden (Wizard)" -ForegroundColor White
+    Write-Host "  [2] Spaeter" -ForegroundColor White
+    Write-Host ""
+    $pick = Read-Host "Auswahl [2]"
+    if ([string]::IsNullOrWhiteSpace($pick)) { $pick = "2" }
+    switch ($pick) {
+        "1" {
+            $wizard = Join-Path $ScriptDir "proxy-mcp\setup-mcp.ps1"
+            if (-not (Test-Path -LiteralPath $wizard)) {
+                Write-Host "[WARN] proxy-mcp\setup-mcp.ps1 nicht gefunden." -ForegroundColor Yellow
+                return
+            }
+            Write-Host ""
+            & $wizard
+        }
+        default {
+            Write-Host "[OK] Kein MCP eingebunden." -ForegroundColor Green
+        }
+    }
+}
+
 $configHashFile = Join-Path $sandboxDir ".config_hash"
 $currentHash = Get-AgentboxConfigHash -cfg $config
 
@@ -458,6 +629,7 @@ if (($haveTarGz -or $haveVhd) -and (Test-Path -LiteralPath $configHashFile)) {
 
         Write-Host ""
         Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
+        Register-AgentboxMcpDispatcher -cfg $config -ScriptDir $scriptDir
 
         Write-Host ""
         Write-Host "=== Setup abgeschlossen (Template aus Cache) ===" -ForegroundColor Green
@@ -907,9 +1079,10 @@ if ($demoBaseDir) {
     Seed-AgentboxDemoBenchmark -cfg $config -ScriptDir $scriptDir -BaseDir $demoBaseDir
 }
 
-# --- Event-Source + Scheduled Task registrieren ---
+# --- Event-Source + Scheduled Tasks registrieren ---
 Write-Host ""
 Register-AgentboxTaskRunner -cfg $config -ScriptDir $scriptDir
+Register-AgentboxMcpDispatcher -cfg $config -ScriptDir $scriptDir
 
 # --- Fertig ---
 Write-Host ""
@@ -917,3 +1090,6 @@ Write-Host "=== Setup abgeschlossen ===" -ForegroundColor Green
 Write-Host ""
 
 } # end if (-not $agentboxSkipBuild)
+
+# --- MCP-Setup-Prompt am Ende (beide Pfade) ---
+Invoke-AgentboxMcpSetupPrompt -cfg $config -ScriptDir $scriptDir -ConfigPath $configPath

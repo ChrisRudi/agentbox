@@ -145,6 +145,53 @@ except:
     echo "goose:.config/goose"
 }
 
+# cfg_get_mcp_servers
+# Gibt konfigurierte MCP-Server aus config.json pro Zeile aus.
+# Format: "id|port|agents_csv"
+#   id        : MCP-ID (z.B. "kicad")
+#   port      : gepinnter Port (Zahl) oder leer wenn auto-assigned
+#   agents_csv: Kommaseparierte Liste oder leer (Default = alle)
+# Ports werden vom Host-Dispatcher vergeben (ports.json), nicht hier.
+# Diese Funktion ist nur fuer Enum + Pin-Info.
+cfg_get_mcp_servers() {
+    if [ ! -f "$AGENTBOX_CONFIG" ]; then
+        return
+    fi
+
+    if command -v python3 &> /dev/null; then
+        python3 -c "
+import json
+try:
+    with open('$AGENTBOX_CONFIG') as f:
+        data = json.load(f)
+    servers = data.get('mcp_servers', [])
+    if isinstance(servers, list):
+        for s in servers:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get('id', '')).strip()
+            if not sid:
+                continue
+            port = s.get('port', '')
+            if port and isinstance(port, (int, float)):
+                port_str = str(int(port))
+            else:
+                port_str = ''
+            agents = s.get('agents', [])
+            if isinstance(agents, list):
+                agents_csv = ','.join(str(a).strip() for a in agents if str(a).strip())
+            else:
+                agents_csv = ''
+            print(f'{sid}|{port_str}|{agents_csv}')
+except Exception:
+    pass
+" 2>/dev/null
+        return
+    fi
+    # Ohne python3 bleibt mcp-Integration still. JSON-Array-of-Objects
+    # laesst sich nicht sinnvoll mit grep parsen.
+}
+
 # cfg_get_agents
 # Gibt aktivierte Agenten als "id:name:command" pro Zeile aus
 cfg_get_agents() {

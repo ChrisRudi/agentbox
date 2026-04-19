@@ -322,6 +322,65 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 
 Siehe [`config.json`](../config.json) für die vollständige Liste mit allen Defaults.
 
+## MCP-Server einbinden
+
+agentbox kann beliebige MCP-Server (Python oder Node.js) auf dem Host laufen lassen und ihre Tools in jeder Sandbox-Session für den Agenten bereitstellen. Die Brücke ist **HTTP/SSE** mit einer gezielten Firewall-Perforation pro aktiviertem MCP — die sonstige Sandbox-Isolation bleibt unverändert.
+
+### Im Menü (empfohlen)
+
+```
+agentbox  →  [c] Konfiguration  →  [4] MCP-Server einbinden
+
+  [1] Neuen MCP-Server einbinden (Wizard findet alles automatisch)
+  [2] MCP-Server entfernen
+  [3] MCP-Hintergrund-Prozess neu laden (bei Problemen)
+```
+
+**[1] Wizard** — du zeigst auf einen MCP-Server-Ordner, alles andere läuft automatisch:
+
+- Typ-Erkennung: Python (`pyproject.toml` / `main.py`) oder Node.js (`package.json`)
+- Startbefehl: `[project.scripts]` / `main.py` / `server.py` / `bin` / `main` / `index.js`
+- Dependencies: `pip install -e .[dev]` / `pip install -e .` / `npm install`
+- Umgebungsvariablen: `.env.example` automatisch geparst, Secrets (Tokens/Keys) explizit abgefragt
+- MCP-ID: aus `name`-Feld oder Ordnername
+- KiCad-Spezial-Optimierung im Hintergrund (KiCad's mitgeliefertes Python statt System-Python, weil nur das `pcbnew` hat)
+
+Ein frischer `install.ps1` fragt einmalig am Ende, ob du jetzt einen MCP einbinden willst.
+
+### Architektur
+
+- Host-seitiger **Scheduled Task** `agentbox-mcp-dispatcher` (AtLogon + RestartOnFailure) startet pro aktiviertem MCP eine `mcp-proxy`-Instanz, die den stdio-Server auf HTTP/SSE exposed
+- Port wird automatisch ab 9000 vergeben (oder fest per `"port": N` in `config.json`); Zuordnung in `%LOCALAPPDATA%\agentbox\mcp-runtime\ports.json`
+- Sandbox bekommt **genau einen** TCP-Port pro MCP zur Host-IP freigegeben (iptables-ACCEPT vor den DROP-Regeln), sonst bleibt die Firewall unverändert
+- Agent-Config wird bei jedem Sandbox-Start mit der URL `http://<host-ip>:<port>/sse` gepatcht
+
+### Manuelle Config (advanced)
+
+```json
+"mcp_servers": [
+  {
+    "id": "mein-mcp",
+    "command": "C:\\pfad\\zu\\python.exe",
+    "args": ["main.py"],
+    "cwd": "C:\\Users\\me\\Projects\\MeinMcp",
+    "env": { "SOME_TOKEN": "..." },
+    "port": 9099
+  }
+]
+```
+
+Übernehmen mit `agentbox --reload-mcp`.
+
+### Vertrauensgrenze
+
+Was in `command` / `args` steht, wird gestartet, auf dem Host, als dein User. Es gibt **keine** Command-Whitelist — gleiches Verhalten wie Claude Desktop / Cursor.
+
+### Debugging
+
+- `%LOCALAPPDATA%\agentbox\mcp-runtime\dispatcher.log` — Dispatcher-Lifecycle
+- `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\bridge.log` — pro-MCP stdout/stderr
+- `curl -N http://127.0.0.1:9000/sse` vom Host aus — roher SSE-Stream zum Diagnostizieren
+
 ## Vergleich
 
 |                          | Docker Dev Container | GitHub Codespaces | **agentbox** |
