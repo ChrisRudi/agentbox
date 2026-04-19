@@ -322,6 +322,33 @@ Alle Einstellungen in `config.json` (optional — alle Werte haben eingebaute De
 
 Siehe [`config.json`](../config.json) für die vollständige Liste mit allen Defaults.
 
+## MCP-Server (Host-Bridge)
+
+agentbox bringt eine first-class MCP-Integration mit, mit der Agenten **Windows-Host-Funktionen** aufrufen können (Windows-Apps steuern, local-only APIs ansprechen, native Automation triggern) — ohne die hermetisch abgeschottete Sandbox-Firewall anzufassen.
+
+**Funktionsweise:**
+
+- Du legst unter `AI_Projects_Source\<dein-mcp>\` ein normales **agentbox-Projekt** an mit einer `handler.ps1` (implementiert die MCP-Tools) und einer `tools.json` (deklariert die Schemas). Das [`mcp-handler-template\`](../tools/mcp-handler-template/)-Projekt wird beim `install.ps1` als Starter geseedet.
+- Ein Windows Scheduled Task (`agentbox-mcp-dispatcher`, AtLogon + RestartOnFailure) startet jeden aktivierten Handler als persistenten Daemon.
+- In der Sandbox forwarded ein kleiner stdio-Proxy ([`proxy-mcp.js`](../proxy-mcp/proxy-mcp.js)) jeden `tools/call` über eine **File-System-Queue** unter `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\` — kein Netzwerk-Traffic, die bestehende Sandbox-Firewall bleibt unverändert.
+- Steady-state-Latenz: ~10-30 ms pro Call (PowerShell FileSystemWatcher auf NTFS).
+
+**Einen aktivieren:**
+
+1. Template kopieren: `Copy-Item "$env:OneDrive\AI_Projects_Source\mcp-handler-template" "$env:OneDrive\AI_Projects_Source\mein-mcp" -Recurse`
+2. `mein-mcp\handler.ps1` bearbeiten (das `echo`-Tool durch eigene Logik ersetzen) und `mein-mcp\tools.json` (Tool-Schema deklarieren).
+3. In `config.json` registrieren:
+   ```json
+   "mcp_servers": [
+     { "id": "mein-mcp", "project": "mein-mcp" }
+   ]
+   ```
+4. `install.ps1` erneut ausführen (Admin-PowerShell). Der Dispatcher-Task wird registriert und startet den Handler. Ab der nächsten Sandbox-Session sieht jeder Agent `mein-mcp` als MCP-Server.
+
+Das MCP-Projekt ist **dogfood-freundlich**: `mein-mcp` als normales agentbox-Projekt öffnen und Claude Code am Handler selbst iterieren lassen.
+
+**Vertrauensgrenze:** der Handler läuft auf dem Windows-Host mit vollen User-Rechten. Jedes MCP-Projekt hat seine eigene `build_whitelist` in der `project.json` — der Dispatcher weigert sich, einen nicht-whitelisteten `build.command` zu starten.
+
 ## Vergleich
 
 |                          | Docker Dev Container | GitHub Codespaces | **agentbox** |
@@ -442,6 +469,8 @@ AI_Projects_Source\                (oder eigener Pfad)
 |   +-- aider\
 |   +-- goose\
 +-- host-distro\                   # Persistente Host-WSL-Distro (Default)
++-- mcp\                           # Stdio-MCP-Proxy (proxy-mcp.js)
++-- mcp-runtime\                   # MCP-Host-Bridge File-Queue (pro Server: requests/, responses/, daemon.heartbeat)
 ```
 
 > Die Trennung ist hart: `_control/` enthält nur versionierte Scripts +
