@@ -79,17 +79,18 @@ Pro Tool-Call: **1 HTTP-Request, 1 SSE-Event**. Fertig.
 
 | Datei | Zweck | Sprache | LOC (Ziel) |
 |-------|-------|---------|-----------|
-| `proxy-mcp/host-bridge.js` | Node-HTTP-Server pro MCP. Spawnt stdio-Child, bridged auf HTTP/SSE gemäß MCP-Spec. Ein Prozess pro MCP. | Node.js (builtins only: `http`, `child_process`, `crypto`) | ~200 |
 | `proxy-mcp/setup-mcp.ps1` | Generischer Wizard. Auto-Detect Typ (Python/Node), Entry, Dependencies, .env.example; User gibt Ordner an + Secrets. Schreibt Eintrag in `config.json`. Keine manuellen Prompts. | PowerShell | ~350 |
-| `win-mcp-dispatcher.ps1` | Scheduled-Task-Script. Liest `mcp_servers`, weist Ports zu (`ports.json`), spawnt `node host-bridge.js` pro Eintrag, supervised (Restart-on-Crash). | PowerShell | ~150 |
+| `win-mcp-dispatcher.ps1` | Scheduled-Task-Script. Liest `mcp_servers`, weist Ports zu (`ports.json`), spawnt `npx mcp-proxy --port X -- <command>` pro Eintrag, supervised (Restart-on-Crash). | PowerShell | ~150 |
 | `wsl-ai-start.sh` (Agent-Config-Inject) | Liest `config.json` + `ports.json` beim Sandbox-Start, schreibt URLs in Agent-Auth-Dirs. **Keine** Mount-Choreografie mehr. | Bash | ~120 (Delta) |
 | `wsl-sandbox-init.sh` (Firewall-Erweiterung) | Pro aktiviertem MCP eine iptables-ACCEPT-Regel `<host-ip>:<port>` vor den DROP-Regeln. Keine MCP-Mounts. | Bash | ~30 (Delta) |
-| `win-setup-core.ps1` | Prüft Node auf dem Host (winget install OpenJS.NodeJS.LTS wenn fehlt). Registriert Scheduled Task (gleich wie 2.4.x — Task-Name + Trigger unverändert, nur der Inhalt hinter dem Task ist jetzt der neue Dispatcher). Install-Prompt "MCP einbinden?". | PowerShell | ~40 (Delta) |
-| `lib/config.sh` (`cfg_get_mcp_servers`) | Parst `mcp_servers` zu `id\|agents_csv`-Zeilen. Keine Tier-Unterscheidung mehr. | Bash | ~30 |
+| `win-setup-core.ps1` | Prüft Node + `mcp-proxy` auf dem Host, installiert stumm via `winget install OpenJS.NodeJS.LTS` + `npm install -g mcp-proxy` wenn fehlend. Registriert Scheduled Task (gleich wie 2.4.x). Install-Prompt "MCP einbinden?". | PowerShell | ~60 (Delta) |
+| `lib/config.sh` (`cfg_get_mcp_servers`) | Parst `mcp_servers` zu `id\|port\|agents_csv`-Zeilen. Keine Tier-Unterscheidung mehr. | Bash | ~30 |
+
+**Externe Abhängigkeit:** [`mcp-proxy`](https://www.npmjs.com/package/mcp-proxy) — npm-Paket, standard stdio→SSE-Wrapper für MCP. Wird beim Install automatisch installiert (winget → Node.js; npm → mcp-proxy). User muss nichts manuell machen.
 
 **Neue Dateien (Runtime-State):** `%LOCALAPPDATA%\agentbox\mcp-runtime\ports.json` — Zuordnung id→port, wird vom Dispatcher geschrieben, von wsl-ai-start.sh gelesen.
 
-**Summe neuer Code:** ca. **400–500 LOC netto**, verteilt über die Dateien. Zum Vergleich: 2.4.3 hatte ca. 1800 LOC.
+**Summe neuer Code:** ca. **200–300 LOC netto** (ohne eigene host-bridge.js), verteilt über die Dateien. Zum Vergleich: 2.4.3 hatte ca. 1800 LOC.
 
 ## 5. config.json Schema
 
@@ -102,49 +103,79 @@ Pro Tool-Call: **1 HTTP-Request, 1 SSE-Event**. Fertig.
     "cwd": "C:\\Users\\me\\Projects\\KiCad_MCP",
     "env": {
       "KICAD_CLI_PATH": "C:\\Program Files\\KiCad\\10.0\\bin\\kicad-cli.exe"
-    }
+    },
+    "port": 9099
   }
 ]
 ```
 
-- Identisch zu Claude-Desktop / Cursor-Format
+- Identisch zu Claude-Desktop / Cursor-Format (plus `"port"`-Feld)
 - `agents: [...]` optional — schränkt MCP auf bestimmte Agenten ein (Default: alle)
-- Kein `port`-Feld — Ports werden vom Dispatcher automatisch vergeben
+- `port` **optional** — wenn gesetzt, nutzt der Dispatcher exakt diesen Port (für User die Ports festpinnen wollen). Ohne `port` wird automatisch ab 9000 vergeben, gepinnte Ports übersprungen
 - Kein `project`-Feld — Tier 2 ist komplett weg
 
-## 6. host-bridge.js — Vertrag
+## 6. Stdio→SSE Bridge — via `mcp-proxy` (npm)
 
-Aufruf: `node host-bridge.js --id <mcp-id> --port <number> -- <command> [args...]`
+Statt eigener Implementierung nutzen wir das etablierte
+[`mcp-proxy`](https://www.npmjs.com/package/mcp-proxy) npm-Paket.
+Dispatcher ruft es pro MCP als Child-Prozess:
 
-Verhalten:
-1. Spawnt `<command> [args...]` als Child-Prozess mit Stdin/Stdout-Pipes, `env` vom Parent (Dispatcher reicht Env durch) plus ggf. zusätzliche Env-Variablen per `--env KEY=VALUE`
-2. Startet HTTP-Server auf `0.0.0.0:<port>` (horcht auf alle Interfaces, damit WSL-Sandbox ihn über die Host-IP erreicht)
-3. **Routes (MCP-Spec 2025-03-26):**
-   - `GET /sse` → SSE-Stream, sendet `endpoint`-Event mit `/messages?session_id=...`, dann alle child-stdout-Responses als `message`-Events
-   - `POST /messages?session_id=...` → liest JSON-RPC-Body, schreibt an child-stdin
-4. **Session-Verwaltung:** eine aktive SSE-Connection pro Session. Neue Connection → neue Session, alte Session wird verworfen.
-5. **Stdout-Reader-Line-Mode:** jede vollständige Zeile aus child-stdout ist eine JSON-RPC-Message → zum aktiven SSE-Stream weitergeben
-6. **Heartbeat:** alle 30s ein SSE-Comment `: ping` damit Proxies/Firewalls die Verbindung nicht idle-droppen
-7. **Child-Crash:** HTTP-Server exitet mit Code 1, Dispatcher restartet uns
-8. **Minimal-Security:** Server bindet an Host-IP (nicht 127.0.0.1), aber verlangt `X-MCP-Token` Header? **Nein** — die Sandbox-Firewall ist die Access-Control. Token wäre doppelte Belt-and-suspenders. KISS.
+```powershell
+npx -y mcp-proxy --port 9000 --shell -- "<command>" <args>
+# z.B.
+npx -y mcp-proxy --port 9000 --shell -- "python" "main.py"
+```
 
-**Warum eigenen Bridge statt npm-`mcp-proxy`:**
-- Null neue npm-Dependencies
-- Volle Kontrolle über Logging und Restart-Verhalten
-- Gleicher Stil wie der alte `proxy-mcp.js` (der gelöschte Sandbox-Proxy) — der Code ist uns vertraut
-- Node-HTTP-Spec ist stabil; wir müssen hier nichts exotisches machen
+`mcp-proxy` bietet:
+- HTTP/SSE-Server auf dem Port (MCP-Spec-konform, inkl. `/sse` + `/messages`)
+- Stdio-Child-Spawn mit Pipe
+- Session-Handling, Heartbeat, Reconnect
+- Auto-Restart bei Child-Crash
+
+**Warum `mcp-proxy` statt eigen:**
+- ~200 LOC eigener Code eingespart
+- MCP-Spec-Updates kommen via `npm update -g mcp-proxy` automatisch
+- Ist in der Community etabliert (wird auch für Claude Desktop stdio→SSE-Wrapping genutzt)
+
+**Auto-Install:** `win-setup-core.ps1` prüft beim Install ob `npm`
+und `mcp-proxy` vorhanden sind. Fehlt `npm` → `winget install
+OpenJS.NodeJS.LTS`. Fehlt `mcp-proxy` → `npm install -g mcp-proxy`.
+Beide stumm (keine Rückfrage), Fehler bei Offline-Host werden klar
+protokolliert.
+
+**Minimal-Security:** Server bindet an `0.0.0.0` (damit Sandbox ihn via
+Host-IP erreicht). Kein Token — die Sandbox-Firewall ist die
+Access-Control (nur Host-IP:<port> geöffnet, nichts sonst).
 
 ## 7. Port-Management
 
-- Dispatcher ermittelt bei jedem Start freie Ports ab **9000** in der Reihenfolge der `mcp_servers`-Einträge
-- Schreibt `%LOCALAPPDATA%\agentbox\mcp-runtime\ports.json`:
-  ```json
-  { "kicad": 9000, "github": 9001 }
-  ```
-- `wsl-ai-start.sh` liest diese Datei beim Sandbox-Start; injiziert URLs + iptables-Regeln entsprechend
-- Ports werden **neu vergeben** bei jedem Dispatcher-Restart → nach `--reload-mcp` können sich Ports verschieben, aber für die Sandbox ist das transparent (lese-Zeitpunkt ist beim Sandbox-Start)
+Zwei-Phasen-Vergabe:
 
-**Kollisions-Handling:** wenn 9000 belegt (fremder Service), wandern wir hoch bis ein Port frei ist. Max 100 Versuche, dann Fehler.
+1. **Phase 1 — Pinned Ports:** alle Einträge mit explizitem `"port": N`
+   in config.json bekommen exakt diesen Port. Konflikt (Port belegt von
+   fremdem Service oder doppelt in config.json): dieser eine MCP startet
+   nicht, Fehler in dispatcher.log; andere MCPs laufen weiter.
+2. **Phase 2 — Auto-Assign:** für alle Einträge ohne `port`-Feld wird ab
+   **9000** der erste freie Port gesucht, der nicht in Phase 1 belegt
+   wurde und auch sonst frei ist (OS-Check via socket-bind-test).
+
+**Ergebnis-Datei:** `%LOCALAPPDATA%\agentbox\mcp-runtime\ports.json`:
+```json
+{ "kicad": 9099, "github": 9000, "memory": 9001 }
+```
+(`kicad` hier gepinnt auf 9099, Rest auto.)
+
+`wsl-ai-start.sh` liest diese Datei beim Sandbox-Start; injiziert URLs
++ iptables-Regeln entsprechend.
+
+**Port-Stabilität:** gepinnte Ports bleiben stabil. Auto-Ports können
+sich zwischen Reloads verschieben wenn der Vorgänger-Port anderweitig
+belegt wurde — für die Sandbox transparent, weil sie Ports erst beim
+nächsten Start aus `ports.json` liest.
+
+**Kollisions-Handling:** max 100 Auto-Assign-Versuche pro MCP ab 9000.
+Danach Fehler (unwahrscheinlich — würde bedeuten >100 Ports im Bereich
+9000–9100 sind belegt).
 
 ## 8. Firewall-Regel in der Sandbox
 
@@ -233,28 +264,39 @@ produktiv war.
 
 ## 12. Release-Klasse
 
-**`minor`.** Kein Template-Rebuild (neue Node-Dependency am Host läuft
-via `winget`-Check in `win-setup-core.ps1`, nicht im WSL-Template).
-Schema-Bruch in `config.json` ist uncritical, weil 2.4.x eh draußen
-ist.
+**`major`.** Der Update-Flow soll garantiert `install.ps1` als Admin
+neu ausführen, damit:
+- Der Scheduled Task `agentbox-mcp-dispatcher` mit dem neuen Dispatcher-
+  Inhalt registriert wird
+- Node + mcp-proxy auf dem Host installiert werden (wenn nötig)
+- Schema-Break in config.json sauber kommuniziert wird
+
+Kein Template-Rebuild (WSL-Template selbst ändert sich nicht).
+
+User-Flow beim Update von 2.4.x oder älter: `agentbox` startet → sieht
+die 2.5.0-Änderung → Prompt `[1] Jetzt updaten (Admin) / [2] Spaeter` →
+bei `[1]` wird `install.ps1` via WSL-interop + RunAs gestartet.
 
 ## 13. Implementierungs-Reihenfolge
 
-So, dass der Baum nie in einem "halb-kaputt"-Zustand ist:
+Da `host-bridge.js` entfällt (npm mcp-proxy wird genutzt), reduziert
+sich die Reihenfolge. Da alles zu einer 2.5.0-Einheit gehört, in einem
+Commit bauen — ein einziger `major`-Release-Commit:
 
-1. **`proxy-mcp/host-bridge.js`** schreiben und standalone testbar machen (kein agentbox-Kontext nötig: `node host-bridge.js --id x --port 9000 -- <cmd>` sollte einfach funktionieren)
-2. **`win-mcp-dispatcher.ps1`** schreiben — ruft `node host-bridge.js`, verwaltet `ports.json`
-3. **`config.json` `_doc_mcp_servers`** dokumentieren + leere `mcp_servers: []` hinzufügen
-4. **`lib/config.sh cfg_get_mcp_servers`** hinzufügen
-5. **`wsl-ai-start.sh`** erweitern: Agent-Config-Inject + `--reload-mcp` Subcommand + `[4]` im Config-Menü
-6. **`wsl-sandbox-init.sh`** erweitern: Firewall-Regeln aus `ports.json` + Host-IP-Auswertung
-7. **`win-setup-core.ps1`** erweitern: Node-Check, `Register-AgentboxMcpDispatcher`, `Invoke-AgentboxMcpSetupPrompt`
-8. **`proxy-mcp/setup-mcp.ps1`** — der Wizard (letzter Schritt, weil er alle Vorgänger braucht)
-9. **README.md + docs/README.de.md** — MCP-Section einfügen
-10. **CHANGELOG.md + `.version` = 2.5.0**
+1. **`config.json`** — `_doc_mcp_servers` + leere `mcp_servers: []`
+2. **`lib/config.sh`** — `cfg_get_mcp_servers` (Output: `id|port|agents_csv`, `port` leer wenn auto)
+3. **`win-mcp-dispatcher.ps1`** — Liest config, Port-Assign (2 Phasen), spawnt `npx mcp-proxy`-Instanzen, Supervisor-Loop, schreibt `ports.json`
+4. **`wsl-ai-start.sh`** — MCP-Runtime-Ordner, `--reload-mcp`, `_mcp_menu` mit allen Unterpunkten, `_inject_mcp_*` für vier Agent-Config-Formate (URLs via ports.json), weiterreichung von `AGENTBOX_MCP_PORTS` an Sandbox-Init
+5. **`wsl-sandbox-init.sh`** — Neue Parameter ($8 MCP_PORTS_SPEC), Firewall-ACCEPT-Regeln **vor** den DROP-Regeln, Host-IP-Auswertung für URLs
+6. **`win-setup-core.ps1`** — Node-Check via `Get-Command node`, winget install stumm, npm install -g mcp-proxy stumm, `Register-AgentboxMcpDispatcher` (Task registrieren immer), `Invoke-AgentboxMcpSetupPrompt`
+7. **`proxy-mcp/setup-mcp.ps1`** — Wizard (Auto-Detect-Logik, schreibt config-Eintrag ohne `port`-Feld unless User per Flag; KiCad-Spezial-Erkennung)
+8. **`README.md` + `docs/README.de.md`** — MCP-Sektion einfügen (Menü-Pfad als Primary, config.json als advanced)
+9. **`CHANGELOG.md`** — 2.5.0 dokumentieren
+10. **`.version` = 2.5.0**, **`.update_class` = major**
+11. **Single commit, push main**
 
-Jeder Commit ist für sich kompilierbar und lässt bestehende agentbox-
-Features (Projekt-Auswahl, Sandbox-Start ohne MCP, Build/Deploy) intakt.
+Optionale kleine Verifikation **vor dem Commit**: bash-Syntax-Check auf
+allen .sh-Files, `ConvertFrom-Json` auf config.json.
 
 ## 14. Verifikations-Plan
 
@@ -267,16 +309,25 @@ Vor Release auf echtem Windows-Host:
 5. **`--reload-mcp`:** Dispatcher stoppt und startet neu, Ports werden konsistent wieder zugewiesen, host-bridge.js-Prozesse sind neu, sichtbar via Task-Manager
 6. **MCP-Server-Crash:** Dispatcher-Supervisor startet `host-bridge.js` neu innerhalb 5s
 
-## 15. Offene Fragen (vor Implementierung)
+## 15. Festgelegte Entscheidungen
 
-Nichts blockierend, aber beim Implementieren zu klären:
-
-- **Wie genau reicht der Dispatcher die `env` aus `config.json` an den Child weiter?** Via Prozess-Environment (Standard) — der Dispatcher setzt die Env auf dem `host-bridge.js`-Prozess, der reicht sie an seinen Child durch. Direkt und sauber.
-- **Was wenn Node nicht auf dem Host ist?** `win-setup-core.ps1` prüft `node --version` beim Install, bietet bei Miss `winget install OpenJS.NodeJS.LTS` an.
-- **Wie verhält sich host-bridge.js bei Sandbox-Reconnect?** Neue SSE-Connection → alte Session wird discarded. Sollte reichen; MCP-State ist sowieso client-getrieben.
-- **SSE statt Streamable HTTP?** Die 2025-03-26-Spec hat beide. SSE ist simpler zu implementieren, alle vier Agenten unterstützen es. Streamable HTTP wäre die "modernere" Variante, aber das ist Future-Work wenn's nötig wird.
+- **npm `mcp-proxy` statt eigener Bridge** — Community-Tool, spart ~200 LOC
+- **Optionaler `port`-Override in config.json** — User kann Ports festpinnen wenn er Host-Firewall-Regeln braucht
+- **`.update_class = major`** — garantierter `install.ps1`-Rerun beim Update
+- **Node + mcp-proxy Install stumm** — winget + npm laufen ohne Rückfrage durch; Fehler werden klar protokolliert
+- **Env-Durchreichung:** Dispatcher setzt Env direkt auf `mcp-proxy`-Kindprozess, der reicht sie automatisch weiter
+- **SSE statt Streamable HTTP** — breitere Client-Unterstützung (alle vier Agenten), simpler
 
 ---
 
-**Status:** Plan ist vollständig, wartet auf "go" zur Implementierung.
-Sobald das gesetzt ist: Punkt 1 (`host-bridge.js`) ist der Start.
+## 16. Abweichungs-Log (wird während Implementation gefüllt)
+
+Wenn während der Implementation etwas vom Plan abweicht (unerwartete
+Constraints, fehlende Features in mcp-proxy, etc.), hier dokumentieren.
+
+*(Aktuell keine Abweichungen — Implementation läuft.)*
+
+---
+
+**Status:** Plan finalisiert, Implementation läuft. Ergebnis kommt als
+single 2.5.0-Commit auf main.
