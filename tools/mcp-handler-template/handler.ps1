@@ -1,5 +1,10 @@
 # handler.ps1 — agentbox MCP-Handler-Daemon (Template)
 #
+# >>> Fuer den Schnelleinstieg siehe README.md im selben Ordner.
+# Der Abschnitt "3. Handler-Logik schreiben" erklaert, welcher Teil
+# dieser Datei User-Territorium ist (Invoke-McpTool) und welcher nicht
+# angefasst werden muss (Watcher, Heartbeat, Queue-IO).
+#
 # Laeuft persistent auf der Windows-Host-Seite, gestartet vom Scheduled
 # Task 'agentbox-mcp-dispatcher' bei Logon. Lauscht auf
 # %LOCALAPPDATA%\agentbox\mcp-runtime\<id>\requests\ via FileSystemWatcher,
