@@ -1276,7 +1276,11 @@ def inject_codex():
     if os.path.isfile(target):
         try:
             with open(target, encoding='utf-8') as f: raw = f.read()
-        except: raw = ''
+        except Exception as e:
+            # Existing file gibt's, kann aber nicht gelesen werden.
+            # NICHT ueberschreiben -- zerstoert sonst User-Auth-State.
+            sys.stderr.write(f"codex: existing config.toml nicht lesbar, skip: {e}\n")
+            return
     ANCHOR = '# agentbox-mcp-auto-managed'
     pat = re.compile(r"\n?" + re.escape(ANCHOR) + r" START.*?" + re.escape(ANCHOR) + r" END\n?", re.DOTALL)
     raw = pat.sub("\n", raw)
@@ -1299,11 +1303,20 @@ def inject_gemini():
     target = os.path.join(auth_base, 'gemini', 'settings.json')
     os.makedirs(os.path.dirname(target), exist_ok=True)
     data = {}
-    if os.path.isfile(target):
+    file_existed = os.path.isfile(target)
+    if file_existed:
         try:
-            with open(target, encoding='utf-8') as f: data = json.load(f)
-            if not isinstance(data, dict): data = {}
-        except: data = {}
+            with open(target, encoding='utf-8') as f: loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data = loaded
+            else:
+                sys.stderr.write("gemini: settings.json nicht dict, skip\n")
+                return
+        except Exception as e:
+            # Wenn Datei existiert aber nicht parsbar, NICHT ueberschreiben
+            # -- koennte User-Settings mit unbekanntem Format sein.
+            sys.stderr.write(f"gemini: existing settings.json nicht parsbar, skip: {e}\n")
+            return
     mcp = data.setdefault('mcpServers', {})
     for k in list(mcp.keys()):
         v = mcp.get(k, {})
@@ -1323,7 +1336,9 @@ def inject_goose():
     if os.path.isfile(target):
         try:
             with open(target, encoding='utf-8') as f: raw = f.read()
-        except: raw = ''
+        except Exception as e:
+            sys.stderr.write(f"goose: existing config.yaml nicht lesbar, skip: {e}\n")
+            return
     ANCHOR_START = '# agentbox-mcp-auto-managed START'
     ANCHOR_END   = '# agentbox-mcp-auto-managed END'
     pat = re.compile(r"\n?" + re.escape(ANCHOR_START) + r".*?" + re.escape(ANCHOR_END) + r"\n?", re.DOTALL)
