@@ -61,6 +61,43 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " agentbox: MCP-Server einbinden" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
+# --- 0. Host-Dependencies sicherstellen (Node.js + mcp-proxy) ---
+# mcp-proxy ist der stdio->HTTP/SSE-Wrapper den der Dispatcher spawnt.
+# Wir installieren hier statt im Installer, weil MCP-Einbindung nur
+# ueber diesen Wizard geht -- kein anderer Pfad.
+function Ensure-HostDeps {
+    $nodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (-not $nodeCmd) {
+        Write-Warn "Node.js nicht gefunden -- installiere via winget (stumm)..."
+        $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if (-not $winget) {
+            Write-Err "winget nicht verfuegbar. Node.js manuell installieren: https://nodejs.org/  (LTS)"
+            exit 3
+        }
+        & winget install -e --id OpenJS.NodeJS.LTS --silent --accept-source-agreements --accept-package-agreements 2>&1 |
+            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) { Write-Err "Node-Install fehlgeschlagen (rc=$LASTEXITCODE)."; exit 3 }
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
+                    [System.Environment]::GetEnvironmentVariable('Path','User')
+        Write-Ok "Node.js installiert."
+    }
+    $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $npmCmd) {
+        Write-Err "npm nicht gefunden nach Node-Install. Bitte neu anmelden und Wizard erneut starten."
+        exit 3
+    }
+    $mcpProxyCheck = & $npmCmd.Source list -g --depth=0 2>&1 | Select-String "mcp-proxy"
+    if (-not $mcpProxyCheck) {
+        Write-Warn "mcp-proxy nicht installiert -- installiere via npm..."
+        & $npmCmd.Source install -g mcp-proxy 2>&1 |
+            ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) { Write-Err "mcp-proxy-Install fehlgeschlagen."; exit 3 }
+        Write-Ok "mcp-proxy installiert."
+    }
+}
+Write-Step "0/5 Host-Dependencies pruefen"
+Ensure-HostDeps
+
 # --- 1. Ordner ---
 Write-Step "1/5 MCP-Ordner bestimmen"
 if (-not $McpPath) {

@@ -5,6 +5,46 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-04-19
+
+**MCP-Einbindung raus aus dem Installer.**
+
+User-Feedback zu 2.5.0: "wer wuerde die Einbindung eines MCP Servers
+in die Installation des Produkts schreiben? nimm das raus, agentbox
+config ist der richtige Punkt."
+
+Berechtigt. agentbox-Installation soll agentbox aufsetzen, nicht
+nach MCPs fragen. Einbindung passiert ausschliesslich ueber
+`agentbox -> [c] -> [4] MCP-Server einbinden`.
+
+### Entfernt aus win-setup-core.ps1
+
+- `Invoke-AgentboxMcpSetupPrompt` + Aufruf am Ende des Installers
+  (das "[1] Jetzt einen MCP-Server einbinden / [2] Spaeter"-Prompt
+  fliegt raus)
+- `Install-AgentboxMcpDependencies` + Aufruf (Auto-winget-Install
+  von Node + npm-Install von mcp-proxy basierend auf mcp_servers-
+  Inhalt)
+
+### Verlagert in proxy-mcp/setup-mcp.ps1
+
+- Neue Funktion `Ensure-HostDeps` am Anfang des Wizards:
+  - `node.exe` vorhanden? Sonst `winget install OpenJS.NodeJS.LTS`
+  - `mcp-proxy` global installiert? Sonst `npm install -g mcp-proxy`
+- Wird bei JEDEM Wizard-Lauf ausgefuehrt (idempotent, schnell wenn
+  alles schon da)
+
+### Was bleibt im Installer
+
+- `Register-AgentboxMcpDispatcher` -- Scheduled Task muss einmal
+  in Admin-PS registriert werden, das ist unvermeidbar. Bei leerem
+  `mcp_servers` exitet der Dispatcher beim Logon in Millisekunden.
+
+### Release-Klasse: minor
+
+Keine Schema-Aenderung, nur Flow-Bereinigung. User die 2.5.0
+installiert haben bekommen das Delta smooth via `git pull`.
+
 ## [2.5.0] - 2026-04-19
 
 **MCP-Integration via HTTP/SSE, schlanker als 2.4.x.**

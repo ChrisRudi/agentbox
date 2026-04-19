@@ -320,12 +320,28 @@ Vor Release auf echtem Windows-Host:
 
 ---
 
-## 16. Abweichungs-Log (wird während Implementation gefüllt)
+## 16. Abweichungs-Log
 
-Wenn während der Implementation etwas vom Plan abweicht (unerwartete
-Constraints, fehlende Features in mcp-proxy, etc.), hier dokumentieren.
+### 2.5.1 — MCP-Einbindung raus aus dem Installer (2026-04-19)
 
-*(Aktuell keine Abweichungen — Implementation läuft.)*
+**Abweichung:** In 2.5.0 hatte ich `Invoke-AgentboxMcpSetupPrompt`
+(Installer fragt nach MCP-Setup) und `Install-AgentboxMcpDependencies`
+(Installer zieht Node+mcp-proxy wenn `mcp_servers` nicht leer) in
+`win-setup-core.ps1` gelassen. User-Feedback: Installer soll nur
+agentbox aufsetzen, nicht nach MCPs fragen.
+
+**Fix:**
+- Beide Funktionen aus `win-setup-core.ps1` entfernt.
+- Node.js + mcp-proxy-Check wandert in den Wizard selbst
+  (`Ensure-HostDeps` am Anfang von `proxy-mcp/setup-mcp.ps1`).
+  Idempotent, schnell wenn alles schon da.
+- `Register-AgentboxMcpDispatcher` bleibt im Installer — Scheduled-
+  Task-Registrierung braucht Admin-PS, Einmalvorgang. Bei leerem
+  `mcp_servers` exitet der Dispatcher eh sofort.
+
+**Lektion für mich:** "Installer macht Installation. Menü macht
+Features." Ich hatte zweimal versucht, MCP-Setup in den Install-Flow
+zu schieben; User musste zweimal bremsen. Nicht mehr.
 
 ---
 

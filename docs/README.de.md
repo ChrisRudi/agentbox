@@ -345,7 +345,7 @@ agentbox  →  [c] Konfiguration  →  [4] MCP-Server einbinden
 - MCP-ID: aus `name`-Feld oder Ordnername
 - KiCad-Spezial-Optimierung im Hintergrund (KiCad's mitgeliefertes Python statt System-Python, weil nur das `pcbnew` hat)
 
-Ein frischer `install.ps1` fragt einmalig am Ende, ob du jetzt einen MCP einbinden willst.
+Der Wizard prüft und installiert Node.js + `mcp-proxy` beim ersten Lauf selbst falls nötig — keine manuelle Windows-Vorbereitung.
 
 ### Architektur
 
