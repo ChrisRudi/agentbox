@@ -322,70 +322,6 @@ All settings live in `config.json` (optional — all values have built-in defaul
 
 See [`config.json`](config.json) for the full list with all defaults.
 
-## MCP Servers (Host-Bridge)
-
-agentbox ships a first-class MCP integration that lets agents call **Windows-host functions** (control Windows apps, talk to local-only APIs, trigger native automation) from inside the hermetically-sealed sandbox — without punching holes in the firewall.
-
-**How it works:**
-
-- A Windows Scheduled Task (`agentbox-mcp-dispatcher`, AtLogon + RestartOnFailure) starts each configured MCP server as a persistent host-side daemon.
-- Inside the sandbox, a tiny stdio-proxy ([`proxy-mcp.js`](proxy-mcp/proxy-mcp.js)) speaks MCP to the agent and forwards every `tools/call` through a **file-system queue** under `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\` — zero network traffic, the existing sandbox firewall stays unchanged.
-- Steady-state latency is ~10–30 ms per call (PowerShell FileSystemWatcher on NTFS).
-
-### Adding an MCP server (menu)
-
-The agentbox config menu does everything — no manual JSON editing, no manual command/args/env typing:
-
-```
-agentbox  →  [c] Konfiguration  →  MCP-Server einbinden
-
-  [1] Neuen MCP-Server einbinden (Wizard findet alles automatisch)
-  [2] MCP-Server entfernen
-  [3] Hintergrund-Prozess neu laden (bei Problemen)
-```
-
-**[1] Wizard** — you point it at an MCP-server folder (Python or Node.js), it detects everything else:
-
-- Type detection: `pyproject.toml` / `package.json` / `main.py`
-- Entry point: `[project.scripts]` from `pyproject.toml`, `bin`/`main` from `package.json`, or `main.py` / `server.py` / `index.js` in that order
-- Dependencies: `pip install -e .[dev]` if the project declares dev-extras, else `pip install -e .`; `npm install` for Node
-- Environment variables: parses `.env.example` automatically, then prompts only for secrets (`*_TOKEN`, `*_KEY`) that have no default
-- MCP-ID: from `pyproject.toml`/`package.json` `name` field, else folder name (normalized)
-
-If it recognizes a KiCad-related MCP (folder name, `pcbnew` import in source, KiCad references in README), it silently optimizes: uses KiCad's bundled Python (because system Python has no `pcbnew`), sets `KICAD_CLI_PATH` to the detected install path. No prompts, no special path.
-
-A fresh `install.ps1` also asks once at the end whether you want to integrate an MCP — skip safely if you don't need one yet.
-
-### Manual config (advanced)
-
-If you prefer hand-editing `config.json` (or scripting from CI), the schema is identical to Claude Desktop / Cursor:
-
-```json
-"mcp_servers": [
-  {
-    "id": "my-mcp",
-    "command": "C:\\path\\to\\python.exe",
-    "args": ["main.py"],
-    "cwd": "C:\\Users\\me\\Projects\\MyMcp",
-    "env": { "SOME_TOKEN": "..." }
-  }
-]
-```
-
-Apply with `agentbox --reload-mcp` (no admin, no `install.ps1` rerun).
-
-### Automation / CI
-
-The same wizard runs headless as [`proxy-mcp/setup-mcp.ps1`](proxy-mcp/setup-mcp.ps1) — takes `-McpPath`, `-McpId`, `-ExtraEnv`, `-NonInteractive`. Use it for CI-driven MCP provisioning.
-
-### Trust boundary
-
-Whatever `command` / `args` you put in is what gets run, on the host, as your user. There is **no** command whitelist — this matches Claude Desktop / Cursor behavior. Trust the config like you trust any other MCP-client config.
-
-### Writing your own MCP inside agentbox (advanced)
-
-For MCPs you want to **develop** inside an agentbox session, there's a parallel path: a normal agentbox project under `AI_Projects_Source\<your-mcp>\` with a `handler.ps1` (PowerShell-native, no child process), `tools.json`, and `project.json` — seeded as [`mcp-handler-template\`](tools/mcp-handler-template/) by `install.ps1`. Register with `{ "id": "...", "project": "..." }` instead of `command`. This path **has** a per-project `build_whitelist` security gate because you're running arbitrary in-agentbox PowerShell. See the template README for quickstart.
-
 ## Comparison
 
 |                          | Docker Dev Container | GitHub Codespaces | **agentbox** |
@@ -506,8 +442,6 @@ AI_Projects_Source\               (or your custom path)
 |   +-- aider\
 |   +-- goose\
 +-- host-distro\                  # Persistent host-WSL distro (default)
-+-- mcp\                          # Stdio MCP proxy (proxy-mcp.js)
-+-- mcp-runtime\                  # MCP host-bridge file-queue (per server: requests/, responses/, daemon.heartbeat)
 ```
 
 > The split is enforced: `_control/` only holds versioned scripts + config,

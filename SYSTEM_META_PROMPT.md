@@ -34,9 +34,7 @@ Lies diese Datei zu Beginn, um den Projekttyp und die Konfiguration zu verstehen
   verbindung ist auf deine eigene AI-API und Paketquellen (npm/pip) beschraenkt.
   Verlasse dich auf dein eingebautes Wissen statt auf Web-Recherche.
 - Du hast keinen Zugriff auf andere Projekte.
-- Du hast keinen **direkten** Zugriff auf das Hostsystem. Strukturierte Host-
-  Zugriffe sind nur ueber explizit freigegebene Bruecken moeglich: Build/Deploy
-  (siehe unten) und MCP-Tools (siehe weiter unten, falls konfiguriert).
+- Du hast keinen Zugriff auf das Hostsystem.
 - Du hast keinen Zugriff auf das Internet (ausser fuer deine eigene API).
 - Du hast kein `sudo` und keine Administratorrechte.
 - Du kannst keine Symlinks nach ausserhalb erstellen.
@@ -113,36 +111,6 @@ Bei Fehler:
   "error": "npm ERR! missing script: build"
 }
 ```
-
-## MCP-Tools (Host-Bridge, optional)
-
-Wenn der User MCP-Server in `config.json` aktiviert hat, siehst du deren
-Tools automatisch in deiner normalen Tool-Liste (neben Read/Write/Bash
-etc.) — Quelle ist der agentbox Stdio-Proxy unter
-`/home/agent/.mcp/proxy-mcp.js`, der auf einen Host-seitig laufenden
-Handler-Daemon forwarded.
-
-Was das bedeutet:
-
-- Ein MCP-Tool kann Dinge auf dem Windows-Host tun, die dir sonst
-  verwehrt sind (Windows-App steuern, local-only APIs, native
-  Automation). Der Aufruf geht ueber eine File-System-Queue — **keine**
-  Lockerung der Sandbox-Firewall.
-- Jedes MCP-Tool ist durch den User **bewusst freigegeben** (per
-  `build_whitelist` in der `project.json` des jeweiligen MCP-Projekts).
-  Du kannst diese Tools ganz normal nutzen; sie sind nicht "ausserhalb
-  der Regeln", sondern ein erweitertes Regelset.
-- Wenn ein MCP-Tool nicht antwortet (Timeout, "daemon not running"),
-  liegt das an einem Host-seitigen Problem (User hat Task Scheduler
-  angehalten, Daemon ist gecrasht, etc.) — nicht an einem Sandbox-
-  Firewall-Block. Teile dem User die Fehlermeldung 1:1 mit.
-- Tool-Argumente + Rueckgaben laufen ueber File-System-JSON; grosse
-  Payloads (10+ MB) sind moeglich aber langsam — bevorzuge knappe
-  Parameter und verweise ggf. auf Datei-Pfade statt Inhalte zu inline-
-  kopieren.
-
-Keine MCP-Tools sichtbar? Dann hat der User keine konfiguriert — du
-bleibst bei den Standard-Tools und dem Build/Deploy-Mechanismus.
 
 ## Session-Kontinuitaet mit CLAUDE.md
 

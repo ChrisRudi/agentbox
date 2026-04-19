@@ -145,61 +145,6 @@ except:
     echo "goose:.config/goose"
 }
 
-# cfg_get_mcp_servers
-# Gibt konfigurierte MCP-Server aus config.json als "id|tier|agents"
-# pro Zeile aus.
-#   tier=1: Standard-MCP-Import (Eintrag hat `command`-Key)
-#   tier=2: agentbox-eigenes Projekt (Eintrag hat `project`-Key)
-# `agents` ist komma-separierte Liste (leer = alle aktivierten Agenten).
-# Wird von wsl-ai-start.sh gerufen, um pro Server das Runtime-Verzeichnis
-# anzulegen und die Agent-Configs zu patchen — die konkreten Tier-1-
-# Details (command/args/env) liest der Dispatcher direkt aus config.json,
-# hier nicht noetig.
-cfg_get_mcp_servers() {
-    if [ ! -f "$AGENTBOX_CONFIG" ]; then
-        return
-    fi
-
-    if command -v python3 &> /dev/null; then
-        python3 -c "
-import json
-try:
-    with open('$AGENTBOX_CONFIG') as f:
-        data = json.load(f)
-    servers = data.get('mcp_servers', [])
-    if isinstance(servers, list):
-        for s in servers:
-            if not isinstance(s, dict):
-                continue
-            sid = str(s.get('id', '')).strip()
-            if not sid:
-                continue
-            cmd = str(s.get('command', '')).strip()
-            proj = str(s.get('project', '')).strip()
-            if cmd:
-                tier = '1'
-            elif proj:
-                tier = '2'
-            else:
-                # Weder command noch project — unvollstaendig, skippen.
-                continue
-            agents = s.get('agents', [])
-            if isinstance(agents, list):
-                agents_csv = ','.join(str(a).strip() for a in agents if str(a).strip())
-            else:
-                agents_csv = ''
-            print(f'{sid}|{tier}|{agents_csv}')
-except Exception:
-    pass
-" 2>/dev/null
-        return
-    fi
-    # Kein Fallback ohne python3: mcp_servers ist JSON-Array-of-Objects,
-    # das laesst sich nicht sinnvoll mit grep parsen. Ohne python3 bleibt
-    # MCP-Integration stumm — config.sh-Header dokumentiert python3 als
-    # Pflicht-Dependency (ab 2.0 ohnehin im Template garantiert).
-}
-
 # cfg_get_agents
 # Gibt aktivierte Agenten als "id:name:command" pro Zeile aus
 cfg_get_agents() {
