@@ -5,6 +5,99 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-04-19
+
+**MCP: Standard-Import + Zero-Admin-Reload.**
+
+2.4.0 hatte nur den "selbst-gebauten MCP als agentbox-Projekt"-Pfad.
+Das passt fuer Dogfood aber nicht fuer den Realfall "ich hab einen
+bestehenden MCP-Server, den ich einbinden will" (KiCad, GitHub,
+Filesystem, Memory, Puppeteer, ...). User-Rueckmeldung war korrekt:
+normaler User schafft das nicht, wenn er jedes Mal handler.ps1
+portieren muss.
+
+### Tier-1-Import (neu, jetzt der Default-Pfad)
+
+Config-Format identisch zu Claude Desktop / Cursor:
+
+```json
+"mcp_servers": [
+  {
+    "id": "kicad",
+    "command": "python",
+    "args": ["-m", "kicad_mcp"],
+    "env": { "KICAD_PYTHON_PATH": "..." }
+  }
+]
+```
+
+- `command` / `args` (optional) / `env` (optional) / `cwd` (optional).
+- **Kein** Whitelist-Check (Policy 1a, wie Claude Desktop) -- was in
+  `command` steht, wird gespawnt. Trust der Config wie jeder anderen
+  MCP-Client-Config.
+- `proxy-mcp/passthrough-handler.ps1` (neu) spawnt den Server als
+  Child-Prozess mit redirected stdin/stdout, sendet `initialize` +
+  `tools/list`, spiegelt Tools nach `runtime/tools.json`, und bridged
+  die File-Queue 1:1 auf JSON-RPC. Request-Matching via
+  `ConcurrentDictionary<id, raw-response>`, Child-Crash wird erkannt
+  (OutputDataReceived + Exited-Event), Handler exitet non-zero ->
+  Dispatcher startet uns neu.
+
+### Tier-2-Pfad (bleibt fuer Dogfood)
+
+Der bisherige `{ "id": "...", "project": "..." }`-Pfad ist nicht
+weg -- sinnvoll wenn man einen PowerShell-nativen MCP **in** agentbox
+entwickeln will. Hat weiterhin eine per-Projekt `build_whitelist` in
+`project.json` als Security-Gate (Tier 1 hat bewusst keine, Tier 2
+schon).
+
+### Zero-Admin-Reload (neu)
+
+- `Register-AgentboxMcpDispatcher` registriert den Scheduled Task
+  jetzt **immer**, nicht nur wenn mcp_servers gefuellt ist. Dispatcher
+  exitet bei leerer Liste in ~10ms, keine Ressourcen verschwendet.
+- Neuer Subcommand `agentbox --reload-mcp`: powershell.exe-Interop aus
+  der Host-WSL, macht `Stop-ScheduledTask + Start-ScheduledTask
+  agentbox-mcp-dispatcher`. Kein Admin, kein `install.ps1`-Rerun
+  noetig bei `mcp_servers`-Aenderungen.
+
+### Dispatcher-Refactor
+
+`Get-McpServers` erkennt Tier automatisch (`command`-Key -> Tier 1,
+`project`-Key -> Tier 2, sonst uebersprungen). `Start-McpHandler` ist
+jetzt ein Dispatcher, ruft `Start-McpTier1Handler` (spawnt
+passthrough-handler.ps1 mit env-vars `AGENTBOX_MCP_{ID,CMD,ARGS_JSON,
+ENV_JSON,CWD}`) oder `Start-McpTier2Handler` (altes Verhalten).
+
+### Geaendert
+
+- `config.json` `_doc_mcp_servers` -- beide Varianten dokumentiert
+- `lib/config.sh` `cfg_get_mcp_servers` -- Output jetzt
+  `id|tier|agents` (tier=1|2)
+- `wsl-ai-start.sh` -- `--reload-mcp`-Subcommand, nutzt das 3-Feld-
+  Format
+- `win-mcp-dispatcher.ps1` -- Tier-erkennender Dispatcher
+- `win-setup-core.ps1` -- `Register-AgentboxMcpDispatcher` immer
+  registrieren
+- `README.md` + `docs/README.de.md` -- Standard-Import als
+  primaerer Pfad
+- `tools/mcp-handler-template/README.md` -- Hinweis-Box "Bist du
+  hier falsch?" mit Verweis auf Tier 1
+
+### Neu
+
+- `proxy-mcp/passthrough-handler.ps1` -- generischer Stdio-MCP-
+  Wrapper
+
+### Bewusst NICHT
+
+- **Keine `args`-Substitution (z.B. `${workspaceFolder}`).** Claude
+  Desktop kennt das nicht, Cursor kennt es teils -- wir halten uns an
+  den kleinsten gemeinsamen Nenner. Pfade einfach absolut angeben.
+- **Keine Pre-Install-Checks** fuer `command` (z.B. "python existiert"):
+  Failure wird im dispatcher.log + handler.log sichtbar, nicht
+  prophylaktisch abgefangen. Simpler.
+
 ## [2.4.0] - 2026-04-18
 
 **First-class MCP integration with host-bridge.**

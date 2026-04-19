@@ -66,6 +66,14 @@ function Write-DispatcherLog {
 }
 
 # --- MCP-Server aus config.json extrahieren ---
+# Rueckgabe: Liste von PSCustomObject mit Feldern:
+#   Id        : MCP-ID
+#   Tier      : 1 (passthrough / standard import) oder 2 (agentbox-project)
+#   Command   : Tier 1 only (z.B. "python")
+#   Args      : Tier 1 only (string[])
+#   McpEnv    : Tier 1 only (Hashtable)
+#   Cwd       : Tier 1 only (optional string)
+#   Project   : Tier 2 only (folder name)
 function Get-McpServers {
     param($Cfg)
     $out = @()
@@ -76,33 +84,125 @@ function Get-McpServers {
     foreach ($s in $list) {
         if (-not $s) { continue }
         $sid = if ($s.PSObject.Properties['id']) { [string]$s.id } else { "" }
+        if ([string]::IsNullOrWhiteSpace($sid)) { continue }
+        $sid = $sid.Trim()
+
+        $cmd = if ($s.PSObject.Properties['command']) { [string]$s.command } else { "" }
         $proj = if ($s.PSObject.Properties['project']) { [string]$s.project } else { "" }
-        if ([string]::IsNullOrWhiteSpace($sid) -or [string]::IsNullOrWhiteSpace($proj)) { continue }
-        $out += [PSCustomObject]@{ Id = $sid.Trim(); Project = $proj.Trim() }
+
+        if (-not [string]::IsNullOrWhiteSpace($cmd)) {
+            # Tier 1: Standard-MCP-Import
+            $argsList = @()
+            if ($s.PSObject.Properties['args'] -and $s.args) {
+                $argsList = @($s.args | ForEach-Object { [string]$_ })
+            }
+            $envHash = @{}
+            if ($s.PSObject.Properties['env'] -and $s.env) {
+                foreach ($p in $s.env.PSObject.Properties) {
+                    $envHash[$p.Name] = [string]$p.Value
+                }
+            }
+            $cwd = if ($s.PSObject.Properties['cwd']) { [string]$s.cwd } else { "" }
+            $out += [PSCustomObject]@{
+                Id      = $sid
+                Tier    = 1
+                Command = $cmd.Trim()
+                Args    = $argsList
+                McpEnv  = $envHash
+                Cwd     = $cwd
+                Project = ""
+            }
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($proj)) {
+            # Tier 2: agentbox-project
+            $out += [PSCustomObject]@{
+                Id      = $sid
+                Tier    = 2
+                Command = ""
+                Args    = @()
+                McpEnv  = @{}
+                Cwd     = ""
+                Project = $proj.Trim()
+            }
+        }
+        else {
+            Write-DispatcherLog "MCP '$sid': weder command noch project gesetzt -- Eintrag uebersprungen" "WARN"
+        }
     }
     return $out
 }
 
-# --- Handler-Daemon starten ---
-# Whitelist-check wie win-task-runner: build.command muss in
-# project.json.build_whitelist stehen. build_whitelist ist hier
-# die Projekt-lokale Liste (nicht die globale aus config.json) —
-# jeder MCP-Handler definiert seine erlaubten Commands selbst.
-function Start-McpHandler {
-    param(
-        [Parameter(Mandatory)][string]$McpId,
-        [Parameter(Mandatory)][string]$ProjectName
-    )
+# --- Tier 1: generischer Passthrough starten ---
+function Start-McpTier1Handler {
+    param([Parameter(Mandatory)][PSCustomObject]$Spec)
 
-    $projectDir = Join-Path $baseDir $ProjectName
+    $passthroughScript = Join-Path $scriptDir "proxy-mcp\passthrough-handler.ps1"
+    if (-not (Test-Path -LiteralPath $passthroughScript)) {
+        Write-DispatcherLog "MCP '$($Spec.Id)': passthrough-handler.ps1 fehlt unter $passthroughScript" "ERROR"
+        return $null
+    }
+
+    # Runtime-Ordner anlegen
+    $runtimeDir = Join-Path $runtimeBase $Spec.Id
+    [System.IO.Directory]::CreateDirectory((Join-Path $runtimeDir "requests")) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $runtimeDir "responses")) | Out-Null
+
+    # Args/Env als JSON an den Wrapper reichen (ENV-Vars sind strings only).
+    $argsJson = (ConvertTo-Json -InputObject $Spec.Args -Compress -Depth 5)
+    # ConvertTo-Json auf ein leeres Array gibt "[]" korrekt zurueck -- gut.
+    if ([string]::IsNullOrEmpty($argsJson) -or $argsJson -eq 'null') { $argsJson = '[]' }
+
+    $envJson = '{}'
+    if ($Spec.McpEnv.Count -gt 0) {
+        $envJson = (ConvertTo-Json -InputObject $Spec.McpEnv -Compress -Depth 5)
+    }
+
+    $cmdSummary = "$($Spec.Command) $($Spec.Args -join ' ')"
+    Write-DispatcherLog "MCP '$($Spec.Id)' [Tier 1]: starte Passthrough-Wrapper -- $cmdSummary"
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "powershell.exe"
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$passthroughScript`""
+    if (-not [string]::IsNullOrEmpty($Spec.Cwd)) {
+        $psi.WorkingDirectory = $Spec.Cwd
+    }
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.EnvironmentVariables["AGENTBOX_MCP_ID"] = $Spec.Id
+    $psi.EnvironmentVariables["AGENTBOX_MCP_CMD"] = $Spec.Command
+    $psi.EnvironmentVariables["AGENTBOX_MCP_ARGS_JSON"] = $argsJson
+    $psi.EnvironmentVariables["AGENTBOX_MCP_ENV_JSON"] = $envJson
+    if (-not [string]::IsNullOrEmpty($Spec.Cwd)) {
+        $psi.EnvironmentVariables["AGENTBOX_MCP_CWD"] = $Spec.Cwd
+    }
+
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        Write-DispatcherLog "MCP '$($Spec.Id)': Passthrough gestartet (pid=$($proc.Id))" "OK"
+        return $proc
+    } catch {
+        Write-DispatcherLog "MCP '$($Spec.Id)': Passthrough-Start fehlgeschlagen -- $($_.Exception.Message)" "ERROR"
+        return $null
+    }
+}
+
+# --- Tier 2: agentbox-Projekt-Handler starten ---
+# Whitelist-check wie win-task-runner: build.command muss in
+# project.json.build_whitelist stehen. Tier 2 ist Opt-In-Pfad fuer
+# User, die ihren MCP innerhalb von agentbox als eigenes Projekt
+# entwickeln.
+function Start-McpTier2Handler {
+    param([Parameter(Mandatory)][PSCustomObject]$Spec)
+
+    $projectDir = Join-Path $baseDir $Spec.Project
     if (-not (Test-Path -LiteralPath $projectDir)) {
-        Write-DispatcherLog "MCP '$McpId': Projekt '$ProjectName' nicht gefunden unter $baseDir" "WARN"
+        Write-DispatcherLog "MCP '$($Spec.Id)' [Tier 2]: Projekt '$($Spec.Project)' nicht gefunden unter $baseDir" "WARN"
         return $null
     }
 
     $projectJsonPath = Join-Path $projectDir "project.json"
     if (-not (Test-Path -LiteralPath $projectJsonPath)) {
-        Write-DispatcherLog "MCP '$McpId': project.json fehlt in $projectDir" "WARN"
+        Write-DispatcherLog "MCP '$($Spec.Id)': project.json fehlt in $projectDir" "WARN"
         return $null
     }
 
@@ -110,59 +210,69 @@ function Start-McpHandler {
     try {
         $projectConfig = Get-Content -LiteralPath $projectJsonPath -Raw | ConvertFrom-Json
     } catch {
-        Write-DispatcherLog "MCP '$McpId': project.json nicht parsbar — $($_.Exception.Message)" "ERROR"
+        Write-DispatcherLog "MCP '$($Spec.Id)': project.json nicht parsbar -- $($_.Exception.Message)" "ERROR"
         return $null
     }
 
     if (-not $projectConfig.build -or -not $projectConfig.build.command) {
-        Write-DispatcherLog "MCP '$McpId': build.command fehlt in project.json" "WARN"
+        Write-DispatcherLog "MCP '$($Spec.Id)': build.command fehlt in project.json" "WARN"
         return $null
     }
     $buildCmd = [string]$projectConfig.build.command
 
-    # Lokale Whitelist pruefen (Projekt-eigenes build_whitelist).
     $whitelist = @()
     if ($projectConfig.PSObject.Properties['build_whitelist'] -and $projectConfig.build_whitelist) {
         $whitelist = @($projectConfig.build_whitelist)
     }
     if ($whitelist.Count -eq 0) {
-        Write-DispatcherLog "MCP '$McpId': build_whitelist in project.json ist leer — Handler nicht gestartet (security)" "ERROR"
+        Write-DispatcherLog "MCP '$($Spec.Id)': build_whitelist in project.json ist leer -- Handler nicht gestartet (security)" "ERROR"
         return $null
     }
     if ($whitelist -notcontains $buildCmd) {
-        Write-DispatcherLog "MCP '$McpId': build.command nicht in build_whitelist — Handler nicht gestartet" "ERROR"
+        Write-DispatcherLog "MCP '$($Spec.Id)': build.command nicht in build_whitelist -- Handler nicht gestartet" "ERROR"
         return $null
     }
 
-    # Runtime-Ordner anlegen
-    $runtimeDir = Join-Path $runtimeBase $McpId
+    $runtimeDir = Join-Path $runtimeBase $Spec.Id
     [System.IO.Directory]::CreateDirectory((Join-Path $runtimeDir "requests")) | Out-Null
     [System.IO.Directory]::CreateDirectory((Join-Path $runtimeDir "responses")) | Out-Null
 
-    Write-DispatcherLog "MCP '$McpId': starte Handler — $buildCmd (cwd=$projectDir)"
+    Write-DispatcherLog "MCP '$($Spec.Id)' [Tier 2]: starte Handler -- $buildCmd (cwd=$projectDir)"
 
-    # Env-Vars fuer den Handler setzen und via cmd.exe starten.
-    # Start-Process mit -PassThru gibt das Process-Objekt zurueck,
-    # damit wir PID/HasExited beobachten koennen.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "cmd.exe"
     $psi.Arguments = "/c $buildCmd"
     $psi.WorkingDirectory = $projectDir
     $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $false
-    $psi.RedirectStandardError = $false
     $psi.CreateNoWindow = $true
-    $psi.EnvironmentVariables["AGENTBOX_MCP_ID"] = $McpId
+    $psi.EnvironmentVariables["AGENTBOX_MCP_ID"] = $Spec.Id
     $psi.EnvironmentVariables["AGENTBOX_MCP_RUNTIME"] = $runtimeDir
 
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)
-        Write-DispatcherLog "MCP '$McpId': Handler gestartet (pid=$($proc.Id))" "OK"
+        Write-DispatcherLog "MCP '$($Spec.Id)': Handler gestartet (pid=$($proc.Id))" "OK"
         return $proc
     } catch {
-        Write-DispatcherLog "MCP '$McpId': Handler-Start fehlgeschlagen — $($_.Exception.Message)" "ERROR"
+        Write-DispatcherLog "MCP '$($Spec.Id)': Handler-Start fehlgeschlagen -- $($_.Exception.Message)" "ERROR"
         return $null
     }
+}
+
+# Tier-Dispatcher.
+function Start-McpHandler {
+    param([Parameter(Mandatory)][PSCustomObject]$Spec)
+    if ($Spec.Tier -eq 1) { return Start-McpTier1Handler -Spec $Spec }
+    if ($Spec.Tier -eq 2) { return Start-McpTier2Handler -Spec $Spec }
+    Write-DispatcherLog "MCP '$($Spec.Id)': unbekannter Tier=$($Spec.Tier)" "ERROR"
+    return $null
+}
+
+# $scriptDir wird spaeter benutzt (Passthrough-Script-Pfad). Hier fuer
+# Klarheit explizit gesetzt -- egal ob aus _control/ oder mitgeklontem
+# Entwicklungs-Checkout gestartet.
+$scriptDir = $PSScriptRoot
+if (-not $scriptDir) {
+    $scriptDir = $controlDir
 }
 
 # --- Hauptschleife ---
@@ -170,7 +280,7 @@ Write-DispatcherLog "=== agentbox MCP Dispatcher gestartet (pid=$PID) ==="
 
 $servers = Get-McpServers -Cfg $config
 if ($servers.Count -eq 0) {
-    Write-DispatcherLog "mcp_servers leer — nichts zu tun, dispatcher exitet clean."
+    Write-DispatcherLog "mcp_servers leer -- dispatcher exitet clean."
     exit 0
 }
 
@@ -178,12 +288,12 @@ if ($servers.Count -eq 0) {
 $running = @{}
 
 foreach ($s in $servers) {
-    $proc = Start-McpHandler -McpId $s.Id -ProjectName $s.Project
+    $proc = Start-McpHandler -Spec $s
     if ($proc) { $running[$s.Id] = $proc }
 }
 
 if ($RunOnce) {
-    Write-DispatcherLog "RunOnce-Mode — dispatcher exitet nach initialem Start."
+    Write-DispatcherLog "RunOnce-Mode -- dispatcher exitet nach initialem Start."
     exit 0
 }
 
@@ -196,26 +306,26 @@ try {
             $proc = $running[$s.Id]
             $alive = $proc -and -not $proc.HasExited
             if (-not $alive) {
-                Write-DispatcherLog "MCP '$($s.Id)': Handler tot — restart" "WARN"
-                $newProc = Start-McpHandler -McpId $s.Id -ProjectName $s.Project
+                Write-DispatcherLog "MCP '$($s.Id)': Handler tot -- restart" "WARN"
+                $newProc = Start-McpHandler -Spec $s
                 if ($newProc) { $running[$s.Id] = $newProc }
                 else {
-                    # Start fehlgeschlagen — raus aus der Map, sonst endlose
-                    # Restart-Versuche auf einem kaputten Projekt.
+                    # Start fehlgeschlagen -- raus aus der Map, sonst endlose
+                    # Restart-Versuche auf einem kaputten Eintrag.
                     $running.Remove($s.Id)
                 }
             }
         }
 
-        # Alles tot → dispatcher beenden, Scheduled Task RestartOnFailure
+        # Alles tot -> dispatcher beenden, Scheduled Task RestartOnFailure
         # uebernimmt.
         if ($running.Count -eq 0) {
-            Write-DispatcherLog "Alle Handler tot und nicht neustartbar — dispatcher exitet (Scheduled Task wird neu starten)."
+            Write-DispatcherLog "Alle Handler tot und nicht neustartbar -- dispatcher exitet (Scheduled Task wird neu starten)."
             exit 1
         }
     }
 } finally {
-    Write-DispatcherLog "dispatcher shutting down — beende $($running.Count) Handler"
+    Write-DispatcherLog "dispatcher shutting down -- beende $($running.Count) Handler"
     foreach ($kv in $running.GetEnumerator()) {
         try {
             if (-not $kv.Value.HasExited) {

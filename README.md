@@ -328,26 +328,44 @@ agentbox ships a first-class MCP integration that lets agents call **Windows-hos
 
 **How it works:**
 
-- You write a normal **agentbox project** under `AI_Projects_Source\<your-mcp>\` with a `handler.ps1` that implements the MCP tools and a `tools.json` that declares their schemas. The [`mcp-handler-template\`](tools/mcp-handler-template/) project is seeded by `install.ps1` as a starting point.
-- A Windows Scheduled Task (`agentbox-mcp-dispatcher`, AtLogon + RestartOnFailure) starts each enabled handler as a persistent daemon.
+- A Windows Scheduled Task (`agentbox-mcp-dispatcher`, AtLogon + RestartOnFailure) starts each configured MCP server as a persistent host-side daemon.
 - Inside the sandbox, a tiny stdio-proxy ([`proxy-mcp.js`](proxy-mcp/proxy-mcp.js)) speaks MCP to the agent and forwards every `tools/call` through a **file-system queue** under `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\` — zero network traffic, the existing sandbox firewall stays unchanged.
 - Steady-state latency is ~10–30 ms per call (PowerShell FileSystemWatcher on NTFS).
 
-**Activate one:**
+### Standard import (any existing MCP server)
 
-1. Copy the template: `Copy-Item "$env:OneDrive\AI_Projects_Source\mcp-handler-template" "$env:OneDrive\AI_Projects_Source\my-mcp" -Recurse`
-2. Edit `my-mcp\handler.ps1` (replace the `echo` tool with your own) and `my-mcp\tools.json` (declare the tool schema).
-3. Register in `config.json`:
-   ```json
-   "mcp_servers": [
-     { "id": "my-mcp", "project": "my-mcp" }
-   ]
-   ```
-4. Re-run `install.ps1` (admin PowerShell). The dispatcher Scheduled Task gets registered and starts the handler. From the next sandbox session on, every agent sees `my-mcp` as an MCP server.
+For any MCP server that documents a `command` / `args` / `env` block (KiCad, GitHub, Filesystem, Memory, Puppeteer, …) — paste the same config into agentbox's `config.json`:
 
-The MCP project is **dogfood-friendly**: open `my-mcp` as a normal agentbox project and let Claude Code iterate on the handler itself.
+```json
+"mcp_servers": [
+  {
+    "id": "kicad",
+    "command": "python",
+    "args": ["-m", "kicad_mcp"],
+    "env": { "KICAD_PYTHON_PATH": "C:\\Program Files\\KiCad\\..." }
+  },
+  {
+    "id": "github",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "env": { "GITHUB_TOKEN": "ghp_..." }
+  }
+]
+```
 
-**Trust boundary:** the handler runs on the Windows host with full user privileges. Each MCP project has its own `build_whitelist` in `project.json` — the dispatcher refuses to start any `build.command` that isn't listed there.
+Then apply the change (no admin needed, no `install.ps1` rerun):
+
+```bash
+agentbox --reload-mcp
+```
+
+A generic passthrough-wrapper spawns the server, speaks JSON-RPC over stdio, and bridges it onto agentbox's file-queue. From the next sandbox session on, every agent sees the MCP and its tools.
+
+**Trust boundary (standard import):** whatever `command` / `args` you put in is what gets run, on the host, as your user. There is **no** command whitelist — this matches Claude Desktop / Cursor behavior. Trust the config like you trust any other MCP-client config.
+
+### Writing your own MCP inside agentbox (advanced)
+
+For MCPs you want to **develop** inside an agentbox session, there's a parallel path: a normal agentbox project under `AI_Projects_Source\<your-mcp>\` with a `handler.ps1` (PowerShell-native, no child process), `tools.json`, and `project.json` — seeded as [`mcp-handler-template\`](tools/mcp-handler-template/) by `install.ps1`. Register with `{ "id": "...", "project": "..." }` instead of `command`. This path **has** a per-project `build_whitelist` security gate because you're running arbitrary in-agentbox PowerShell. See the template README for quickstart.
 
 ## Comparison
 

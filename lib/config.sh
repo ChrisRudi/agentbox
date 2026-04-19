@@ -146,10 +146,15 @@ except:
 }
 
 # cfg_get_mcp_servers
-# Gibt konfigurierte MCP-Server aus config.json als "id|project|agents"
-# pro Zeile aus. `agents` ist komma-separierte Liste (leer = alle
-# aktivierten). Wird von wsl-ai-start.sh gerufen, um pro Server das
-# runtime-Verzeichnis anzulegen und die Agent-Configs zu patchen.
+# Gibt konfigurierte MCP-Server aus config.json als "id|tier|agents"
+# pro Zeile aus.
+#   tier=1: Standard-MCP-Import (Eintrag hat `command`-Key)
+#   tier=2: agentbox-eigenes Projekt (Eintrag hat `project`-Key)
+# `agents` ist komma-separierte Liste (leer = alle aktivierten Agenten).
+# Wird von wsl-ai-start.sh gerufen, um pro Server das Runtime-Verzeichnis
+# anzulegen und die Agent-Configs zu patchen — die konkreten Tier-1-
+# Details (command/args/env) liest der Dispatcher direkt aus config.json,
+# hier nicht noetig.
 cfg_get_mcp_servers() {
     if [ ! -f "$AGENTBOX_CONFIG" ]; then
         return
@@ -166,16 +171,24 @@ try:
         for s in servers:
             if not isinstance(s, dict):
                 continue
-            sid = s.get('id', '').strip()
-            proj = s.get('project', '').strip()
-            if not sid or not proj:
+            sid = str(s.get('id', '')).strip()
+            if not sid:
+                continue
+            cmd = str(s.get('command', '')).strip()
+            proj = str(s.get('project', '')).strip()
+            if cmd:
+                tier = '1'
+            elif proj:
+                tier = '2'
+            else:
+                # Weder command noch project — unvollstaendig, skippen.
                 continue
             agents = s.get('agents', [])
             if isinstance(agents, list):
                 agents_csv = ','.join(str(a).strip() for a in agents if str(a).strip())
             else:
                 agents_csv = ''
-            print(f'{sid}|{proj}|{agents_csv}')
+            print(f'{sid}|{tier}|{agents_csv}')
 except Exception:
     pass
 " 2>/dev/null

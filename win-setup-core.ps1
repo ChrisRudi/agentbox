@@ -349,24 +349,10 @@ function Register-AgentboxMcpDispatcher {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
     }
 
-    # Dispatcher nur registrieren, wenn mcp_servers nicht leer ist — so
-    # schaffen wir keinen dauerlaufenden PS-Prozess fuer User, die MCP
-    # gar nicht nutzen. Wer spaeter mcp_servers befuellt und install.ps1
-    # rerunt, bekommt den Task dann.
-    $hasMcpServers = $false
-    if ($cfg -and $cfg.PSObject.Properties['mcp_servers'] -and $cfg.mcp_servers) {
-        foreach ($s in @($cfg.mcp_servers)) {
-            if ($s -and $s.PSObject.Properties['id'] -and $s.id -and
-                $s.PSObject.Properties['project'] -and $s.project) {
-                $hasMcpServers = $true
-                break
-            }
-        }
-    }
-    if (-not $hasMcpServers) {
-        Write-Host "[INFO] config.json mcp_servers leer — agentbox-mcp-dispatcher Task nicht registriert" -ForegroundColor Gray
-        return
-    }
+    # Task wird IMMER registriert -- der Dispatcher selbst exitet clean
+    # (in Millisekunden), wenn mcp_servers leer ist. Damit braucht der
+    # User nach dem Hinzufuegen eines MCP nur `agentbox --reload-mcp`
+    # statt einen Admin-install.ps1-Rerun.
 
     $action = New-ScheduledTaskAction -Execute "powershell.exe" `
         -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dispatcherScript`"" `

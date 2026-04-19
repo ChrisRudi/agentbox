@@ -1,5 +1,15 @@
 # mcp-handler-template — Quickstart
 
+> **Bist du hier falsch?** Wenn du einen **bestehenden** MCP-Server
+> einbinden willst (KiCad, GitHub, Filesystem, usw.), brauchst du
+> dieses Template **nicht**. Trag den `command` / `args` / `env`-Block
+> aus der Server-README direkt in `_control/config.json` unter
+> `mcp_servers` ein und ruf `agentbox --reload-mcp`. Fertig in 2 min.
+>
+> Dieses Template ist fuer den Fall, dass du einen MCP-Server
+> **selbst in agentbox entwickeln** willst (PowerShell-nativer Handler,
+> ohne Child-Prozess).
+
 Du hast gerade diesen Ordner nach `<AI_Projects_Source>\<dein-mcp-name>\`
 kopiert. Gut. So kommst du von hier bis zum funktionierenden MCP-Server:
 
@@ -58,17 +68,21 @@ erweitern:
   bestimmte Agenten zu beschraenken; ohne den Key kriegen alle
   aktivierten Agenten ihn.
 
-## 5. `install.ps1` neu als Admin laufen lassen
+## 5. Dispatcher neu laden
 
-```powershell
-irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/install.ps1 | iex
+```bash
+agentbox --reload-mcp
 ```
 
-Das registriert den Scheduled Task `agentbox-mcp-dispatcher` (AtLogon +
-RestartOnFailure) und startet den Dispatcher, der deinen handler.ps1
-als persistenten Daemon laufen laesst. Ohne diesen Step bleibt der
-MCP "registriert aber nicht erreichbar" — der Sandbox-Proxy sieht
-keinen Heartbeat und meldet "MCP daemon not running".
+Kein Admin, kein `install.ps1`-Rerun noetig — der Scheduled Task
+`agentbox-mcp-dispatcher` ist bereits seit der Erstinstallation
+registriert und wird hier einfach neu gestartet, damit er deinen
+neuen Eintrag aus `config.json` sieht und einen Handler-Daemon fuer
+dich startet.
+
+Ohne diesen Step bleibt der MCP "registriert aber nicht erreichbar" —
+der Sandbox-Proxy sieht keinen Heartbeat und meldet "MCP daemon not
+running".
 
 ## 6. Testen
 
@@ -96,9 +110,9 @@ Sandbox-Session oeffnen — Claude Code sieht `handler.ps1`, `tools.json`,
 diese README, und arbeitet wie bei jedem anderen Projekt dran. Dogfood
 as intended.
 
-Nach Handler-Aenderungen muss der Daemon aber neu starten — entweder:
+Nach Handler-Aenderungen muss der Daemon aber neu starten:
 
-- `Stop-ScheduledTask agentbox-mcp-dispatcher; Start-ScheduledTask agentbox-mcp-dispatcher` (Admin-PS)
+- `agentbox --reload-mcp` (aus einer regulaeren WSL-Shell, kein Admin noetig)
 - oder Logoff/Logon
 
 Die Sandbox-Seite (Proxy) muss **nicht** neu gestartet werden, die

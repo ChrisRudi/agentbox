@@ -15,6 +15,7 @@ AUTO_MODE=false
 REPLAY_SESSION=""
 LIST_SESSIONS_MODE=false
 COMPARE_MODE=false
+RELOAD_MCP_MODE=false
 COMPARE_SESSIONS=()
 
 while [ $# -gt 0 ]; do
@@ -46,6 +47,10 @@ while [ $# -gt 0 ]; do
                 exit 1
             fi
             shift 3
+            ;;
+        --reload-mcp)
+            RELOAD_MCP_MODE=true
+            shift
             ;;
         *)
             shift
@@ -313,6 +318,39 @@ print(f\"  {d.get('id','?'):20s}  {d.get('agent','?'):15s}  {d.get('project','?'
     else
         echo "Keine Sessions vorhanden."
     fi
+    exit 0
+fi
+
+if [ "$RELOAD_MCP_MODE" = true ]; then
+    # MCP-Dispatcher via powershell.exe-Interop neu starten. Laeuft
+    # ausserhalb der Sandbox (in agentbox-host bzw. einer regulaeren
+    # WSL-Session), powershell.exe ist hier erreichbar — der Pfad
+    # /mnt/c wurde noch nicht mit tmpfs overmounted.
+    if ! command -v powershell.exe >/dev/null 2>&1; then
+        log_error "powershell.exe nicht erreichbar. --reload-mcp nur aus agentbox-host oder regulaerer WSL-Shell."
+        exit 1
+    fi
+    log_info "Stoppe agentbox-mcp-dispatcher..."
+    powershell.exe -NoProfile -Command \
+        "try { Stop-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'stopped' } catch { Write-Output 'stop skipped' }" \
+        2>/dev/null | tr -d '\r' | sed 's/^/  /'
+    sleep 1
+    log_info "Starte agentbox-mcp-dispatcher..."
+    _start_out=$(powershell.exe -NoProfile -Command \
+        "try { Start-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'started' } catch { Write-Output \"ERROR: \$(\$_.Exception.Message)\" }" \
+        2>/dev/null | tr -d '\r')
+    echo "$_start_out" | sed 's/^/  /'
+    if echo "$_start_out" | grep -q "^ERROR:"; then
+        log_error "Dispatcher-Start fehlgeschlagen. Task nicht registriert?"
+        echo "  Pruefe in Admin-PS: Get-ScheduledTask -TaskName 'agentbox-mcp-dispatcher'" >&2
+        echo "  Falls nicht vorhanden: install.ps1 als Admin ausfuehren." >&2
+        exit 1
+    fi
+    log_ok "Dispatcher neugestartet. Log: %LOCALAPPDATA%\\agentbox\\mcp-runtime\\dispatcher.log"
+    echo ""
+    echo "Next steps:"
+    echo "  1. In einer neuen agentbox-Session sollte der MCP im Agent sichtbar sein."
+    echo "  2. Bei Problemen: handler.log pro MCP unter %LOCALAPPDATA%\\agentbox\\mcp-runtime\\<id>\\handler.log"
     exit 0
 fi
 
@@ -1127,9 +1165,9 @@ if declare -F cfg_get_mcp_servers >/dev/null 2>&1; then
         fi
     done < <(cfg_get_agents)
 
-    while IFS='|' read -r _mcp_id _mcp_proj _mcp_agents_csv; do
+    while IFS='|' read -r _mcp_id _mcp_tier _mcp_agents_csv; do
         [ -z "$_mcp_id" ] && continue
-        [ -z "$_mcp_proj" ] && continue
+        [ -z "$_mcp_tier" ] && continue
         # Runtime-Ordner anlegen (requests/, responses/). Handler-Daemon
         # auf Host-Seite legt sie auch an, aber wir wollen defensiv
         # sicher sein, dass die Bind-Mounts in der Sandbox ein gueltiges
@@ -1138,9 +1176,9 @@ if declare -F cfg_get_mcp_servers >/dev/null 2>&1; then
         if [ -z "$_mcp_agents_csv" ]; then
             _mcp_agents_csv="$_default_mcp_agents"
         fi
-        # AGENTBOX_MCP_SPEC-Format: "id=agents_csv;id=agents_csv". Das
-        # Projekt-Feld brauchen wir NICHT in der Sandbox (der Handler
-        # laeuft Host-seitig), nur die id + die Agent-Liste.
+        # AGENTBOX_MCP_SPEC-Format: "id=agents_csv;id=agents_csv". Tier
+        # (1=passthrough / 2=project) spielt sandbox-seitig keine Rolle —
+        # die Queue-Schnittstelle ist fuer beide identisch.
         if [ -z "$AGENTBOX_MCP_SPEC" ]; then
             AGENTBOX_MCP_SPEC="${_mcp_id}=${_mcp_agents_csv}"
         else
@@ -1154,11 +1192,14 @@ if declare -F cfg_get_mcp_servers >/dev/null 2>&1; then
     fi
 fi
 
-# Proxy-MCP aus _control/proxy-mcp in den User-lokalen Runtime-Ordner
-# spiegeln (analog zum demo-benchmark-Seed, aber ohne den
-# "User-kann-modifizieren"-Teil — der Proxy ist reiner agentbox-Code).
-# Immer overwriten, damit Updates ueber git pull ankommen.
-if [ -f "$CONTROL_DIR/proxy-mcp/proxy-mcp.js" ]; then
+# Proxy-MCP + Passthrough-Handler aus _control/proxy-mcp/ in den User-
+# lokalen Runtime-Ordner spiegeln (analog zum demo-benchmark-Seed, aber
+# ohne den "User-kann-modifizieren"-Teil — beides ist reiner agentbox-
+# Code). Immer overwriten, damit Updates ueber git pull ankommen.
+# Der passthrough-handler.ps1 wird hier nur fuer den Fall gespiegelt,
+# dass install.ps1 noch nicht neu gelaufen ist; der Dispatcher sucht
+# ihn primaer unter _control/proxy-mcp/passthrough-handler.ps1.
+if [ -d "$CONTROL_DIR/proxy-mcp" ]; then
     mkdir -p "$MCP_PROXY_BASE" 2>/dev/null || true
     cp -f "$CONTROL_DIR/proxy-mcp/proxy-mcp.js" "$MCP_PROXY_BASE/proxy-mcp.js" 2>/dev/null || true
 fi
