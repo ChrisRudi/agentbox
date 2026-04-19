@@ -549,6 +549,74 @@ function Initialize-AgentboxAutoApproveDefaults {
 # Rebuild (gleicher Config-Hash) trotzdem neue Seeds nachziehen koennen.
 Initialize-AgentboxAutoApproveDefaults
 
+# --- MCP-Setup-Prompt (nur wenn mcp_servers leer) ---
+# Laeuft am Ende der Install. Fresh-Install (keine MCPs konfiguriert) ->
+# User bekommt die Frage. Rerun mit bereits konfigurierten MCPs -> stumm.
+# So erzwingt niemand den Prompt jedes Mal beim install.ps1-Rerun.
+function Invoke-AgentboxMcpSetupPrompt {
+    param(
+        $cfg,
+        [Parameter(Mandatory)][string]$ScriptDir,
+        [Parameter(Mandatory)][string]$ConfigPath
+    )
+
+    # Schon MCPs konfiguriert? Dann nicht fragen.
+    $hasExisting = $false
+    if ($cfg -and $cfg.PSObject.Properties['mcp_servers'] -and $cfg.mcp_servers) {
+        foreach ($s in @($cfg.mcp_servers)) {
+            if ($s -and $s.PSObject.Properties['id'] -and $s.id) {
+                $hasExisting = $true
+                break
+            }
+        }
+    }
+    if ($hasExisting) {
+        Write-Host "[INFO] MCP-Server bereits konfiguriert -- Setup-Prompt uebersprungen." -ForegroundColor Gray
+        Write-Host "       Verwaltung ueber: agentbox -> [c] Konfiguration -> [4] MCP-Server" -ForegroundColor Gray
+        return
+    }
+
+    Write-Host ""
+    Write-Host "================================================" -ForegroundColor Cyan
+    Write-Host " MCP-Server einrichten?" -ForegroundColor Cyan
+    Write-Host "================================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "agentbox kann bestehende MCP-Server (KiCad, GitHub, Filesystem,"
+    Write-Host "...) auf dem Host laufen lassen und den Agenten in jeder Sandbox-"
+    Write-Host "Session per File-Bridge zur Verfuegung stellen -- ohne die"
+    Write-Host "Netzwerk-Isolation anzutasten."
+    Write-Host ""
+    Write-Host "Du kannst jederzeit spaeter: agentbox -> [c] -> [4] MCP-Server" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  [1] KiCad 10 MCP jetzt einrichten (Wizard)" -ForegroundColor White
+    Write-Host "  [2] Spaeter -- ueberspringen" -ForegroundColor White
+    Write-Host ""
+
+    $pick = Read-Host "Auswahl [2]"
+    if ([string]::IsNullOrWhiteSpace($pick)) { $pick = "2" }
+
+    switch ($pick) {
+        "1" {
+            $wizard = Join-Path $ScriptDir "setup-kicad-mcp.ps1"
+            if (-not (Test-Path -LiteralPath $wizard)) {
+                Write-Host "[WARN] setup-kicad-mcp.ps1 nicht gefunden -- manuell:" -ForegroundColor Yellow
+                Write-Host "       irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/setup-kicad-mcp.ps1 | iex" -ForegroundColor Gray
+                return
+            }
+            Write-Host ""
+            Write-Host "Starte KiCad-MCP-Wizard..." -ForegroundColor Cyan
+            Write-Host ""
+            # Direkt hier ausfuehren -- wir sind in einer Admin-PS, aber der
+            # Wizard braucht kein Admin (Scheduled Task ist ja schon gerade
+            # durch Register-AgentboxMcpDispatcher registriert worden).
+            & $wizard
+        }
+        default {
+            Write-Host "[OK] MCP-Setup uebersprungen. Jederzeit ueber agentbox-Menue nachholbar." -ForegroundColor Green
+        }
+    }
+}
+
 $configHashFile = Join-Path $sandboxDir ".config_hash"
 $currentHash = Get-AgentboxConfigHash -cfg $config
 
@@ -1051,3 +1119,9 @@ Write-Host "=== Setup abgeschlossen ===" -ForegroundColor Green
 Write-Host ""
 
 } # end if (-not $agentboxSkipBuild)
+
+# --- MCP-Prompt (nach beiden Pfaden) ---
+# Laeuft unabhaengig von Skip-Build, weil der User im Skip-Build-Pfad
+# evtl. trotzdem zum ersten Mal MCP einrichten will. Prompt ist
+# idempotent (skippt wenn mcp_servers bereits konfiguriert ist).
+Invoke-AgentboxMcpSetupPrompt -cfg $config -ScriptDir $scriptDir -ConfigPath $configPath

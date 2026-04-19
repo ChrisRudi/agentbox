@@ -332,17 +332,40 @@ agentbox ships a first-class MCP integration that lets agents call **Windows-hos
 - Inside the sandbox, a tiny stdio-proxy ([`proxy-mcp.js`](proxy-mcp/proxy-mcp.js)) speaks MCP to the agent and forwards every `tools/call` through a **file-system queue** under `%LOCALAPPDATA%\agentbox\mcp-runtime\<id>\` — zero network traffic, the existing sandbox firewall stays unchanged.
 - Steady-state latency is ~10–30 ms per call (PowerShell FileSystemWatcher on NTFS).
 
-### Standard import (any existing MCP server)
+### Activate one (menu — recommended)
 
-For any MCP server that documents a `command` / `args` / `env` block (KiCad, GitHub, Filesystem, Memory, Puppeteer, …) — paste the same config into agentbox's `config.json`:
+The agentbox config menu does everything for you, no manual JSON editing:
+
+```
+agentbox  →  [c] Konfiguration  →  [4] MCP-Server verwalten
+
+  [1] KiCad 10 MCP einrichten (Wizard)
+  [2] Custom MCP hinzufuegen (command/args/env manuell)
+  [3] MCP entfernen
+  [4] Dispatcher neu laden
+```
+
+- **[1] KiCad Wizard**: auto-detects KiCad's bundled Python (required — system Python doesn't have `pcbnew`), finds KiCad-CLI, runs `pip install`, merges the `config.json` entry, reloads the dispatcher.
+- **[2] Custom**: line-by-line prompts for `command` / `args` / `env` / `cwd` — same shape as any Claude Desktop / Cursor MCP config. Works for every MCP server that follows the MCP spec.
+- **[3] Remove**: list view with heartbeat status (`ok (3s)`, `stale`, `tot`), pick a number to remove.
+- **[4] Reload**: restarts the `agentbox-mcp-dispatcher` Scheduled Task so config changes take effect.
+
+A fresh `install.ps1` also asks once at the end whether you want to set up a MCP — skip safely if you don't need one yet.
+
+### Manual config (advanced)
+
+If you prefer hand-editing `config.json` (or are scripting from CI), the schema is identical to Claude Desktop / Cursor:
 
 ```json
 "mcp_servers": [
   {
     "id": "kicad",
-    "command": "python",
-    "args": ["-m", "kicad_mcp"],
-    "env": { "KICAD_PYTHON_PATH": "C:\\Program Files\\KiCad\\..." }
+    "command": "C:\\Program Files\\KiCad\\10.0\\bin\\python.exe",
+    "args": ["main.py"],
+    "cwd": "C:\\Users\\me\\OneDrive\\AI_Projects_Source\\KiCad_MCP",
+    "env": {
+      "KICAD_CLI_PATH": "C:\\Program Files\\KiCad\\10.0\\bin\\kicad-cli.exe"
+    }
   },
   {
     "id": "github",
@@ -353,23 +376,15 @@ For any MCP server that documents a `command` / `args` / `env` block (KiCad, Git
 ]
 ```
 
-Then apply the change (no admin needed, no `install.ps1` rerun):
+Apply with `agentbox --reload-mcp` (no admin, no `install.ps1` rerun).
 
-```bash
-agentbox --reload-mcp
-```
+### Automation / CI
 
-A generic passthrough-wrapper spawns the server, speaks JSON-RPC over stdio, and bridges it onto agentbox's file-queue. From the next sandbox session on, every agent sees the MCP and its tools.
+The KiCad wizard is also available headless as [`setup-kicad-mcp.ps1`](setup-kicad-mcp.ps1) — takes `-KicadMcpPath`, `-KicadCliPath`, `-PythonPath`, `-SearchPaths`, `-NonInteractive` parameters. Works as a reference for scripting any MCP import.
 
-**Guided setup for KiCad 10 MCP:** there's a dedicated one-shot wizard that auto-detects Python + KiCad + the `_control` folder, runs `pip install`, merges the `config.json` entry, and reloads the dispatcher:
+### Trust boundary
 
-```powershell
-irm https://raw.githubusercontent.com/ChrisRudi/agentbox/main/setup-kicad-mcp.ps1 | iex
-```
-
-The script is idempotent (rerun safe) and works as a reference for how to wrap *any* existing MCP — see [`setup-kicad-mcp.ps1`](setup-kicad-mcp.ps1) for the pattern.
-
-**Trust boundary (standard import):** whatever `command` / `args` you put in is what gets run, on the host, as your user. There is **no** command whitelist — this matches Claude Desktop / Cursor behavior. Trust the config like you trust any other MCP-client config.
+Whatever `command` / `args` you put in is what gets run, on the host, as your user. There is **no** command whitelist — this matches Claude Desktop / Cursor behavior. Trust the config like you trust any other MCP-client config.
 
 ### Writing your own MCP inside agentbox (advanced)
 

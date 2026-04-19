@@ -5,6 +5,73 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.2] - 2026-04-19
+
+**MCP-Setup als integraler Teil von agentbox, nicht als Fremdkoerper.**
+
+User-Feedback zu 2.4.1:
+- "es muss das kicad Python verwenden"
+- "Das design ist ganz falsch nicht bei der neuistallation nach dem
+  MCP Fragen ???"
+- "ich wuerde sagen es gibt bei den einstellungen einen Menuepunkt"
+
+Alle drei korrekt. Fixes:
+
+### 1. KiCad-Python statt System-Python
+
+`setup-kicad-mcp.ps1` sucht jetzt **zuerst** `C:\Program Files\KiCad\
+10.0\bin\python.exe` (und 9.0-Fallback), nicht `where.exe python`.
+KiCad_MCP braucht das pcbnew-Modul, das ist nur in der KiCad-eigenen
+Python-Environment verfuegbar. System-Python crasht beim ersten
+PCB-Analyse-Call. Plus: pcbnew-Import-Check nach der Versionspruefung
+warnt frueh, wenn die falsche Python-Env erwischt wurde.
+
+### 2. MCP-Prompt im Install
+
+`win-setup-core.ps1` ruft am Ende `Invoke-AgentboxMcpSetupPrompt` auf:
+- `mcp_servers` schon befuellt -> stumm, User wird nicht beim Rerun
+  genervt
+- Leer -> "Moechtest du jetzt MCP einrichten? [1] KiCad / [2] spaeter"
+- Bei [1]: `setup-kicad-mcp.ps1` direkt inline (admin bereits da)
+
+### 3. MCP-Menue in agentbox
+
+`wsl-ai-start.sh` bekommt einen neuen Untermenuepunkt:
+
+  [c] Konfiguration
+    [4] MCP-Server verwalten
+      [1] KiCad 10 MCP einrichten (Wizard)
+      [2] Custom MCP hinzufuegen (command/args/env manuell)
+      [3] MCP entfernen
+      [4] Dispatcher neu laden
+
+- Liste zeigt Heartbeat-Alter pro MCP ("ok (3s)", "stale", "tot") und
+  Tier ("Import"/"Project") -- User sieht sofort was laeuft und was
+  nicht.
+- [1] ruft setup-kicad-mcp.ps1 via wslpath-Konvertierung +
+  powershell.exe-Interop (aus agentbox-host reachable, in Sandbox
+  nicht -- aber Menue ist auch nur in Host-Session relevant).
+- [2] Custom: zeilenweise Prompts fuer id/command/args/env/cwd,
+  python3-basiertes JSON-Merge in config.json, Backup vor Write.
+- [3] Remove: Nummer-Liste, python3-basiertes idempotent Remove.
+- [4] Reload: Stop-/Start-ScheduledTask via powershell.exe-Interop.
+
+User muss nie mehr in config.json editieren. setup-kicad-mcp.ps1
+bleibt als Automation/CI-Weg mit allen Parametern.
+
+### Geaendert
+
+- `setup-kicad-mcp.ps1` -- KiCad-Python-Detection zuerst, pcbnew-
+  Import-Check, Fallback-Policy fuer System-Python mit Warnung
+- `wsl-ai-start.sh` -- neue Funktionen `_mcp_menu`, `_mcp_show_list`,
+  `_mcp_heartbeat_status`, `_mcp_runtime_root_windows`,
+  `_mcp_reload_dispatcher`, `_mcp_setup_kicad`, `_mcp_add_custom`,
+  `_mcp_remove_entry`; `[4]` im Config-Menue
+- `win-setup-core.ps1` -- `Invoke-AgentboxMcpSetupPrompt` nach beiden
+  Install-Pfaden, idempotent (skippt wenn MCPs schon konfiguriert)
+- `README.md` + `docs/README.de.md` -- Menue als Primary-Pfad,
+  Manual-Config als "advanced", Script als Automation-Alternative
+
 ## [2.4.1] - 2026-04-19
 
 **MCP: Standard-Import + Zero-Admin-Reload.**

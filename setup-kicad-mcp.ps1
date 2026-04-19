@@ -82,39 +82,51 @@ Write-Host " agentbox <- KiCad 10 MCP Setup" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 # --- 1. Python-Pfad bestimmen ---
-Write-Step "1/7 Python auf Windows-Host suchen"
+Write-Step "1/7 Python fuer KiCad_MCP bestimmen"
+
+# WICHTIG: KiCad_MCP braucht KiCad's EIGENES Python (mit pcbnew-Modul).
+# System-Python (winget/python.org) hat kein pcbnew -> Crashes beim
+# tools/call auf PCB-Analyse. Deshalb: in dieser Reihenfolge suchen --
+# (1) KiCad-Python, (2) System-Python nur als Fallback mit Warnung.
 
 if (-not $PythonPath) {
-    $cands = @()
-    try {
-        $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
-        if ($cmd) { $cands += $cmd.Source }
-    } catch { }
-    try {
-        $cmd = Get-Command py.exe -ErrorAction SilentlyContinue
-        if ($cmd) {
-            $out = & py -3 -c "import sys; print(sys.executable)" 2>$null
-            if ($out) { $cands += $out.Trim() }
-        }
-    } catch { }
-    $cands = $cands | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
-    if ($cands.Count -eq 0) {
-        Write-Warn "Keine python.exe auf PATH gefunden."
-        $PythonPath = Read-RequiredPath -Prompt "Absoluter Pfad zu python.exe (3.10+)" -MustExist
-    } elseif ($cands.Count -eq 1) {
-        $PythonPath = $cands[0]
+    $kicadPythonCands = @(
+        "C:\Program Files\KiCad\10.0\bin\python.exe",
+        "C:\Program Files (x86)\KiCad\10.0\bin\python.exe",
+        "C:\Program Files\KiCad\9.0\bin\python.exe",
+        "C:\Program Files (x86)\KiCad\9.0\bin\python.exe"
+    )
+    foreach ($c in $kicadPythonCands) {
+        if (Test-Path -LiteralPath $c) { $PythonPath = $c; break }
+    }
+
+    if ($PythonPath) {
+        Write-Ok "KiCad-Python gefunden: $PythonPath"
     } else {
-        Write-Info "Mehrere Python-Interpreter gefunden:"
-        for ($i = 0; $i -lt $cands.Count; $i++) {
-            Write-Info "  [$($i+1)] $($cands[$i])"
+        Write-Warn "KiCad-Python nicht in Standard-Pfaden gefunden."
+        Write-Info "KiCad_MCP braucht das mitgelieferte KiCad-Python (fuer pcbnew-Modul)."
+        Write-Info "System-Python funktioniert NUR wenn pcbnew separat installiert ist -- meistens nicht der Fall."
+
+        $systemCands = @()
+        try {
+            $cmd = Get-Command python.exe -ErrorAction SilentlyContinue
+            if ($cmd) { $systemCands += $cmd.Source }
+        } catch { }
+        $systemCands = $systemCands | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+
+        if ($systemCands.Count -gt 0) {
+            Write-Warn "Fallback: System-Python als Kandidat verfuegbar: $($systemCands[0])"
+            Write-Warn "Wenn du den nutzt, muss pcbnew manuell in diese Environment installiert sein."
+            if (-not $NonInteractive) {
+                $yn = Read-Host "Trotzdem System-Python nutzen? [j/N]"
+                if ($yn -match '^[jJyY]') {
+                    $PythonPath = $systemCands[0]
+                }
+            }
         }
-        if ($NonInteractive) { $PythonPath = $cands[0] }
-        else {
-            $pick = Read-Host "Auswahl [1]"
-            if ([string]::IsNullOrWhiteSpace($pick)) { $pick = "1" }
-            $idx = [int]$pick - 1
-            if ($idx -lt 0 -or $idx -ge $cands.Count) { $idx = 0 }
-            $PythonPath = $cands[$idx]
+
+        if (-not $PythonPath) {
+            $PythonPath = Read-RequiredPath -Prompt "Pfad zu python.exe (KiCad's Bin-Ordner ist am sichersten)" -MustExist
         }
     }
 }
@@ -135,6 +147,19 @@ try {
 } catch {
     Write-Err "python --version fehlgeschlagen: $($_.Exception.Message)"
     exit 1
+}
+
+# pcbnew-Import pruefen (harter Check fuer KiCad-Python)
+try {
+    $pcbnewCheck = & $PythonPath -c "import pcbnew; print('ok')" 2>&1
+    if ($pcbnewCheck -match "^ok$") {
+        Write-Ok "pcbnew-Modul vorhanden (KiCad-Python bestaetigt)."
+    } else {
+        Write-Warn "pcbnew nicht importierbar: $pcbnewCheck"
+        Write-Warn "KiCad_MCP-Tools fuer PCB-Analyse werden crashen. Erwartet ist KiCad-eigenes Python."
+    }
+} catch {
+    Write-Warn "pcbnew-Check fehlgeschlagen: $($_.Exception.Message)"
 }
 
 # --- 2. KiCad 10 CLI-Pfad ---

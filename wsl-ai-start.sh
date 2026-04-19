@@ -1507,6 +1507,7 @@ _config_menu() {
         echo "  [1] Agents aktivieren/deaktivieren"
         echo "  [2] Projekte verstecken/einblenden"
         echo "  [3] Benchmark ausfuehren"
+        echo "  [4] MCP-Server verwalten"
         echo "  [q] Zurueck"
         echo ""
         read -r -p "Auswahl: " _cfg_choice
@@ -1514,6 +1515,7 @@ _config_menu() {
             1) _toggle_agents_menu ;;
             2) _toggle_projects_menu ;;
             3) _run_benchmark_menu ;;
+            4) _mcp_menu ;;
             q|Q|"") return ;;
             *) echo "Ungueltige Auswahl." ;;
         esac
@@ -1593,6 +1595,311 @@ _run_benchmark_menu() {
     echo "                1002 = erledigt, 1003 = Fehler)"
     echo ""
     read -r -p "[Enter] zurueck ins Konfigurations-Menu..." _
+}
+
+# MCP-Server-Verwaltung. Lebt hier statt in config.json-Handedits --
+# User sollen nie in die JSON muessen. Das Menue bedient den gesamten
+# Lifecycle: Liste + Status, neuen hinzufuegen (KiCad-Wizard + generisch),
+# entfernen, dispatcher neu laden.
+_mcp_runtime_root_windows() {
+    # Gibt den Windows-Pfad zu %LOCALAPPDATA%\agentbox\mcp-runtime zurueck,
+    # oder leer wenn powershell.exe nicht erreichbar.
+    if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -NonInteractive -Command \
+            '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Write-Output "$env:LOCALAPPDATA\agentbox\mcp-runtime"' \
+            2>/dev/null | tr -d '\r\n' | tr -d '\000' || true
+    fi
+}
+
+_mcp_list_entries() {
+    # Gibt MCPs aus config.json aus: Format "id|tier|agents_csv".
+    if declare -F cfg_get_mcp_servers >/dev/null 2>&1; then
+        cfg_get_mcp_servers
+    fi
+}
+
+_mcp_heartbeat_status() {
+    local _id="$1"
+    local _runtime_win
+    _runtime_win=$(_mcp_runtime_root_windows)
+    [ -z "$_runtime_win" ] && { echo "?"; return; }
+    local _runtime_linux
+    _runtime_linux=$(wslpath -u "$_runtime_win" 2>/dev/null)
+    [ -z "$_runtime_linux" ] && { echo "?"; return; }
+    local _hb="$_runtime_linux/$_id/daemon.heartbeat"
+    if [ ! -f "$_hb" ]; then
+        echo "tot"
+        return
+    fi
+    local _mtime _now _age
+    _mtime=$(stat -c %Y "$_hb" 2>/dev/null)
+    _now=$(date +%s)
+    if [ -z "$_mtime" ]; then echo "?"; return; fi
+    _age=$(( _now - _mtime ))
+    if [ "$_age" -lt 30 ]; then
+        echo "ok (${_age}s)"
+    elif [ "$_age" -lt 120 ]; then
+        echo "stale (${_age}s)"
+    else
+        echo "tot (${_age}s)"
+    fi
+}
+
+_mcp_reload_dispatcher() {
+    if ! command -v powershell.exe >/dev/null 2>&1; then
+        log_error "powershell.exe nicht erreichbar."
+        return 1
+    fi
+    log_info "Stoppe agentbox-mcp-dispatcher..."
+    powershell.exe -NoProfile -Command \
+        "try { Stop-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop } catch { }" \
+        2>/dev/null | tr -d '\r' >/dev/null
+    sleep 1
+    log_info "Starte agentbox-mcp-dispatcher..."
+    local _out
+    _out=$(powershell.exe -NoProfile -Command \
+        "try { Start-ScheduledTask -TaskName 'agentbox-mcp-dispatcher' -ErrorAction Stop; Write-Output 'started' } catch { Write-Output \"ERROR: \$(\$_.Exception.Message)\" }" \
+        2>/dev/null | tr -d '\r')
+    if echo "$_out" | grep -q "^ERROR:"; then
+        log_error "Dispatcher-Start fehlgeschlagen: $_out"
+        echo "  Scheduled Task evtl. nicht registriert -> install.ps1 als Admin rerunnen."
+        return 1
+    fi
+    log_ok "Dispatcher neu geladen."
+    return 0
+}
+
+_mcp_setup_kicad() {
+    # Interaktives KiCad-Setup ueber den geteilten Wizard. Wir rufen
+    # setup-kicad-mcp.ps1 via powershell.exe-Interop. Das Script lebt
+    # in _control/setup-kicad-mcp.ps1.
+    local _script="$CONTROL_DIR/setup-kicad-mcp.ps1"
+    if [ ! -f "$_script" ]; then
+        log_error "setup-kicad-mcp.ps1 fehlt: $_script"
+        echo "  git pull in $CONTROL_DIR sollte das Script holen."
+        return 1
+    fi
+    if ! command -v powershell.exe >/dev/null 2>&1; then
+        log_error "powershell.exe nicht erreichbar -- MCP-Menu nur aus agentbox-host (nicht aus Sandbox)."
+        return 1
+    fi
+    local _win_script
+    _win_script=$(wslpath -w "$_script" 2>/dev/null)
+    if [ -z "$_win_script" ]; then
+        log_error "wslpath-Konvertierung von $_script fehlgeschlagen."
+        return 1
+    fi
+    echo ""
+    log_info "Starte KiCad-MCP-Wizard (Windows-PowerShell uebernimmt)..."
+    echo ""
+    # -Wait wartet bis PS-Fenster fertig ist. Keine -Verb RunAs -- kein
+    # Admin noetig wenn der dispatcher-Task schon existiert (Default seit 2.4.1).
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$_win_script"
+    echo ""
+    log_info "Wizard zurueck -- MCP-Liste siehst du gleich."
+    read -r -p "[Enter] zurueck ins MCP-Menu..." _
+}
+
+_mcp_add_custom() {
+    # Prompt-basiertes Custom-MCP-Add. Schreibt nach config.json via
+    # python3 (Smart-Merge, behaelt andere mcp_servers-Eintraege).
+    echo ""
+    echo -e "${CYAN}--- Custom MCP hinzufuegen ---${NC}"
+    echo "Entspricht dem Claude-Desktop/Cursor-Config-Format."
+    echo ""
+    read -r -p "  MCP-ID (z.B. 'github', 'memory', 'filesystem'): " _id
+    if [ -z "$_id" ]; then
+        echo "  Abgebrochen (leere ID)."
+        return
+    fi
+    read -r -p "  command (z.B. 'python', 'node', 'npx'): " _cmd
+    if [ -z "$_cmd" ]; then
+        echo "  Abgebrochen (leerer command)."
+        return
+    fi
+    echo "  args: ein Argument pro Zeile, leere Zeile = fertig."
+    echo "        Beispiel fuer 'npx -y @modelcontextprotocol/server-github':"
+    echo "          -y"
+    echo "          @modelcontextprotocol/server-github"
+    local _args_arr=()
+    local _i=1
+    while true; do
+        read -r -p "    arg[$_i]: " _a
+        [ -z "$_a" ] && break
+        _args_arr+=("$_a")
+        _i=$((_i+1))
+    done
+    echo "  env-Vars: key=value pro Zeile, leere Zeile = fertig."
+    echo "        Werte mit = drin werden korrekt geparst (alles nach erstem = ist value)."
+    local _env_lines=()
+    while true; do
+        read -r -p "    env: " _e
+        [ -z "$_e" ] && break
+        _env_lines+=("$_e")
+    done
+    read -r -p "  cwd (optional, Windows-Pfad): " _cwd
+
+    # Python-Script zum Mergen
+    local _args_json="[]"
+    if [ ${#_args_arr[@]} -gt 0 ]; then
+        _args_json=$(python3 -c "
+import json, sys
+print(json.dumps(sys.argv[1:]))
+" "${_args_arr[@]}")
+    fi
+    local _env_json="{}"
+    if [ ${#_env_lines[@]} -gt 0 ]; then
+        _env_json=$(python3 -c "
+import json, sys
+out = {}
+for line in sys.argv[1:]:
+    if '=' in line:
+        k, v = line.split('=', 1)
+        out[k.strip()] = v
+print(json.dumps(out))
+" "${_env_lines[@]}")
+    fi
+
+    python3 - "$AGENTBOX_CONFIG" "$_id" "$_cmd" "$_args_json" "$_env_json" "$_cwd" << 'PYEOF'
+import json, sys, os, shutil, time
+path, mid, cmd, args_json, env_json, cwd = sys.argv[1:7]
+
+with open(path, encoding='utf-8') as f:
+    data = json.load(f)
+
+servers = data.get('mcp_servers')
+if not isinstance(servers, list):
+    servers = []
+    data['mcp_servers'] = servers
+
+# Existing mit gleicher id rauswerfen
+servers[:] = [s for s in servers if not (isinstance(s, dict) and s.get('id') == mid)]
+
+entry = {'id': mid, 'command': cmd}
+args = json.loads(args_json)
+if args:
+    entry['args'] = args
+env = json.loads(env_json)
+if env:
+    entry['env'] = env
+if cwd:
+    entry['cwd'] = cwd
+
+servers.append(entry)
+
+# Backup + write
+bak = path + '.backup.' + time.strftime('%Y%m%d_%H%M%S')
+shutil.copy2(path, bak)
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+print(f'[OK] {mid} hinzugefuegt. Backup: {bak}')
+PYEOF
+
+    echo ""
+    read -r -p "Dispatcher jetzt neu laden? [J/n] " _reload
+    if [ -z "$_reload" ] || [[ "$_reload" =~ ^[JjYy] ]]; then
+        _mcp_reload_dispatcher
+    fi
+    read -r -p "[Enter] zurueck ins MCP-Menu..." _
+}
+
+_mcp_remove_entry() {
+    echo ""
+    echo -e "${CYAN}--- MCP entfernen ---${NC}"
+    local _ids=()
+    while IFS='|' read -r _id _tier _agents; do
+        [ -z "$_id" ] && continue
+        _ids+=("$_id")
+    done < <(_mcp_list_entries)
+
+    if [ ${#_ids[@]} -eq 0 ]; then
+        echo "Keine MCPs in config.json."
+        read -r -p "[Enter]..." _
+        return
+    fi
+
+    for i in "${!_ids[@]}"; do
+        echo "  [$((i+1))] ${_ids[$i]}"
+    done
+    echo "  [q] Abbrechen"
+    echo ""
+    read -r -p "Nummer zum Entfernen: " _pick
+    [[ "$_pick" =~ ^[qQ]$ ]] && return
+    [[ "$_pick" =~ ^[0-9]+$ ]] || return
+    [ "$_pick" -ge 1 ] 2>/dev/null || return
+    [ "$_pick" -le ${#_ids[@]} ] 2>/dev/null || return
+    local _target="${_ids[$((_pick-1))]}"
+
+    python3 - "$AGENTBOX_CONFIG" "$_target" << 'PYEOF'
+import json, sys, shutil, time
+path, tid = sys.argv[1], sys.argv[2]
+with open(path, encoding='utf-8') as f:
+    data = json.load(f)
+servers = data.get('mcp_servers', [])
+before = len(servers)
+servers[:] = [s for s in servers if not (isinstance(s, dict) and s.get('id') == tid)]
+data['mcp_servers'] = servers
+bak = path + '.backup.' + time.strftime('%Y%m%d_%H%M%S')
+shutil.copy2(path, bak)
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+print(f'[OK] {tid} entfernt ({before} -> {len(servers)}). Backup: {bak}')
+PYEOF
+    echo ""
+    read -r -p "Dispatcher jetzt neu laden? [J/n] " _reload
+    if [ -z "$_reload" ] || [[ "$_reload" =~ ^[JjYy] ]]; then
+        _mcp_reload_dispatcher
+    fi
+    read -r -p "[Enter] zurueck ins MCP-Menu..." _
+}
+
+_mcp_show_list() {
+    echo ""
+    echo -e "${CYAN}--- MCP-Server ---${NC}"
+    local _any=false
+    while IFS='|' read -r _id _tier _agents; do
+        [ -z "$_id" ] && continue
+        _any=true
+        local _tier_label
+        case "$_tier" in
+            1) _tier_label="Import" ;;
+            2) _tier_label="Project" ;;
+            *) _tier_label="?" ;;
+        esac
+        local _status
+        _status=$(_mcp_heartbeat_status "$_id")
+        local _agents_disp="${_agents:-alle}"
+        printf "  %-20s  %-8s  heartbeat=%-18s  agents=%s\n" \
+            "$_id" "[$_tier_label]" "$_status" "$_agents_disp"
+    done < <(_mcp_list_entries)
+
+    if [ "$_any" = false ]; then
+        echo "  (keine MCP-Server konfiguriert)"
+    fi
+    echo ""
+}
+
+_mcp_menu() {
+    while true; do
+        _mcp_show_list
+        echo "  [1] KiCad 10 MCP einrichten (Wizard)"
+        echo "  [2] Custom MCP hinzufuegen (command/args/env manuell)"
+        echo "  [3] MCP entfernen"
+        echo "  [4] Dispatcher neu laden"
+        echo "  [q] Zurueck"
+        echo ""
+        read -r -p "Auswahl: " _mcp_choice
+        case "$_mcp_choice" in
+            1) _mcp_setup_kicad ;;
+            2) _mcp_add_custom ;;
+            3) _mcp_remove_entry ;;
+            4) _mcp_reload_dispatcher; read -r -p "[Enter]..." _ ;;
+            q|Q|"") return ;;
+            *) echo "Ungueltige Auswahl." ;;
+        esac
+    done
 }
 
 _toggle_agents_menu() {
