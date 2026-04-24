@@ -544,7 +544,23 @@ if [ "$_auto_update" = "true" ]; then
             fi
 
             if [ "$_do_update" = true ]; then
-                echo -e "         ${CYAN}Aktualisiere...${NC}"
+                # Animierter Dot-Spinner statt statischer "Aktualisiere..."-
+                # Zeile. git pull / zip-Download kann 30-120s stumm laufen;
+                # vorher sah der User nur eine tote Zeile und dachte der
+                # Start haengt (Issue #33).
+                (
+                    _phase=0
+                    while :; do
+                        _phase=$(( (_phase % 3) + 1 ))
+                        _dots=""
+                        _i=0
+                        while [ "$_i" -lt "$_phase" ]; do _dots="$_dots ."; _i=$((_i+1)); done
+                        # \r + ANSI clear-to-eol -> in-place update statt neue Zeilen.
+                        printf "\r         ${CYAN}[update%s]${NC} Aktualisiere agentbox...\033[K" "$_dots"
+                        sleep 1
+                    done
+                ) &
+                _spinner_pid=$!
                 _update_ok=false
 
                 # Methode 1: git pull (wenn git-Repo vorhanden)
@@ -588,6 +604,12 @@ with zipfile.ZipFile('$_tmp_zip') as z:
                     fi
                     rm -rf "$_tmp_zip" "$_tmp_dir" 2>/dev/null
                 fi
+
+                # Spinner beenden + Progress-Zeile ueberschreiben, bevor
+                # die finale Status-Zeile folgt.
+                kill "$_spinner_pid" 2>/dev/null || true
+                wait "$_spinner_pid" 2>/dev/null || true
+                printf "\r\033[K"
 
                 if [ "$_update_ok" = true ]; then
                     echo -e "         ${GREEN}[OK] Update auf Version $_remote_version erfolgreich.${NC}"

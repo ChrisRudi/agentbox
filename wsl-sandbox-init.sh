@@ -837,12 +837,21 @@ _run_agent_update() {
     #     liegt, kein Registry-Roundtrip mehr. Faellt auf Netz zurueck wenn
     #     der Cache kalt ist. Macht warme Updates near-instant.
     #   - NPM_CONFIG_AUDIT/FUND/PROGRESS=false: spart 5-30s pro Run.
-    #   - Heartbeat-Subshell: alle 15s ein Fortschritts-Ping.
+    #   - Heartbeat-Subshell: animierter Dot-Spinner, der in-place alle 1s
+    #     die Zeile aktualisiert (Issue #33). Vorher 15s-Intervall mit neuer
+    #     Zeile pro Tick -- User sah nichts fuer die ersten 14s und dachte
+    #     der Start haengt.
     (
-        _hb_n=0
-        while sleep 15; do
-            _hb_n=$((_hb_n+1))
-            echo "    ... noch beim Aktualisieren ($((_hb_n*15))s)"
+        _phase=0
+        _elapsed=0
+        while sleep 1; do
+            _phase=$(( (_phase % 3) + 1 ))
+            _elapsed=$((_elapsed + 1))
+            _dots=""
+            _i=0
+            while [ "$_i" -lt "$_phase" ]; do _dots="$_dots ."; _i=$((_i+1)); done
+            printf "\r    ${CYAN:-}[update%s]${NC:-} %s wird aktualisiert (%ss)\033[K" \
+                "$_dots" "$_cmd" "$_elapsed"
         done
     ) &
     _hb_pid=$!
@@ -858,6 +867,9 @@ _run_agent_update() {
 
     kill "$_hb_pid" 2>/dev/null || true
     wait "$_hb_pid" 2>/dev/null || true
+    # Progress-Zeile ueberschreiben, damit das folgende log_ok/log_warn
+    # nicht hinter dem Spinner-Rest landet.
+    printf "\r\033[K"
 
     if [ "$_update_rc" = "0" ]; then
         log_ok "$_cmd aktualisiert auf $_remote"

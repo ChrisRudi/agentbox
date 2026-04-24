@@ -5,6 +5,37 @@ All notable changes to agentbox are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-04-24
+
+### Fixed — `[OK]`-Haenger waehrend Updates (Issue #33)
+
+User-Report: nach dem Start blieb die letzte sichtbare Zeile minutenlang
+ein gruenes `[OK] ...`, obwohl im Hintergrund ein Update lief. Sah aus
+wie ein toter Prozess.
+
+Zwei stumme Long-Running-Phasen waren schuld:
+
+1. **agentbox self-update** (`wsl-ai-start.sh:547`) druckte einmalig
+   "Aktualisiere..." und dann 30-120s stumm `git pull` / `curl | unzip`.
+2. **agent self-update** (`wsl-sandbox-init.sh:841-848`) hatte zwar
+   einen Heartbeat, aber mit **15s-Intervall**. In den ersten 14s sah
+   der User nichts; danach stapelten sich `... noch beim Aktualisieren
+   (15s/30s/45s)`-Zeilen als separate Output-Zeilen.
+
+Beide durch animierten In-Place-Spinner ersetzt:
+
+```
+         [update . .] Aktualisiere agentbox...   <- agentbox self-update
+    [update . . .] claude wird aktualisiert (7s) <- agent self-update
+```
+
+Dot-Count zyklisch 1->2->3->1, Zeile wird per `\r` + `\033[K` jede
+Sekunde ueberschrieben. Nach Abschluss wird die Spinner-Zeile geloescht
+und die finale `[OK] ...`-Zeile drueber gedruckt.
+
+**Deployment:** reines Script-Update (wsl-ai-start.sh, wsl-sandbox-init.
+sh), kein Admin-Rerun noetig (`.update_class=minor`).
+
 ## [2.3.0] - 2026-04-18
 
 **Performance + Diagnose Milestone.**
