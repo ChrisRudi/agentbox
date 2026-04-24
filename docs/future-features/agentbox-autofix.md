@@ -282,6 +282,159 @@ Template-Install: `gitleaks` via apt/release-binary im
 `win-setup-core.ps1`-Agent-Install-Block. `template_schema`-Bump
 noetig (auf `4`).
 
+### 4.12 `/multifix`-Trigger + Topic-Namespace
+
+Autofix laeuft nicht nur als Host-CLI (`agentbox-autofix <projekt>`), sondern
+auch als **In-Agent-Slash-Command** `/multifix`. Jeder aktivierte Agent
+(Claude, Codex, Gemini, Aider, Goose) bekommt ueber seinen System-Prompt-
+Injection-Pfad den Hinweis, dass `/multifix` existiert und an das Host-Skript
+`agentbox-autofix-trigger` delegiert.
+
+#### 4.12.1 Trigger-Flow
+
+Analog zum bestehenden Benchmark-Pattern (Event 2000):
+
+1. User tippt `/multifix [args]` in irgendeinem Agenten.
+2. Agent ruft `agentbox-autofix-trigger "<raw-args>"` via Bash.
+3. Trigger-Skript parsed Args, schreibt Task-JSON nach
+   `demo-benchmark/_tasks/` (oder neuer `_autofix/`-Subordner), emittiert
+   Windows-Event **2001** (Source `AIProjects`).
+4. `agentbox-task-runner` Scheduled-Task hat Event 2001 als Trigger,
+   spawnt **separate** agentbox-Sandbox auf einem `rsync`-Snapshot des
+   aktuellen `/workspace/src`. Die laufende Session bleibt ungestoert.
+5. Ergebnis landet unter `%LOCALAPPDATA%\agentbox\autofix\<projekt>\<ts>\`
+   wie in 4.4 definiert. User bekommt Toast-Notification bei Abschluss.
+
+#### 4.12.2 Arg-Grammatik
+
+```text
+/multifix [/topic...] [path...] [--flag...] [brief-text...]
+
+Token-Klassifizierung (in dieser Reihenfolge):
+  Startet mit '/'          -> Topic-Tag (gegen autofix_topics.json validiert)
+  Existiert als FS-Pfad    -> scope.paths
+  Matcht Symbol via rg     -> scope.symbols
+  Startet mit '--'         -> Flag
+  Rest                     -> brief (konkateniert)
+```
+
+Beispiele:
+
+| Eingabe | Parsed |
+|---|---|
+| `/multifix src/auth` | `paths=[src/auth]` |
+| `/multifix fix SQL injection risk im login-endpoint` | `brief="fix SQL injection risk im login-endpoint"` |
+| `/multifix validateEmail` | `symbols=[validateEmail]` |
+| `/multifix --focus performance` | `topics=[perf]` (Alias-Resolution) |
+| `/multifix /security /sql` | `topics=[security, sql]` |
+| `/multifix /security /sql src/auth login-endpoint` | `topics=[security, sql], paths=[src/auth], brief="login-endpoint"` |
+
+#### 4.12.3 Topic-Namespace in `autofix_topics.json`
+
+Die Topic-Definitionen leben **nicht** hardcoded in Scripts, sondern in
+`autofix_topics.json` im Repo-Root — parallel zu `config.json` und
+`type_defaults.json`. Zweck: editierbar ohne Script-Aenderung, alle Prompts
+transparent.
+
+**Konvention:**
+- Wert beginnt mit `/` -> **nativer Slash-Command** des Ziel-Agenten wird
+  aufgerufen (Claude bekommt `/security-review` vorgestellt).
+- Wert ist Text -> **Prompt-Injection** als System-Prompt-Prefix.
+- Fehlt `agent_overrides[<agent>]` -> Topic-`default_prompt` wird benutzt.
+
+Schema (Kurzform):
+
+```jsonc
+{
+  "version": 1,
+  "aliases": { "sec": "security", "performance": "perf", ... },
+  "topics": {
+    "security": {
+      "description": "...",
+      "default_prompt": "Focus: security vulnerabilities. Look for ...",
+      "agent_overrides": {
+        "claude": "/security-review"
+      },
+      "hint": null
+    },
+    "sql":    { "default_prompt": "Focus: SQL. ...", "agent_overrides": {} },
+    "perf":   { "default_prompt": "Focus: performance. ...", "agent_overrides": {} },
+    "refactor": { ..., "hint": "Requires --allow-refactor." }
+    // weitere Topics: test, lint, typing, errors, deps, build, docs, arch,
+    //                 accessibility, i18n
+  }
+}
+```
+
+Aktueller Topic-Bestand (v1): **security, sql, perf, test, lint, typing,
+errors, deps, build, docs, refactor, arch, accessibility, i18n**.
+
+Native-Command-Hooks verteilen sich (derived from 2026-04-24 Slash-Command-
+Inventur ueber alle 5 Agenten):
+
+| Topic | Native via |
+|---|---|
+| security | Claude `/security-review` |
+| test | Aider `/test` |
+| lint | Aider `/lint` |
+| refactor | Claude `/simplify`, Aider `/code` |
+| arch | Aider `/architect` |
+| docs | Claude/Codex/Gemini `/init` (nur First-Run) |
+| sql, perf, typing, errors, deps, build, accessibility, i18n | **keine nativen** — reine Prompt-Injection |
+
+Fuer `sql`/`perf`/`deps`/`build` ist die Qualitaet der Findings also direkt
+an der Prompt-Qualitaet in der JSON-Datei festgemacht. Bewusst: diese Datei
+ist der Wartungspunkt fuer Topic-Output-Qualitaet, nicht der Reviewer-Code.
+
+#### 4.12.4 Komposition: Multi-Topic = AND
+
+Mehrere Topics im Aufruf wirken **narrowing**:
+
+- `/multifix /security` -> alle Security-Findings.
+- `/multifix /security /sql` -> nur Findings, die **beide** Tags tragen
+  (SQL-spezifische Security-Issues).
+- `/multifix /security /perf` -> Schnittmenge (selten, aber valide:
+  Timing-Attacks, DoS-Vektoren).
+
+Begruendung: User tippt zwei Topics → will Fokus schaerfen, nicht
+verbreitern. Wer Union will, laeuft zweimal.
+
+Finding-Tagging: jedes Reviewer-Finding bekommt vom Reviewer
+`topic_tags: ["security", "sql"]` zugewiesen. Die AND-Filterung laeuft
+danach im FixAgent-Gate.
+
+#### 4.12.5 Reader in `lib/config.sh`
+
+Per CLAUDE.md-Regel kein ad-hoc JSON-Parsing an Callsites. Neuer Reader:
+
+```bash
+cfg_autofix_topic_reviewer <topic> <agent>
+#   -> echoed string (ggf. "/native-cmd" oder Prompt-Text)
+#   -> Exit 1 wenn Topic unbekannt
+cfg_autofix_topic_exists <topic>
+cfg_autofix_resolve_alias <input>    # "performance" -> "perf"
+cfg_autofix_list_topics
+```
+
+Aufrufer (Trigger-Skript, FixAgent-Orchestrator) entscheidet per
+`[[ "$value" == /* ]]` ob Native-Command-Aufruf oder Prompt-Prefix.
+
+#### 4.12.6 Per-Agent-Injection fuer `/multifix` selbst
+
+Das `/multifix`-Kommando muss pro Agent unterschiedlich "installiert"
+werden, weil jeder Agent einen anderen Command-Mechanismus hat:
+
+| Agent | Installation |
+|---|---|
+| Claude Code | `~/.claude/commands/multifix.md` (Slash-Command-File) |
+| Aider | Custom command via aider-Config (native `/commands`) |
+| Codex, Gemini, Goose | System-Prompt-Hinweis in der CLAUDE-Aequivalent-Memory-Datei ("wenn User `/multifix ...` sagt, rufe `agentbox-autofix-trigger '<args>'` via Bash auf") |
+
+Die Injection-Dateien werden bei Template-Build in `win-setup-core.ps1`
+erzeugt, aus einer Source-Datei `tools/multifix-agent-snippets/<agent>.md`.
+Dadurch bleibt auch das Agent-Onboarding fuer `/multifix` in einer
+reviewbaren Quelle.
+
 ---
 
 ## 5. Config
@@ -388,14 +541,20 @@ Neue Sektion in `config.json`:
 
 ## 9. Naechste Schritte (wenn dieses Doc abgenommen ist)
 
-1. `config.json` um `autofix`-Sektion erweitern + `lib/config.sh`-Wrapper.
-2. Neuer Bash-Entry `wsl-autofix.sh` analog `wsl-ai-start.sh`.
-3. Powershell-Entry `agentbox-autofix.ps1` (Installer registriert als Shim
+1. `config.json` um `autofix`-Sektion erweitern + `lib/config.sh`-Wrapper
+   (inkl. Topic-Reader aus 4.12.5).
+2. `autofix_topics.json` ist bereits angelegt (v1, 14 Topics); User-Review
+   der Default-Prompts + Feinjustierung noch offen.
+3. Neuer Bash-Entry `wsl-autofix.sh` analog `wsl-ai-start.sh`.
+4. Host-Trigger-Skript `agentbox-autofix-trigger` fuer den `/multifix`-
+   Slash-Command-Flow (Arg-Parsing, Task-JSON, Event 2001).
+5. Per-Agent-Injection-Snippets unter `tools/multifix-agent-snippets/`
+   (claude.md, aider.md, codex.md, gemini.md, goose.md).
+6. Powershell-Entry `agentbox-autofix.ps1` (Installer registriert als Shim
    unter `agentbox-autofix.cmd` im PATH, analog `agentbox`).
-4. Reviewer-/FixAgent-/Runner-Orchestrierung als `lib/autofix/*.sh`.
-5. Export-Schreiber mit Layout-Contract aus 4.4.
-6. Integration-Test im Benchmark-Demo-Projekt (`tools/` -> `demo-benchmark/`)
+7. Reviewer-/FixAgent-/Runner-Orchestrierung als `lib/autofix/*.sh`.
+8. Export-Schreiber mit Layout-Contract aus 4.4.
+9. Integration-Test im Benchmark-Demo-Projekt (`tools/` -> `demo-benchmark/`)
    mit absichtlich eingebautem trivialem Bug als Smoke-Test.
-7. CHANGELOG-Eintrag, `.update_class=minor`, ggf. `template_schema=4`
-   wenn neue apt-Pakete noetig (z.B. `git` ist schon drin — vermutlich kein
-   Bump noetig).
+10. CHANGELOG-Eintrag, `.update_class=minor`, `template_schema=4`-Bump
+    noetig wegen `gitleaks`-Install im Template.

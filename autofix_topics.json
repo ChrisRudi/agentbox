@@ -1,0 +1,144 @@
+{
+  "$comment": "agentbox autofix topic namespace. Convention: string value starting with '/' is a NATIVE slash-command invocation on the target agent. Any other string is a PROMPT-INJECTION fed as system-prompt prefix to the reviewer. Agents missing an 'agent_overrides' entry fall back to the topic's 'default_prompt'. Edit freely; the shape is the contract.",
+  "version": 1,
+
+  "aliases": {
+    "sec": "security",
+    "security-review": "security",
+    "performance": "perf",
+    "tests": "test",
+    "lints": "lint",
+    "style": "lint",
+    "types": "typing",
+    "typecheck": "typing",
+    "a11y": "accessibility",
+    "dependencies": "deps",
+    "error-handling": "errors",
+    "error": "errors",
+    "refactoring": "refactor",
+    "architecture": "arch",
+    "docstrings": "docs"
+  },
+
+  "topics": {
+    "security": {
+      "description": "Vulnerabilities: injection, auth/authz, crypto, secrets, unsafe deserialization, SSRF/CSRF/XSS.",
+      "default_prompt": "Focus: security vulnerabilities. Look for injection vectors (SQL, command, path, template, XSS), broken auth/authz, weak or misused crypto, leaked or hardcoded secrets, unsafe deserialization, SSRF, CSRF, open redirect, and improper error messages that leak stack traces or PII. Report each as a finding with type=security and a concrete suggestion. Do not flag stylistic issues.",
+      "agent_overrides": {
+        "claude": "/security-review"
+      },
+      "hint": null
+    },
+
+    "sql": {
+      "description": "SQL correctness and safety: parameterization, injection, query correctness, ORM misuse, migration safety, N+1.",
+      "default_prompt": "Focus: SQL. Look for unparameterized queries, string-concatenated SQL, ORM calls that bypass parameterization (raw(), literal string interpolation), transaction boundary errors, N+1 query patterns, missing indexes on frequent filter columns, destructive migrations without rollback, and schema drift between migrations and code. Prefer findings that can be fixed with a small, local change. Type=security for injection, type=bugfix for correctness, type=perf for N+1.",
+      "agent_overrides": {},
+      "hint": null
+    },
+
+    "perf": {
+      "description": "Performance hotspots: algorithmic complexity, memory leaks, sync-in-async, unnecessary I/O.",
+      "default_prompt": "Focus: performance. Look for accidental quadratic or worse loops over the same collection, repeated work that could be memoized, memory leaks (unbounded caches, held references, dangling listeners), blocking I/O inside async paths, synchronous file/network in hot paths, and chatty call patterns that should be batched. Prefer findings with a measurable expected impact. Do not propose micro-optimizations whose effect is a matter of style.",
+      "agent_overrides": {},
+      "hint": null
+    },
+
+    "test": {
+      "description": "Test coverage, quality, and correctness of existing tests.",
+      "default_prompt": "Focus: tests. Look for missing tests of branches that the reviewer can clearly identify as untested, weak assertions (asserting truthy instead of equality, catching without rethrowing), flaky patterns (time-based sleeps, network without mocks, shared mutable fixtures), tests that pass by accident (wrong input path), and broken tests disabled without comment. Do not propose new integration suites from scratch. Type=test.",
+      "agent_overrides": {
+        "aider": "/test"
+      },
+      "hint": null
+    },
+
+    "lint": {
+      "description": "Lint/format/unused code violations.",
+      "default_prompt": "Focus: lint, formatting, and unused code. Look for unused imports, unused variables, dead branches, inconsistent formatting that the project's configured linter/formatter would auto-fix, and missing or redundant type hints where the project uses them. Limit strictly to changes a configured formatter/linter would make. Type=style.",
+      "agent_overrides": {
+        "aider": "/lint"
+      },
+      "hint": null
+    },
+
+    "typing": {
+      "description": "Type errors, null safety, generic misuse.",
+      "default_prompt": "Focus: types. Look for genuine type errors the type checker would report, missing null/undefined guards on values that can clearly be null, unsafe casts (`as any`, `cast()`), unsound variance in generics, and Optional/None handling bugs. Type=bugfix when the unsoundness can crash; type=style when it's purely annotation hygiene.",
+      "agent_overrides": {},
+      "hint": null
+    },
+
+    "errors": {
+      "description": "Error handling: missing try/catch, swallowed exceptions, wrong error types.",
+      "default_prompt": "Focus: error handling. Look for exceptions caught and silently swallowed, over-broad catches that mask bugs, missing cleanup in failure paths (file handles, locks, connections), errors logged without propagation when propagation is required, and wrong exception types (catching base class to ignore specific ones). Do not add logging framework choices. Type=bugfix.",
+      "agent_overrides": {},
+      "hint": null
+    },
+
+    "deps": {
+      "description": "Dependency hygiene: vulnerable versions, unused deps, outdated pins.",
+      "default_prompt": "Focus: dependencies. Look for deps with known CVEs at their current pinned version, deps declared but unused, imports that pull in a different version than pinned, duplicate transitive versions causing bundle bloat, and pins that block a well-known security patch. Propose version bumps only when the bump is patch-level or explicitly a security fix. Type=security for CVEs, type=bugfix for version drift.",
+      "agent_overrides": {},
+      "hint": null
+    },
+
+    "build": {
+      "description": "Build breakage, config drift, warnings treated as errors.",
+      "default_prompt": "Focus: build. Look for build errors, warnings that the project's config treats as errors, configuration drift between build scripts and package manifests, missing files referenced by the build, and platform-specific breakage (line endings, paths, shell assumptions). Propose minimal fixes only. Type=bugfix.",
+      "agent_overrides": {},
+      "hint": null
+    },
+
+    "docs": {
+      "description": "Missing or stale API documentation and in-code docstrings.",
+      "default_prompt": "Focus: docs. Look for public APIs without docstrings, docstrings that no longer match the signature or behavior, README sections that reference removed files or commands, and missing examples for non-trivial public functions. Do not rewrite correct docs for style. Do not invent behavior; describe only what the code demonstrably does. Type=style.",
+      "agent_overrides": {
+        "claude": "/init",
+        "codex":  "/init",
+        "gemini": "/init"
+      },
+      "hint": "The /init overrides only trigger on a first-run with no existing project memory file; for incremental doc fixes the prompt path is used."
+    },
+
+    "refactor": {
+      "description": "Readability, duplication, clarity. Default-blocked unless --allow-refactor is set.",
+      "default_prompt": "Focus: refactoring for readability and deduplication. Look for duplicated logic across 2+ sites that would clearly benefit from extraction, overly long functions that can be split without changing behavior, deeply nested conditionals that an early-return cleans up, and shadowing/name-reuse that is actively confusing. Do not propose abstraction for a hypothetical second caller; at least 2 real call sites must exist today. Type=refactor.",
+      "agent_overrides": {
+        "claude": "/simplify",
+        "aider":  "/code"
+      },
+      "hint": "Requires --allow-refactor on the multifix invocation; otherwise findings are collected but not applied."
+    },
+
+    "arch": {
+      "description": "Module boundaries, circular deps, layering. Default-blocked unless --allow-refactor is set.",
+      "default_prompt": "Focus: architecture. Look for circular imports, layering violations (lower layer importing from upper), modules with unclear single responsibility that are actively causing change-amplification, and public surface leaks (internals re-exported unintentionally). Propose only the smallest boundary fix; do not redesign modules. Type=arch when the change is purely a move/rename, type=refactor when behavior risk is non-zero.",
+      "agent_overrides": {
+        "aider": "/architect"
+      },
+      "hint": "Requires --allow-refactor. Architectural findings tend to be high-impact and low-local-confidence; expect many to end up as skipped/out_of_scope."
+    },
+
+    "accessibility": {
+      "description": "Web a11y: ARIA, semantics, keyboard navigation, contrast.",
+      "default_prompt": "Focus: accessibility. Look for interactive elements without accessible names, non-semantic tags used for buttons/links, missing keyboard handlers on custom interactive components, missing or wrong ARIA roles, images without alt text, and color-only affordances. Do not propose design changes; only code-level a11y fixes. Type=bugfix.",
+      "agent_overrides": {},
+      "hint": null
+    },
+
+    "i18n": {
+      "description": "Internationalization: hardcoded strings, locale-unsafe formatting.",
+      "default_prompt": "Focus: internationalization. Look for user-facing strings hardcoded in source when the project already uses an i18n framework, date/number formatting that assumes a locale, string concatenation to build sentences (breaks translation), and timezone-unsafe date math. Only flag when the project demonstrably has i18n set up. Type=bugfix.",
+      "agent_overrides": {},
+      "hint": null
+    }
+  },
+
+  "meta": {
+    "native_agents": ["claude", "codex", "gemini", "aider", "goose"],
+    "composition_rule": "multi-topic means AND (narrowing). Findings must match every topic tag.",
+    "token_convention": "topic values starting with '/' are native commands. All other strings are prompt-injection. Unknown agents in agent_overrides are ignored.",
+    "runtime_reader": "lib/config.sh:cfg_autofix_topic_reviewer(topic, agent) resolves override-or-default and returns the string verbatim. The caller distinguishes native vs prompt by leading '/'."
+  }
+}
