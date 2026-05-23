@@ -1680,11 +1680,20 @@ SANDBOX_USER=$(cfg_get "sandbox_user" "agent")
 # Linux-Pfade (wsl.exe frisst Backslashes beim Argumentpassing).
 # `|| EXIT_CODE=$?` statt `; EXIT_CODE=$?` — sonst killt set -e den
 # Script vor Watchdog/Session-Diff/Sandbox-Cleanup (Schritte 17-19).
+# Unsafe-Mode-Marker (geheim, siehe CLAUDE.md): wenn install.ps1 mit
+# `-Unsafe` lief, existiert die Datei und sandbox-init skippt Firewall,
+# /mnt-Isolation + Host-IP-DROPs. Loeschen = Safe-Mode wiederherstellen.
+UNSAFE_MODE=0
+if [ -f "$AGENTBOX_LOCAL_ROOT/unsafe.flag" ]; then
+    UNSAFE_MODE=1
+    log_info "unsafe_mode aktiv (Firewall/Mount-Isolation aus)"
+fi
+
 EXIT_CODE=0
 wsl.exe -d "$DISTRO_NAME" -- /sandbox-init.sh \
     "$PROJECT_DIR" "$AGENT_CMD" "$CACHE_DIR" \
     "$SANDBOX_USER" "$AUTH_BASE" "$AGENT_INSTALL" \
-    "$AGENTBOX_AUTH_SPEC" || EXIT_CODE=$?
+    "$AGENTBOX_AUTH_SPEC" "$UNSAFE_MODE" || EXIT_CODE=$?
 
 # --- Watchdog beenden ---
 if [ -n "$WATCHDOG_PID" ]; then

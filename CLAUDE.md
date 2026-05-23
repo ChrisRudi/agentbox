@@ -16,6 +16,20 @@ einer ephemeren WSL2-Sandbox auf Windows. Kern-Invarianten beim Ändern von Code
 - **Sandbox-Isolation ist hart:** kein Zugriff auf `/mnt/c`, kein Host-LAN,
   Firewall default-deny (nur 443 raus + Paketquellen je nach Projekttyp). Neue
   Features dürfen das nicht aufweichen.
+  - **Ausnahme — Unsafe-Mode (hidden):** `install.ps1 -Unsafe` schreibt
+    `%LOCALAPPDATA%\agentbox\unsafe.flag`. Existiert die Datei, skippt
+    `wsl-sandbox-init.sh` bei jedem Session-Start **alle drei** Hardening-
+    Pfade: tmpfs-over-`/mnt` (Drive-Isolation), iptables/ip6tables OUTPUT+
+    INPUT default-deny inkl. Host-IP-DROP, und den Firewall-Seal-Test.
+    Zweck: MCPs wie KiCad-MCP, Filesystem-MCPs auf `/mnt/c\...` oder
+    Postgres-auf-Host-MCPs, die im normalen Sandbox-Threat-Model
+    blockiert wären. Nicht in README/CHANGELOG erwähnen — bewusste
+    Footgun-Lite. Aus: `unsafe.flag` löschen (oder install.ps1 ohne
+    `-Unsafe` re-run löscht sie NICHT — manuelles Löschen). Sichtbarkeit:
+    ein gelber `[WARN]` in der Session-Init-Ausgabe, sonst nichts.
+    Pfade in Code: `install.ps1` (Switch + Flag-Write), `wsl-ai-start.sh`
+    (Flag-Read + 8. Param), `wsl-sandbox-init.sh` (Param-Auswertung +
+    drei Skip-Branches).
 - **Distro wird bei jedem Start frisch importiert und am Ende unregistriert** —
   alles was überleben muss, geht über Bind-Mount oder `%LOCALAPPDATA%\agentbox\`.
 - **Runtime-State liegt strikt außerhalb `_control/`**, weil CONTROL_DIR

@@ -35,11 +35,18 @@ AGENT_INSTALL="${6:-}"
 # Wenn leer (aelterer wsl-ai-start.sh oder config.sh ohne python3), faellt
 # die Auth-Mount-Schleife unten auf die Legacy-Hardcode-Liste zurueck.
 AUTH_SPEC="${7:-}"
+# $8 = UNSAFE_MODE ("1" oder leer/"0"): wenn "1", werden Firewall,
+# /mnt-Isolation und Host-IP-DROPs uebersprungen. Siehe CLAUDE.md.
+UNSAFE_MODE="${8:-0}"
 
 if [ -z "$WIN_PROJECT_PATH" ]; then
     log_error "Kein Projektpfad angegeben."
-    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC]" >&2
+    echo "Verwendung: wsl-sandbox-init.sh <WIN_PROJEKT_PFAD> <AGENT_CMD> [CACHE_PFAD] [SANDBOX_USER] [AUTH_BASE] [AGENT_INSTALL] [AUTH_SPEC] [UNSAFE_MODE]" >&2
     exit 1
+fi
+
+if [ "$UNSAFE_MODE" = "1" ]; then
+    log_warn "unsafe_mode aktiv — Firewall/Mount-Isolation/Host-IP-DROPs deaktiviert."
 fi
 
 # Pfade normalisieren — akzeptiere sowohl Windows- als auch Linux-Pfade
@@ -423,15 +430,19 @@ fi
 # alle Bind-Mounts mit EIO. `umount -l` (lazy) liess Reads zwar leben,
 # aber WSL2's DrvFs-Implementation triggerte beim drained-Zustand
 # read-only auf neue writes. Overmount umgeht beide Probleme.
-echo ""
-echo "Isoliere Sandbox von Windows-Dateisystem..."
-mount -t tmpfs tmpfs_sandbox /mnt -o size=1k,mode=000,nosuid,nodev,noexec 2>/dev/null || true
-# Verifizieren
-if [ -e /mnt/c/Users ] 2>/dev/null; then
-    log_error "Windows-Laufwerke NICHT isoliert — /mnt/c/Users noch erreichbar!"
-    exit 1
+if [ "$UNSAFE_MODE" = "1" ]; then
+    log_warn "Drive-Isolation uebersprungen (unsafe_mode) — /mnt/c bleibt zugaenglich."
 else
-    log_ok "Windows-Laufwerke isoliert (tmpfs ueber /mnt)"
+    echo ""
+    echo "Isoliere Sandbox von Windows-Dateisystem..."
+    mount -t tmpfs tmpfs_sandbox /mnt -o size=1k,mode=000,nosuid,nodev,noexec 2>/dev/null || true
+    # Verifizieren
+    if [ -e /mnt/c/Users ] 2>/dev/null; then
+        log_error "Windows-Laufwerke NICHT isoliert — /mnt/c/Users noch erreichbar!"
+        exit 1
+    else
+        log_ok "Windows-Laufwerke isoliert (tmpfs ueber /mnt)"
+    fi
 fi
 
 # --- DNS-Fallback sicherstellen ---
@@ -553,6 +564,22 @@ else
 fi
 
 # --- iptables-Regeln anwenden ---
+if [ "$UNSAFE_MODE" = "1" ]; then
+    log_warn "Firewall + Host-IP-DROPs + Seal-Test uebersprungen (unsafe_mode)."
+    # Trotzdem PROJECT_TYPE setzen, weil nachfolgender Code (Agent-Update etc.)
+    # ihn evtl. referenziert.
+    PROJECT_TYPE="generic"
+    if [ -f "$WORKSPACE/project.json" ] && command -v python3 &> /dev/null; then
+        PROJECT_TYPE=$(python3 -c "
+import json
+try:
+    with open('/workspace/project.json') as f:
+        print(json.load(f).get('type', 'generic'))
+except:
+    print('generic')
+" 2>/dev/null || echo "generic")
+    fi
+else
 echo ""
 echo "Wende Firewall-Regeln an..."
 
@@ -690,6 +717,7 @@ if ! $_seal_ok; then
     exit 1
 fi
 log_ok "Firewall-Seal bestaetigt"
+fi  # Ende if [ "$UNSAFE_MODE" != "1" ] — Firewall + Seal-Test Block
 
 # --- Konnektivitaets-Test: beide Anthropic-Hosts ---
 echo ""

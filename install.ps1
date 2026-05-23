@@ -1,7 +1,16 @@
 # install.ps1 — agentbox Bootstrap (PS 5.1 kompatibel)
 # CRLF-Selbstreparatur fuer den Fall dass die Datei lokal mit LF-Zeilenenden vorliegt.
-if (-not $env:_AGENTBOX_CRLF) { $p = $MyInvocation.MyCommand.Path; if ($p -and (Test-Path -LiteralPath $p)) { $t = [IO.File]::ReadAllText($p); if (-not $t.Contains("`r")) { [IO.File]::WriteAllText($p, $t.Replace("`n", "`r`n")); $env:_AGENTBOX_CRLF = '1'; & $p; return } } }
+# `& $p @args` (statt `& $p`) reicht Script-Args durch — sonst gehen Switches
+# wie `-Unsafe` beim Re-Exec verloren.
+if (-not $env:_AGENTBOX_CRLF) { $p = $MyInvocation.MyCommand.Path; if ($p -and (Test-Path -LiteralPath $p)) { $t = [IO.File]::ReadAllText($p); if (-not $t.Contains("`r")) { [IO.File]::WriteAllText($p, $t.Replace("`n", "`r`n")); $env:_AGENTBOX_CRLF = '1'; & $p @args; return } } }
 $env:_AGENTBOX_CRLF = $null
+
+# Hidden Switch: -Unsafe deaktiviert Sandbox-Hardening (Firewall, /mnt-Isolation,
+# Host-IP-DROPs) bei Session-Start. Siehe CLAUDE.md ("Unsafe-Mode") fuer Details.
+# Manuelle args-Inspektion statt param()-Block, weil param() laut PS-Spec das
+# erste executable statement sein muss und die CRLF-Selbstreparatur darueber
+# steht.
+$_agentbox_unsafe = ($args -contains '-Unsafe') -or ($args -contains '-unsafe')
 
 $ErrorActionPreference = "Stop"
 
@@ -160,6 +169,19 @@ Write-Host ""
 Write-Host "=== agentbox Installer ===" -ForegroundColor Cyan
 Write-Host "Portable Sandboxed AI Agent Runner fuer Windows + WSL2" -ForegroundColor Gray
 Write-Host ""
+
+# Unsafe-Mode-Marker: existiert dann und nur dann, wenn der letzte
+# install.ps1-Lauf mit `-Unsafe` aufgerufen wurde. wsl-sandbox-init.sh
+# liest die Datei beim Session-Start. Loeschen = wieder Safe-Mode.
+$_unsafeFlagDir  = Join-Path $env:LOCALAPPDATA "agentbox"
+$_unsafeFlagPath = Join-Path $_unsafeFlagDir   "unsafe.flag"
+if ($_agentbox_unsafe) {
+    if (-not (Test-Path -LiteralPath $_unsafeFlagDir)) {
+        [System.IO.Directory]::CreateDirectory($_unsafeFlagDir) | Out-Null
+    }
+    [IO.File]::WriteAllText($_unsafeFlagPath, "unsafe_mode=1`r`n", (New-Object System.Text.ASCIIEncoding))
+    Write-Host "[INFO] unsafe_mode aktiviert (Firewall/Mount-Isolation aus). Marker: $_unsafeFlagPath" -ForegroundColor Yellow
+}
 
 # --- Admin-Rechte pruefen ---
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
