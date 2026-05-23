@@ -465,6 +465,13 @@ if ($once) {
         if (-not (Test-Path -LiteralPath $tasksDir)) {
             [System.IO.Directory]::CreateDirectory($tasksDir) | Out-Null
         }
+        # _tasks/ als Hidden markieren — agentbox-managed Infrastruktur,
+        # soll in Explorer/IDE-File-Trees nicht prominent auftauchen.
+        # Idempotent: vorhandenes Hidden-Flag wird respektiert.
+        try {
+            $_tasksItem = Get-Item -LiteralPath $tasksDir -Force -ErrorAction Stop
+            $_tasksItem.Attributes = $_tasksItem.Attributes -bor [System.IO.FileAttributes]::Hidden
+        } catch { }
 
         $watcher = New-Object System.IO.FileSystemWatcher
         $watcher.Path = $tasksDir

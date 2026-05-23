@@ -1206,6 +1206,13 @@ _run_benchmark_menu() {
     _ts=$(date +%s)
     local _tasks_dir="$_demo_dir/_tasks"
     mkdir -p "$_tasks_dir" 2>/dev/null || true
+    # Windows-Hidden auf _tasks/ — agentbox-managed Infrastruktur, soll
+    # nicht in Explorer/Code-Suchen prominent auftauchen.
+    local _tasks_win_path
+    _tasks_win_path=$(wslpath -w "$_tasks_dir" 2>/dev/null || echo "")
+    if [ -n "$_tasks_win_path" ] && command -v cmd.exe >/dev/null 2>&1; then
+        cmd.exe /c "attrib +H \"$_tasks_win_path\"" >/dev/null 2>&1 || true
+    fi
     local _task_file="$_tasks_dir/bench-$_ts.json"
     printf '{"project":"demo-benchmark","action":"build","timestamp":%s}\n' "$_ts" > "$_task_file"
 

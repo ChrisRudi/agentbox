@@ -225,6 +225,17 @@ _overlay_bind_ext4() {
         fi
     fi
 
+    # Windows-Hidden-Attribut auf dem DrvFs-Ordner setzen, damit der nach
+    # Session-Ende (Overlay weg, Ordner empty) nicht in Explorer auftaucht.
+    # Muss VOR dem Overmount passieren, sonst geht attrib.exe auf den
+    # ext4-Mount statt auf den darunterliegenden NTFS-Ordner. Idempotent
+    # via attrib.exe, kein Schaden wenn das Flag bereits gesetzt ist.
+    local _win_path
+    _win_path=$(wslpath -w "$_src_path" 2>/dev/null || echo "")
+    if [ -n "$_win_path" ] && command -v cmd.exe >/dev/null 2>&1; then
+        cmd.exe /c "attrib +H \"$_win_path\"" >/dev/null 2>&1 || true
+    fi
+
     if mount --bind "$_ext4_path" "$_src_path" 2>/dev/null; then
         mount -o remount,bind,rw,nosymfollow,nodev,noatime,nodiratime "$_src_path" 2>/dev/null || true
         log_ok "Hybrid-Overlay (ext4): src/$_sub"
